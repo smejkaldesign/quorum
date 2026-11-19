@@ -34,6 +34,7 @@ import { CALL_ACTIVE, DICTATION_OFF, keepActions, notetakerGates, recordDecision
 import { NAME_SYSTEM, isUntitled, parseName } from './noteName.js';
 import { noteParts } from './noteParts.js';
 import { hashText, newNoteText, noteFileName, noteForEditor, rewriteNote, screenRead, splitNote, validFrontmatter, yamlStr } from './handnote.js';
+import { openEdit, saveEdit } from './vaultEdit.js';
 import { createKeeper } from './keeper.js';
 import { createVersionStore } from './memoryVersions.js';
 import { createLiveRuns, stopAndRestore } from './liveRuns.js';
@@ -113,7 +114,7 @@ const fromApp = (e) => String(e?.senderFrame?.url ?? '').split(/[?#]/)[0] === AP
 // change what it shows, so it marks the feed changed before and after it runs; the reads listed here never do.
 // TREE_WRITES also drop the kept notes tree (vault-tree below)
 const FEED_READS = new Set([
-  'activity-feed', 'feed-counts', 'memory-review-count', 'vault-tree', 'vault-graph', 'vault-search', 'vault-note', 'vault-backlinks', 'vault-outgoing', 'vault-resolve',
+  'activity-feed', 'feed-counts', 'memory-review-count', 'vault-tree', 'vault-graph', 'vault-search', 'vault-note', 'vault-note-edit', 'vault-backlinks', 'vault-outgoing', 'vault-resolve',
   'vault-file-issues', 'vault-link-health', 'vault-links-left', 'agent-activity-get', 'live-runs', 'keeper-status', 'memory-dots', 'memory-versions', 'memory-version',
   'fix-runs', 'guardrail-denials', 'guardrails-get', 'get-settings', 'confidential-marks', 'note-activity', 'history', 'brain', 'user', 'record-status', 'models-status',
   'update-status', 'env-status', 'calendar-status', 'meeting-sources', 'meetings-sources', 'meetings-dir', 'source-icons', 'library-icons', 'synced-folders',
@@ -4427,6 +4428,34 @@ ipcMain.handle('vault-note', (_e, rel) => {
     ? { date: fm.date || null, people: fm.participants.filter((p) => !isSelf(p)).map(personName), source: source || null, ...noteMeetingApps(fm, n.abs) }
     : null;
   return { title: h1 ? h1[1].trim() : path.basename(n.abs, '.md'), body: h1 && body.startsWith(h1[0]) ? body.slice(h1[0].length).trim() : body, abs: n.abs, ...noteLink(n.abs), views: views.of(n.abs), meta };
+});
+
+// the Knowledge editor: a note's body exactly as written, with the hash of the file it came from (vaultEdit.js). A note
+// that isn't valid UTF-8, has withheld lines or mixes line endings comes back read-only and without its text. open marks
+// the start of an editing session, whose first save keeps the text from before it as a version
+const editSessions = new Map();
+ipcMain.handle('vault-note-edit', (_e, rel, open) => {
+  const b = brain();
+  const r = String(rel ?? '');
+  const n = b && openEdit(b.vault, r, suggester.isExcluded);
+  if (n && open && !n.readOnly) editSessions.set(r, n.hash);
+  return n || null;
+});
+ipcMain.handle('vault-note-save', (_e, payload) => {
+  const b = brain();
+  if (!b) return { error: 'Connect your Agent OS to save notes.' };
+  const r = String(payload?.rel ?? '');
+  const s = saveEdit(b.vault, r, payload, suggester.isExcluded);
+  if (!('hash' in s)) return s;
+  if (s.after !== s.before) {
+    if (editSessions.get(r) === payload.hash) {
+      editSessions.delete(r);
+      try { memoryVersions.record({ vault: b.vault, rel: r, before: s.before, after: s.after, who: 'you', reason: 'Edited in Quorum', agent: false }); } catch (e) { log('note edit versions', e?.message); }
+    }
+    vindex?.sync();
+    toUI('memory-updates', [r]);
+  }
+  return { hash: s.hash };
 });
 
 // the date pill in the note view: date: YYYY-MM-DD written into the note's frontmatter, saved as a version by you

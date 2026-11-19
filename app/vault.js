@@ -1,6 +1,7 @@
 // Read-mostly access to the connected vault for the Knowledge tab: tree, link graph, new notes and folders.
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { isUtf8 } from 'node:buffer';
 
 export const SKIP = new Set(['node_modules', '.git', '.obsidian', '.trash', '.claude']);
 
@@ -112,7 +113,9 @@ export function createFolder(vault, parentRel, title) {
 export function readVaultNote(vault, rel) {
   const abs = inside(vault, rel);
   if (!abs || !abs.endsWith('.md') || !existsSync(abs)) return null;
-  return { abs, text: readFileSync(abs, 'utf8') };
+  // utf8 is false when the bytes aren't valid UTF-8, so text (with U+FFFD in their place) would not write them back
+  const buf = readFileSync(abs);
+  return { abs, text: buf.toString('utf8'), utf8: isUtf8(buf) };
 }
 
 // rename in place; notes keep their .md, and nothing is ever overwritten

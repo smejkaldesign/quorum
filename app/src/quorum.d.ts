@@ -353,6 +353,7 @@ export type TeamRole = 'lead' | 'member';
 export type TeamMember = { userId: string; role: TeamRole; email: string | null; name: string | null };
 export type Team = { id: string; name: string; myRole: TeamRole | null; canManage: boolean; canManageMembers: boolean; meetingsKbId: string | null; members: TeamMember[] };
 export type HandNoteRef = { file: string; hash: string; rel: string; app: string; url: string; frontmatter: string };
+export type VaultEdit = { hash: string; readOnly: 'withheld' | 'line-endings' | 'encoding' | null; body: string; frontmatter: string };
 export type HandNote = HandNoteRef & { title: string; body: string; readOnly: boolean; date: string | null };
 export type HandNoteSave = (HandNoteRef & { propsError?: string }) | { conflict: true } | { error: string };
 
@@ -491,6 +492,9 @@ declare global {
       vaultResolve(target: string, from: string): Promise<string | null>;
       onVaultChanged(cb: (rels: string[]) => void): Unsub;
       vaultNoteDate(rel: string, day: string): Promise<string>;
+      // the Knowledge editor: a note's body as written and the file's hash; readOnly names why it can't be edited here
+      vaultNoteEdit(rel: string, open?: boolean): Promise<VaultEdit | null>;
+      vaultNoteSave(p: { rel: string; hash: string; body?: string }): Promise<{ hash: string } | { conflict: true } | { error: string }>;
       vaultNote(rel: string): Promise<{ title: string; body: string; abs: string; app: string; views?: NoteViews; meta?: NoteMetaInfo | null } | null>;
       memoryDots(): Promise<MemoryDots>;
       memoryReview(rel: string): Promise<MemoryReview | null>;
