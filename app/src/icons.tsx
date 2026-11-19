@@ -66,6 +66,10 @@ export const IconPeople = (p: SVGProps<SVGSVGElement>) => (
 export const IconFolder = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /></svg>
 );
+const STAR = 'M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9Z';
+export const IconStar = ({ filled, ...p }: SVGProps<SVGSVGElement> & { filled?: boolean }) => (
+  <svg {...base(p)} fill={filled ? 'currentColor' : 'none'}><path d={STAR} /></svg>
+);
 // filled variants mark something connected or switched on
 // the Quorum owl, filled
 export const IconQuorum = (p: SVGProps<SVGSVGElement>) => (

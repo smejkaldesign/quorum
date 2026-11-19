@@ -34,6 +34,7 @@ import { CALL_ACTIVE, DICTATION_OFF, keepActions, notetakerGates, recordDecision
 import { NAME_SYSTEM, isUntitled, parseName } from './noteName.js';
 import { noteParts } from './noteParts.js';
 import { hashText, newNoteText, noteFileName, noteForEditor, rewriteNote, screenRead, splitNote, validFrontmatter, yamlStr } from './handnote.js';
+import { listBookmarks, moveBookmarks, openToday, openEdit, saveEdit, toggleBookmark } from './vaultEdit.js';
 import { createKeeper, folders } from './keeper.js';
 import { createVersionStore } from './memoryVersions.js';
 import { createLiveRuns, stopAndRestore } from './liveRuns.js';
@@ -115,7 +116,7 @@ const fromApp = (e) => String(e?.senderFrame?.url ?? '').split(/[?#]/)[0] === AP
 // change what it shows, so it marks the feed changed before and after it runs; the reads listed here never do.
 // TREE_WRITES also drop the kept notes tree (vault-tree below)
 const FEED_READS = new Set([
-  'activity-feed', 'feed-counts', 'memory-review-count', 'vault-tree', 'vault-graph', 'vault-search', 'vault-note', 'vault-backlinks', 'vault-outgoing', 'vault-resolve',
+  'activity-feed', 'feed-counts', 'memory-review-count', 'vault-tree', 'vault-graph', 'vault-search', 'vault-note', 'vault-note-edit', 'vault-bookmarks', 'vault-backlinks', 'vault-outgoing', 'vault-resolve',
   'vault-file-issues', 'vault-link-health', 'vault-links-left', 'agent-activity-get', 'live-runs', 'keeper-status', 'memory-dots', 'memory-versions', 'memory-version',
   'fix-runs', 'guardrail-denials', 'guardrails-get', 'get-settings', 'confidential-marks', 'note-activity', 'history', 'brain', 'user', 'record-status', 'models-status',
   'update-status', 'env-status', 'calendar-status', 'meeting-sources', 'meetings-sources', 'meetings-dir', 'source-icons', 'library-icons', 'synced-folders',
@@ -125,7 +126,7 @@ const FEED_READS = new Set([
   'kb-hosted-note', 'kb-drive-status', 'kb-sync-list', 'kb-sync-grants', 'kb-import-progress',
 ]);
 const TREE_WRITES = new Set([
-  'vault-new-note', 'vault-new-folder', 'vault-move', 'vault-rename', 'vault-trash', 'vault-duplicate', 'set-settings', 'guardrails-add', 'guardrails-remove', 'guardrails-set',
+  'vault-new-note', 'vault-today', 'vault-new-folder', 'vault-move', 'vault-rename', 'vault-trash', 'vault-duplicate', 'set-settings', 'guardrails-add', 'guardrails-remove', 'guardrails-set',
   'confidential-mark', 'connect-brain', 'disconnect-brain', 'onboarding-create-vault',
 ]);
 const feedCache = createFeedCache({ build: () => feedBuild(), key: () => feedKey() });
@@ -4403,6 +4404,8 @@ function relocate(rel, doMove) {
   const resolve = vindex?.resolve;
   const aliasesOf = vindex?.aliasesOf;
   const next = doMove();
+  // Obsidian's bookmarks follow the note or folder, as they do when Obsidian renames it
+  try { moveBookmarks(vault, rel, next); } catch (e) { log('bookmarks after move', e?.message); }
   if (!vindex || !moving.length) return { rel: next, files: 0, links: 0 };
   const mapping = new Map(moving.map((r) => [r, r === rel ? next : next + r.slice(rel.length)]));
   const allRels = vindex.rels().map((r) => mapping.get(r) ?? r);
@@ -4416,6 +4419,7 @@ function relocate(rel, doMove) {
 function relinkMoves(moves) {
   if (!vindex || !moves.length) return;
   const done = relinkMoved({ vault: brain().vault, index: vindex, moves });
+  for (const m of moves) { try { moveBookmarks(brain().vault, m.from, m.to); } catch (e) { log('bookmarks after move', e?.message); } }
   for (const m of moves) log('moved outside the app', m.from, '->', m.to);
   if (done.links) log(`rewrote ${done.links} links in ${done.files} notes after an outside move`);
 }
@@ -4477,14 +4481,15 @@ ipcMain.handle('vault-menu', (_e, rel, isDir, at) => new Promise((resolve) => {
   Menu.buildFromTemplate(items).popup(opts);
 }));
 ipcMain.handle('vault-duplicate', (_e, rel) => duplicateItem(brain().vault, String(rel)));
-ipcMain.handle('vault-note', (_e, rel) => {
+// peek reads a note for a link's hover preview, which doesn't count as a view
+ipcMain.handle('vault-note', (_e, rel, peek) => {
   const b = brain();
   const n = b && readVaultNote(b.vault, String(rel));
   if (!n) return null;
   const text = suggester.redactLines(n.text);
   const body = text.replace(/^---\n[\s\S]*?\n---\n/, '').trim();
   const h1 = body.match(/^#\s+(.+)$/m);
-  views.record({ file: n.abs, who: 'human', via: 'quorum', bytes: Buffer.byteLength(n.text) });
+  if (!peek) views.record({ file: n.abs, who: 'human', via: 'quorum', bytes: Buffer.byteLength(n.text) });
   // a note with a date, people or a notetaker folder gets its details row (NoteMeta.tsx)
   const fm = readFrontmatter(text);
   const source = fm.source || folderAppOf(n.abs);
@@ -4492,6 +4497,51 @@ ipcMain.handle('vault-note', (_e, rel) => {
     ? { date: fm.date || null, people: fm.participants.filter((p) => !isSelf(p)).map(personName), source: source || null, ...noteMeetingApps(fm, n.abs) }
     : null;
   return { title: h1 ? h1[1].trim() : path.basename(n.abs, '.md'), body: h1 && body.startsWith(h1[0]) ? body.slice(h1[0].length).trim() : body, abs: n.abs, ...noteLink(n.abs), views: views.of(n.abs), meta };
+});
+
+// the Knowledge editor: a note's body exactly as written, with the hash of the file it came from (vaultEdit.js). A note
+// that isn't valid UTF-8, has withheld lines or mixes line endings comes back read-only and without its text. open marks
+// the start of an editing session, whose first save keeps the text from before it as a version
+const editSessions = new Map();
+ipcMain.handle('vault-note-edit', (_e, rel, open) => {
+  const b = brain();
+  const r = String(rel ?? '');
+  const n = b && openEdit(b.vault, r, suggester.isExcluded);
+  if (n && open && !n.readOnly) editSessions.set(r, n.hash);
+  return n || null;
+});
+ipcMain.handle('vault-note-save', (_e, payload) => {
+  const b = brain();
+  if (!b) return { error: 'Connect your Agent OS to save notes.' };
+  const r = String(payload?.rel ?? '');
+  const s = saveEdit(b.vault, r, payload, suggester.isExcluded);
+  if (!('hash' in s)) return s;
+  if (s.after !== s.before) {
+    if (editSessions.get(r) === payload.hash) {
+      editSessions.delete(r);
+      try { memoryVersions.record({ vault: b.vault, rel: r, before: s.before, after: s.after, who: 'you', reason: 'Edited in Quorum', agent: false }); } catch (e) { log('note edit versions', e?.message); }
+    }
+    vindex?.sync();
+    toUI('memory-updates', [r]);
+  }
+  return { hash: s.hash, frontmatter: s.frontmatter, ...(s.propsError ? { propsError: s.propsError } : {}) };
+});
+
+// bookmarks, kept in Obsidian's .obsidian/bookmarks.json (vaultEdit.js); a file that isn't a bookmarks file is never
+// written over
+ipcMain.handle('vault-bookmarks', () => { const b = brain(); return b ? listBookmarks(b.vault) : []; });
+ipcMain.handle('vault-bookmark', (_e, rel, on) => {
+  const b = brain();
+  if (!b) throw new Error('Connect your Agent OS first');
+  return toggleBookmark(b.vault, String(rel), !!on);
+});
+// today's daily note (dailyNote.js), made from the template when it doesn't exist yet
+ipcMain.handle('vault-today', () => {
+  const b = brain();
+  if (!b) throw new Error('Connect your Agent OS first');
+  const t = openToday(b.vault, new Date());
+  if (t.created) vindex?.sync();
+  return t.rel;
 });
 
 // the date pill in the note view: date: YYYY-MM-DD written into the note's frontmatter, saved as a version by you

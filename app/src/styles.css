@@ -282,8 +282,8 @@ html.popup-root, html.popup-root body { background: transparent; }
 /* New note: the note view's editable title and markdown body, and Record */
 .note-view .note-title { width: 100%; margin: 6px 0 16px; padding: 0; border: 0; outline: none; background: none; color: var(--text); font: 400 40px/1.15 "New York", ui-serif, Georgia, serif; letter-spacing: -0.01em; }
 .note-view .note-title::placeholder { color: var(--text-faint); }
-.note-view .note-editor { display: block; width: 100%; min-height: 320px; padding: 0; border: 0; outline: none; resize: none; overflow: hidden; background: none; color: var(--text-soft); font-family: inherit; font-size: 16px; line-height: 1.6; }
-.note-view .note-editor::placeholder { color: var(--text-faint); }
+.note-view .note-editor, .kb-edit .note-editor { display: block; width: 100%; min-height: 320px; padding: 0; border: 0; outline: none; resize: none; overflow: hidden; background: none; color: var(--text-soft); font-family: inherit; font-size: 16px; line-height: 1.6; }
+.note-view .note-editor::placeholder, .kb-edit .note-editor::placeholder { color: var(--text-faint); }
 .note-view .set-error { margin: 0 0 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .note-status { font-size: 13px; }
 .record-btn.on { color: var(--danger); border-color: rgba(255, 99, 99, 0.45); }
@@ -488,6 +488,15 @@ html.popup-root, html.popup-root body { background: transparent; }
 .kb-search { display: flex; align-items: center; gap: 8px; margin: 4px 12px 8px; padding: 0 10px; height: 32px; border-radius: 8px; color: var(--muted); }
 .kb-search input { flex: 1; border: 0; background: transparent; color: var(--text); font: inherit; font-size: 14px; outline: none; }
 .kb-tree { flex: 1; overflow-y: auto; padding: 2px 6px 12px; }
+.kb-bookmarks { display: flex; flex-direction: column; gap: 1px; margin: 0 6px 6px; padding-bottom: 6px; border-bottom: 1px solid var(--line-2); }
+.kb-bookmarks h3 { margin: 2px 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.kb-bookmark { display: flex; align-items: center; gap: 7px; padding: 4px 8px; border: 0; border-radius: 6px; background: none; color: var(--text-soft); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.kb-bookmark svg { flex: none; color: var(--muted); }
+.kb-bookmark:hover { background: var(--hover); }
+.kb-bookmark.sel { background: var(--hover); color: var(--text); }
+.link-preview { position: fixed; z-index: 40; max-height: 260px; overflow: hidden; padding: 12px 14px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--panel); box-shadow: 0 8px 28px rgba(0, 0, 0, .18); font-size: 13px; line-height: 1.5; pointer-events: none; }
+.link-preview.above { transform: translateY(-100%); }
+.link-preview h4 { margin: 0 0 6px; font-size: 14px; color: var(--text); }
 .kb-item { display: flex; align-items: center; gap: 6px; width: 100%; height: 30px; padding-right: 8px; border-radius: 6px; color: #c9c9ce; font-size: 15px; text-align: left; white-space: nowrap; }
 .kb-item span:last-child { overflow: hidden; text-overflow: ellipsis; }
 .kb-item:hover { background: rgba(255, 255, 255, 0.05); }

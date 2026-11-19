@@ -70,14 +70,16 @@ export function linkName(rel: string, all: string[]): string {
 // the Properties panel's draft: rows (or raw text when the frontmatter does not split), and the value it was made from
 export type Draft = { rows: Prop[] | null; raw: string; base: string };
 export const draftOf = (value: string): Draft => ({ rows: parseProps(value), raw: value, base: value });
+// whether the draft differs from what was saved. Rows compare as rows, so frontmatter written another way than
+// writeProps writes it (empty, or with no line break at the end of the file) is not an edit and is never rewritten
+export const edited = (d: Draft) => (d.rows ? JSON.stringify(d.rows) !== JSON.stringify(parseProps(d.base)) : d.raw !== d.base);
 export const titleIndex = (rows: Prop[]) => rows.findIndex((r) => r.key === 'title');
 
 // a new value from a save: an untouched draft follows it; an edited one keeps its edits and takes the new title row,
 // which the title field changes underneath it
 export function followSave(d: Draft, value: string): Draft {
   if (d.base === value) return d;
-  const clean = d.rows ? writeProps(d.rows, eolOf(d.base)) === d.base : d.raw === d.base;
-  if (clean || !d.rows) return draftOf(value);
+  if (!edited(d) || !d.rows) return draftOf(value);
   const next = parseProps(value);
   const title = next ? next[titleIndex(next)] : undefined;
   if (!title) return { ...d, base: value };

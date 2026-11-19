@@ -60,7 +60,7 @@ function inline(text: string, root?: string): ReactNode[] {
 function WikiLink({ target, label }: { target: string; label: string }) {
   const onWiki = useContext(WikiOpen);
   if (!onWiki) return <span className="md-wiki">{label}</span>;
-  return <button className="md-link" onClick={() => onWiki(target.replace(/#.*$/, ''))}>{label}</button>;
+  return <button className="md-link" data-wiki={target} onClick={() => onWiki(target.replace(/#.*$/, ''))}>{label}</button>;
 }
 
 const KB_FILE_LINK = /^quorum:\/\/kb-file\/[0-9A-HJKMNP-TV-Z]{26}$/;
@@ -94,5 +94,5 @@ function Link({ label, href, root }: { label: string; href: string; root?: strin
     else if (href.endsWith('.md') && onWiki) { try { onWiki(decodeURIComponent(href)); } catch { onWiki(href); } }
     else if (href.endsWith('.md') && root) window.quorum.openNote(href.startsWith('/') ? href : `${root}/${href}`);
   };
-  return <button className="md-link" onClick={open}>{label}</button>;
+  return <button className="md-link" data-href={href} onClick={open}>{label}</button>;
 }
