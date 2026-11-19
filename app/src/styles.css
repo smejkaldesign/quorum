@@ -282,8 +282,8 @@ html.popup-root, html.popup-root body { background: transparent; }
 /* New note: the note view's editable title and markdown body, and Record */
 .note-view .note-title { width: 100%; margin: 6px 0 16px; padding: 0; border: 0; outline: none; background: none; color: var(--text); font: 400 40px/1.15 "New York", ui-serif, Georgia, serif; letter-spacing: -0.01em; }
 .note-view .note-title::placeholder { color: var(--text-faint); }
-.note-view .note-editor { display: block; width: 100%; min-height: 320px; padding: 0; border: 0; outline: none; resize: none; overflow: hidden; background: none; color: var(--text-soft); font-family: inherit; font-size: 16px; line-height: 1.6; }
-.note-view .note-editor::placeholder { color: var(--text-faint); }
+.note-view .note-editor, .kb-edit .note-editor { display: block; width: 100%; min-height: 320px; padding: 0; border: 0; outline: none; resize: none; overflow: hidden; background: none; color: var(--text-soft); font-family: inherit; font-size: 16px; line-height: 1.6; }
+.note-view .note-editor::placeholder, .kb-edit .note-editor::placeholder { color: var(--text-faint); }
 .note-view .set-error { margin: 0 0 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .note-status { font-size: 13px; }
 .record-btn.on { color: var(--danger); border-color: rgba(255, 99, 99, 0.45); }

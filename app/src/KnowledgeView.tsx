@@ -18,6 +18,7 @@ import type { FixRun } from './quorum';
 import { IssueDrawer, LinkHealth, acceptIssue, dismissIssue, leftOf, migrateLeft, toastWhenFixed, waitFix } from './LinkHealth';
 import { outcomeOf } from './fixToast';
 import { Markdown } from './Markdown';
+import { VaultEditor } from './editor/VaultEditor';
 import { useSession } from './session';
 import { feedCounts, onFeedChange } from './feedEvents';
 import { IconChevron, IconClose, IconCollapse, IconExpand, IconFolder, IconGraph, IconNewFolder, IconNewNote, IconHistory, IconLink, IconLock, IconMore, IconReset, IconSearch, IconSidebar, IconSliders, IconSort } from './icons';
@@ -527,6 +528,15 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     else if (cursor >= 0) for (const l of blocks[cursor] ?? []) m.set(l, `${m.get(l) ?? ''} md-cur`.trim());
     return m;
   }, [version, mode, review, highlight, issueReview, cursor, blocks]);
+  // the note's text is edited in place (VaultEditor), except while something is shown over it: a version, the text
+  // before the updates, the changed lines highlighted, issues to review, or a run writing the note
+  const reading = !!(version || locked || issueReview || (review && (mode === 'before' || highlight)));
+  const readView = preview && (
+    <>
+      <HeadingLinks root={memRoot} base={`quorum://note/${encodeURIComponent(preview.rel)}`} />
+      <Markdown text={version ? version.body : review && mode === 'before' ? review.before : preview.body} headings root={brain?.root} onWiki={openLink} marks={marks} />
+    </>
+  );
   const navOver = (lines: number[]) => ({
     at: cursor, total: lines.length,
     onPrev: () => { const i = cursor <= 0 ? lines.length - 1 : cursor - 1; jump(i, lines[i]); },
@@ -671,8 +681,9 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
               {/* After marks the lines the updates changed, green while they wait and blue once approved; Before and an
                   opened version show their saved text, dimmed */}
               <div ref={memRoot} hidden={notifsOpen} onClickCapture={clickIssue} className={`mu-text ${version || (review && mode === 'before') ? 'mu-old' : review?.dot ?? ''} ${locked ? 'locked' : ''}`}>
-                <HeadingLinks root={memRoot} base={`quorum://note/${encodeURIComponent(preview.rel)}`} />
-                <Markdown text={version ? version.body : review && mode === 'before' ? review.before : preview.body} headings root={brain?.root} onWiki={openLink} marks={marks} />
+                {reading ? readView : (
+                  <VaultEditor key={preview.rel} rel={preview.rel} onWiki={openLink} onSaved={(body) => { const rel = preview.rel; setPreview((p) => (p && p.rel === rel ? { ...p, body } : p)); }}>{readView}</VaultEditor>
+                )}
               </div>
             </article>
             {fixShown && issueOpen ? (
