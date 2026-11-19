@@ -56,6 +56,7 @@ describe('memory graph on a generated vault', () => {
     expect(now.length).toBe(1);
     expect(now[0].date).toBe(Math.max(...all.map((d) => d.date)));
     expect(all.filter((d) => d.supersededBy).length).toBe(5);
+    for (const d of all) expect(d.about.map((a) => a.id)).toEqual(['project:project-a']);
 
     const p = g.graphPath('Ana Ruiz', 'Company 0');
     expect(p.path[0].id).toBe('person:ana-ruiz');
