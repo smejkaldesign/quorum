@@ -57,6 +57,7 @@
     "@supabase/supabase-js": "^2.119.0",
     "electron-updater": "^6.8.11",
     "onnxruntime-node": "1.31.1",
+    "source-map-js": "1.2.2",
     "ws": "^8.22.2"
   },
   "productName": "Quorum",
@@ -91,6 +92,7 @@
       "guards/**",
       "rules/**",
       "decide/**",
+      "graph/**",
       "search/**",
       "!search/eval/**",
       "!node_modules/onnxruntime-node/bin/napi-v6/linux/**",

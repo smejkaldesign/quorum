@@ -181,22 +181,29 @@ Wispr Notetaker, Fireflies and Read AI over MCP; Otter, Fathom and tl;dv by API 
 An agent connected to the `quorum` MCP server reads this in the server's instructions, and the `about` tool returns it as JSON (`app/cli/about.mjs`), with what every listed tool returns and when to use it.
 
 - **Data.** Meeting notes are markdown files in the vault's meetings folder, and the files are the source of truth. After filing a note, Quorum appends link lines to the index, the daily note and each people and project note the meeting concerns. Learned facts are a marked list in `.quorum/learned.md` or a vault note linked from `index.md`. Chats, settings, Memory health findings, the review decision log and the fix journal stay in Quorum's data folder on the Mac. The Cloud edition syncs notes both ways with a hosted Postgres database, where knowledge bases live.
-- **Graph.** There is no typed entity or relationship store. Links between notes are `[[wikilinks]]` in the markdown. The app builds an untyped link graph for its own Graph view, and no MCP tool returns it.
-- **Search.** Keyword only; no tool uses embeddings or semantic search. `search_meetings` is a case-insensitive text match over each meeting note's title, attendees and text, where every word must appear. `kb_search` is Postgres full-text search with English stemming, then a plain-word pass. Two small local models (an embedding model and an NLI model) run on the Mac only to screen contradiction checks in Memory health. Learned facts, chat answers and memory checks use your own model source; Quorum hosts no model.
-- **Decisions about project X.** There is no decision query. Call `learned_facts` and keep the lines naming X (up to 3 model-written facts per meeting, each citing its note; older ones roll off), then `search_meetings` with X and `get_meeting` on each hit. In Quorum Cloud, also `kb_search` X.
-- **Use something else for** notes outside the meetings folder (your own vault search), the web, calendars and upcoming meetings, and writing to Slack, Notion or GitHub (those tools only read). Meetings and lines naming an opted-out customer are withheld.
+- **Memory index.** Quorum derives a knowledge graph and a search index from the vault, in one SQLite database per vault in its data folder on the Mac. It is rebuilt from the vault at any time and updates as notes change. No note text leaves the Mac. `memory_status` says how far the build is.
+- **Graph.** Typed nodes (note, person, project, company, meeting, decision, topic, tag, folder) and typed edges (`links_to`, `embeds`, `mentions`, `attended`, `works_on`, `member_of`, `decided_in`, `decision_about`, `about`, `tagged`, `in_folder`, `contradicts`, `supersedes`). Every edge has a provenance (explicit, rule, model or person), its source path and line, and the dates it held. A newer fact supersedes an older one, which stays as history; tools return current facts unless `current` is false. A name that matches several nodes returns the candidates.
+- **Search.** `search` is hybrid over the whole vault: keyword (BM25 over SQLite FTS5), local embeddings (bge-small-en-v1.5, on the Mac) and nearness in the graph, merged by reciprocal rank fusion. `search_meetings` is a case-insensitive text match over meeting notes, where every word must appear. `kb_search` is Postgres full-text search with English stemming. Learned facts, chat answers and memory checks use your own model source; Quorum hosts no model.
+- **Decisions about project X.** One call: `decisions` with `about` X. Each line gives the decision, its date, the note and line it was decided in, and whether a later decision replaced it.
+- **Budgets.** `search`, `graph_query`, `graph_path`, `explain`, `entity` and `decisions` take `budget` in tokens (default 1,500), return the strongest items first, one line each with its source path and line, and end with a line that says what was left out and the budget that would return everything.
+- **Use something else for** the web, calendars and upcoming meetings, and writing to Slack, Notion or GitHub (those tools only read). The memory tools only read; fixes go through Needs review. Notes and lines naming an opted-out customer are withheld.
 
 | Tool | Returns | Use it when |
 |---|---|---|
-| `search_meetings` | Meeting notes containing every word, best first, with a matching line | Recall by person, project or topic |
+| `entity` | A person, project or company with its meetings, decisions, notes and people | First, for anything about one of them |
+| `decisions` | Decisions newest first, with date, source line and what replaced them | Every decision about a project, person or topic |
+| `search` | Passages from any note, best first, with path and lines | Any question about the vault, before reading files |
+| `graph_query`, `graph_path`, `explain` | Nodes and typed edges with provenance and dates | Who or what connects to something, and why |
+| `memory_status` | Setup progress, index counts, open gaps | Before trusting the index |
+| `search_meetings` | Meeting notes containing every word, best first, with a matching line | An exact word in meeting notes |
 | `get_meeting` | One meeting note in full, with any transcript | Reading a hit from search or list |
 | `list_meetings` | Filed meeting notes, newest first | Browsing recent meetings or one source |
-| `learned_facts` | Model-written fact lines, each citing its meeting | A quick summary of roles, decisions and commitments |
+| `learned_facts` | Model-written fact lines, each citing its meeting | A quick summary of roles and commitments |
 | `granola_search` | Granola meetings or transcript passages, live | Your Granola MCP fails, or a meeting is not filed yet |
 | `kb_search`, `kb_read`, `kb_list` | Quorum Cloud knowledge base notes | Workspace or team knowledge |
 | `about` | This section as JSON, with every tool | Choosing a tool |
 
-Chats (`list_chats`, `get_chat`), the live call (`live_transcript`), `import_meeting`, Memory health (`review_*`, `fix_*`, `memory_check_*`) and the connected Slack, Notion and GitHub read tools are described in `about`.
+Chats (`list_chats`, `get_chat`), the live call (`live_transcript`), `import_meeting`, Memory health (`review_*`, `fix_*`, `memory_check_*`) and the connected Slack, Notion and GitHub read tools are described in `about`. In Terminal, `quorum memory search|graph|path|explain|entity|decisions|status` runs the same memory tools.
 
 ## How it fits together
 

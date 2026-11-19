@@ -8,7 +8,9 @@
 // budget, strongest first, with a summary of what was left out.
 import { tokensOf } from './chunk.js';
 
-export const WEIGHTS = Object.freeze({ fts: 1, vec: 1, graph: 0.6, graphNamed: 3, rrfK: 60, recency: 0.15, halfLifeDays: 120, superseded: 0.6, kindHint: 2, perNote: 3, pool: 100 });
+// graph: the boost from the top hits' neighbors when the query names no node. The eval found no gain from it and a loss
+// on paraphrased questions, so it is off; graphNamed applies when the query names a node the graph knows
+export const WEIGHTS = Object.freeze({ fts: 1, vec: 1, graph: 0, graphNamed: 3, rrfK: 60, recency: 0.15, halfLifeDays: 120, superseded: 0.6, kindHint: 2, perNote: 3, pool: 100 });
 // a word in the query that names a kind of note; chunks of that kind rank higher (meetings with Ada, Heron decisions)
 const KIND_WORDS = { meeting: 'meeting', meetings: 'meeting', decision: 'decision', decisions: 'decision', project: 'project', projects: 'project', person: 'person' };
 // edge kinds by how strongly they tie two notes for search
@@ -28,6 +30,7 @@ export function createHybridSearch({ db, embedder = null, graph = () => null, ve
     chunk: db.prepare('SELECT c.id AS id, c.rel AS rel, c.heading AS heading, c.start_line AS start_line, c.end_line AS end_line, c.text AS text, c.tokens AS tokens, f.kind AS kind, f.date AS date FROM chunks c JOIN search_files f ON f.rel = c.rel WHERE c.id = ?'),
     firstOf: db.prepare('SELECT id FROM chunks WHERE rel = ? ORDER BY start_line LIMIT 1'),
     vecs: db.prepare('SELECT chunk, vec FROM vectors WHERE model = ?'),
+    total: db.prepare('SELECT COUNT(*) AS n FROM chunks'),
   };
   // every vector of the model in one matrix, read again after the index wrote vectors
   let mat = null;
@@ -40,7 +43,9 @@ export function createHybridSearch({ db, embedder = null, graph = () => null, ve
     const ids = new Array(rows.length);
     const data = new Float32Array(rows.length * dim);
     rows.forEach((r, i) => { ids[i] = r.chunk; const b = r.vec; data.set(new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)).subarray(0, dim), i * dim); });
-    mat = { v, ids, data, dim };
+    // the share of chunks with a vector: while the queue still runs, the vector list ranks only some of them
+    const total = q.total.get().n;
+    mat = { v, ids, data, dim, coverage: total ? Math.min(1, rows.length / total) : 0 };
     return mat;
   }
 
@@ -65,7 +70,7 @@ export function createHybridSearch({ db, embedder = null, graph = () => null, ve
   }
 
   // rel -> score from the graph: seeds are nodes the query names (weight 1) and the notes of the top hits (0.5);
-  // a seed that is a note counts itself, its neighbors count by edge kind, and a neighbor that is no note (a person,
+  // a seed backed by a note counts itself at its weight, its neighbors count by edge kind, and a neighbor that is no note (a person,
   // a project) passes half its weight on to the notes around it
   function graphScores(g, text, hitRels) {
     const score = new Map();
@@ -82,6 +87,8 @@ export function createHybridSearch({ db, embedder = null, graph = () => null, ve
         let found;
         try { found = g.find(w.slice(i, i + n).join(' ')) ?? []; } catch { found = []; }
         // an ambiguous short name seeds nothing
+        // a folder or a tag shares its name with ordinary words (meetings, decisions), so it names nothing here
+        if (Array.isArray(found)) found = found.filter((nd) => nd.kind !== 'folder' && nd.kind !== 'tag');
         if (!Array.isArray(found) || !found.length || found.length > 3) continue;
         for (let j = i; j < i + n; j++) inName.add(j);
         for (const nd of found) if (!seeds.has(nd.id)) seeds.set(nd.id, { w: 1 / found.length, rel: nd.rel ?? relOf(nd.id) });
@@ -92,7 +99,7 @@ export function createHybridSearch({ db, embedder = null, graph = () => null, ve
     const around = (id) => { try { return g.edgesOf(id, { dir: 'both', current: true }) ?? []; } catch { return []; } };
     const other = (e, id) => (e.src === id ? e.dst : e.src);
     for (const [id, s] of seeds) {
-      if (s.w === 1) add(s.rel, 1);
+      add(s.rel, s.w);
       for (const e of around(id)) {
         const ew = EDGE_WEIGHT[e.kind] ?? 0.3;
         if (!ew) continue;
@@ -147,7 +154,9 @@ export function createHybridSearch({ db, embedder = null, graph = () => null, ve
       p[key] = rank + 1;
     };
     fts.forEach((id, i) => put(id, 'fts', i, w.fts));
-    vec.forEach((id, i) => put(id, 'vec', i, w.vec));
+    // a chunk with no vector yet would lose to every chunk that has one, so the list counts as much as it covers
+    const cover = vec.length ? matrix()?.coverage ?? 1 : 0;
+    vec.forEach((id, i) => put(id, 'vec', i, w.vec * cover));
     const g = on.has('graph') ? graph() : null;
     let nameWords = new Set();
     let namedNode = false;
@@ -164,6 +173,7 @@ export function createHybridSearch({ db, embedder = null, graph = () => null, ve
       // a query that names a node leans on the graph; one that names none gets a light boost from the hits' neighbors
       const gw = named ? w.graphNamed : w.graph;
       let rank = 0;
+      if (!gw) gs.length = 0;
       for (const [rel] of gs) {
         const id = best.get(rel) ?? q.firstOf.get(rel)?.id;
         if (id == null || !ok(getChunk(id))) continue;

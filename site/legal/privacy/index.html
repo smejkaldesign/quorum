@@ -38,10 +38,10 @@
   <main id="main" class="page legal">
     <div class="wrap narrow">
       <h1>Privacy Policy</h1>
-      <p class="effective">Effective: November 16, 2026</p>
+      <p class="effective">Effective: November 19, 2026</p>
 
       <h2>Summary</h2>
-      <p>Quorum is a macOS app that transcribes meetings and writes notes into markdown files you own. In the free Local edition, your audio, transcripts and notes stay on your Mac. The app sends us only an access-code check, a daily install report and a feature check, none of which contain meeting content. In Quorum Cloud, we store your notes for sync and route call audio through our relay to a speech provider. We do not store call audio. We do not sell your data. We do not use your content to train models, and neither do our providers: Anthropic does not train on API inputs or outputs, every Deepgram request carries the model-training opt-out, and our AssemblyAI account is opted out of model training, which also gives zero retention of streaming audio and transcripts.</p>
+      <p>Quorum is a macOS app that combines your notes, the meeting notes your other tools write and your team&rsquo;s knowledge into markdown files you own. When you start a recording, it transcribes that meeting. In the free Local edition, your audio, transcripts and notes stay on your Mac. The app sends us only an access-code check, a daily install report, a feature check and, when a page in the app fails, an error report. None of these contain meeting content. In Quorum Cloud, we store your notes for sync and route call audio through our relay to a speech provider. We do not store call audio. We do not sell your data. We do not use your content to train models, and neither do our providers: Anthropic does not train on API inputs or outputs, every Deepgram request carries the model-training opt-out, and our AssemblyAI account is opted out of model training, which also gives zero retention of streaming audio and transcripts.</p>
       <p>This policy is published by Smejkal Design, a sole proprietorship based in Portland, Oregon, United States. Contact: <a href="mailto:eric@smejkal.design">eric@smejkal.design</a>.</p>
 
       <h2>The Local edition</h2>
@@ -56,6 +56,7 @@
         <li>Access code. During the beta, the app checks your access code with our relay when you enter it. After that it reports once a day: the code, a random install id created on your Mac, the edition and the app version. We use this to count active installs. We keep each install's record for 12 months after its last report.</li>
         <li>Features. Once an hour the app asks our relay which features are turned on. The request carries no code, install id or account.</li>
         <li>Updates. The app checks GitHub Releases for new versions and downloads them from there. GitHub receives your IP address under GitHub's privacy statement.</li>
+        <li>Error reports. When a page in the app fails to draw, the app sends our relay a report: the error message, where in Quorum's code it happened, the page, the app version and edition, the macOS version and a random install id. Before sending, the app removes file paths outside Quorum, email addresses, keys and quoted text, so a report carries no notes, transcripts or file names. We use reports only to find and fix bugs, and we delete each report within 90 days. Turn them off in Settings, General, Send error reports.</li>
         <li>Local models. Quorum downloads two open models once from Hugging Face (huggingface.co); the request carries your IP address and an app user agent, and no note content.</li>
       </ul>
       <p>Our relay's host receives your IP address with each request. Relay logs are deleted within 30 days.</p>
@@ -77,11 +78,11 @@
       <h2>Google user data</h2>
       <p>Quorum asks for access to your Google account only when you connect Google Calendar or Google Drive in the app under Settings, Connections. Each connection asks for the narrowest access the feature needs.</p>
       <ul>
-        <li>Google Calendar, read only (<code>calendar.readonly</code>). Quorum reads the events on the calendars you have selected in Google Calendar: titles, start and end times, attendees, locations, meeting links and descriptions. It uses them to show your upcoming meetings, to start the right call, and to name the people on a call. Events are read on your Mac and kept only in the app's memory. When you record a meeting, its title and the names of its attendees can appear in that meeting's record and notes, which are stored and generated as described under sync and managed transcription. Quorum never creates, changes or deletes calendar events.</li>
+        <li>Google Calendar, read only (<code>calendar.readonly</code>). Quorum reads the events on the calendars you have selected in Google Calendar: titles, start and end times, attendees, locations, meeting links and descriptions. It uses them to show your upcoming meetings on the Home screen, each with a link that opens the meeting in its own app, such as Zoom, Google Meet or Microsoft Teams. Quorum does not record or join meetings for you. Events are read on your Mac and kept only in the app&rsquo;s memory. If you start a recording yourself during a meeting, that note can carry the meeting&rsquo;s title and the names of its attendees, and it is stored as described under sync. Quorum never creates, changes or deletes calendar events.</li>
         <li>Google Drive, only the files you pick (<code>drive.file</code>). Quorum can open only the files you choose with the Google file picker, and files Quorum itself creates. It cannot list, read or change anything else in your Drive. When a knowledge base admin adds a picked file to a knowledge base, Quorum reads the file's text and stores it as a note in that knowledge base, shared with the knowledge base's readers, as described under sync. Quorum reads the file again only when an admin chooses Sync now.</li>
         <li>Your Google account email (<code>openid</code>, <code>email</code>), which labels the connected account in the app.</li>
       </ul>
-      <p>The access tokens Google issues are stored in your Mac's Keychain. They are never sent to our servers. Disconnecting in the app deletes the tokens from your Mac. Disconnecting the last connected Google service also revokes Quorum's access with Google. You can also remove Quorum's access at any time at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.</p>
+      <p>The access tokens Google issues are stored in your Mac's Keychain. In the Local edition they are never sent to our servers. In Quorum Cloud, one case sends a token to us: when a knowledge base admin attaches a Google Drive folder or file to a knowledge base, the app sends that admin's Google Drive refresh token to our relay once. We store it encrypted in our database's secret store and use it only to read the attached items and keep their notes current on a schedule. Removing the attachment or disconnecting Google Drive in the app ends our copy. Google Calendar tokens never leave your Mac. Disconnecting in the app deletes the tokens from your Mac. Disconnecting the last connected Google service also revokes Quorum's access with Google. You can also remove Quorum's access at any time at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.</p>
       <p>Quorum's use and transfer to any other app of information received from Google APIs will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements. In particular:</p>
       <ul>
         <li>We use Google user data only to provide the features described above, which you can see and control in the app.</li>
@@ -105,12 +106,13 @@
         <li>Anthropic: summaries and notes generation.</li>
         <li>Stripe: payments and subscription billing.</li>
         <li>Resend: sign-in code emails.</li>
+        <li>FormSubmit (formsubmit.co): delivers the messages you send through the contact form on quorum.watch, with your name, email address and question, to our inbox.</li>
         <li>Google: Calendar and Drive, only when you connect them. Google user data is handled as described under Google user data.</li>
       </ul>
       <p>We do not sell personal data. We do not share it with advertisers. We disclose data to authorities only when the law requires it.</p>
 
       <h2>Recording consent</h2>
-      <p>You must have the consent of meeting participants where recording consent laws require it. You are responsible for that compliance. Quorum cannot know who is in your meetings or where they are, so that responsibility stays with you. Quorum includes a STOP word. When a participant says it, the recording stops.</p>
+      <p>You must have the consent of meeting participants where recording consent laws require it. You are responsible for that compliance. Quorum cannot know who is in your meetings or where they are, so that responsibility stays with you.</p>
 
       <h2>Where data is stored</h2>
       <p>Quorum Cloud data is stored in the United States. If you use Quorum from outside the United States, your data is transferred to and processed there.</p>
@@ -120,7 +122,8 @@
 
       <h2>Your choices</h2>
       <ul>
-        <li>Use the Local edition with sync off and no cloud provider. No data reaches us.</li>
+        <li>Use the Local edition with sync off, no cloud provider and error reports off. Only the access-code, install and feature checks reach us.</li>
+        <li>Turn error reports off in Settings, General.</li>
         <li>Turn sync or managed transcription off at any time in the app.</li>
         <li>Mark notes private so only you can see them.</li>
         <li>Email us to access, correct or delete the data we hold about you.</li>

@@ -92,6 +92,8 @@ export type RunnerStatus = { installed: boolean; version: string | null };
 export type ModelSourceStatus = { source: ModelSource; localModel: string; claude: ClaudeStatus | null; key: boolean; keys: Partial<Record<ConnectorId, boolean>>; ollama: { reachable: boolean; hasModel: boolean }; runners?: Partial<Record<'codex' | 'antigravity', RunnerStatus>>; providers: Providers; connectors: ProviderConnectors };
 // userName is how the main process names the recorder in notes; it falls back to the macOS account's full name, then the login
 export type Settings = {
+  // page crash reports to Quorum (errorReports.js); on unless set to false
+  errorReports?: boolean;
   // which of Quorum's in-app notifications show in the bell's list and dot; each is on when missing
   notifications?: { noteUpdates?: boolean; memoryChanges?: boolean; reviews?: boolean; guardrails?: boolean };
   // connector ids whose provider MCP the person disconnected from Quorum (Settings > Connectors)
@@ -260,9 +262,10 @@ export type FeedTab = 'all' | 'unread' | 'archived';
 export type FeedSort = 'unread' | 'recent' | 'az';
 export type FeedSummary = { line: string; sub: string | null; ask?: { question: string; suggest: 'approve' | 'reject'; why: string; problem: string; solution: string; value: string; recommendation: string }; problem?: string; solution?: string; value?: string; recommendation?: string };
 export type FixStep = { label: string; at: number; endedAt: number | null };
-export type FixRun = { id: string; key: string; target: string; title: string; rel: string; status: 'queued' | 'running' | 'success' | 'error'; queuedAt: number; startedAt: number | null; endedAt: number | null; steps: FixStep[]; outcome: string | null; error: string | null; dismissedAt: number | null; batch?: string | null; undoable?: boolean; undoneAt?: number | null; problem?: string; solution?: string; value?: string; recommendation?: string; meta?: [string, string][]; showBanner?: boolean; kind?: 'batch'; auto?: boolean; actor?: string; by?: string; items?: BatchItem[]; groups?: { id: string; label: string; count: number }[] };
+export type FixRun = { id: string; key: string; target: string; title: string; rel: string; status: 'queued' | 'running' | 'success' | 'error'; queuedAt: number; startedAt: number | null; endedAt: number | null; steps: FixStep[]; outcome: string | null; error: string | null; dismissedAt: number | null; batch?: string | null; undoable?: boolean; undoneAt?: number | null; problem?: string; solution?: string; value?: string; recommendation?: string; meta?: [string, string][]; showBanner?: boolean; kind?: 'batch'; auto?: boolean; actor?: string; by?: string; items?: BatchItem[]; groups?: { id: string; label: string; count: number }[]; rolledBack?: boolean };
 // one item of a batch run, with its own state while the batch works
-export type BatchItem = { id: string; kind: 'link' | 'pastfix' | 'finding'; key: string; link: string | null; title: string; line: string; status: 'queued' | 'running' | 'success' | 'error' };
+// error: why the item failed on its own; rolledBack: it was fixed, then put back when the whole batch rolled back
+export type BatchItem = { id: string; kind: 'link' | 'pastfix' | 'finding'; key: string; link: string | null; title: string; line: string; status: 'queued' | 'running' | 'success' | 'error'; error?: string | null; skipped?: boolean; rolledBack?: boolean };
 // the bulk plan sheet: groups of what the batch will do, each item ticked or not, and what was merged, skipped or held back
 export type PlanItem = { id: string; title: string; kind: string; notes: string[]; line: string; on: boolean; draft?: MemoryDraft | null };
 // a fix the agent drafted (memoryDraft.js); every quote was checked against the line it names
@@ -356,6 +359,20 @@ export type Team = { id: string; name: string; myRole: TeamRole | null; canManag
 export type HandNoteRef = { file: string; hash: string; rel: string; app: string; url: string; frontmatter: string };
 export type HandNote = HandNoteRef & { title: string; body: string; readOnly: boolean; date: string | null };
 export type HandNoteSave = (HandNoteRef & { propsError?: string }) | { conflict: true } | { error: string };
+
+// memory graph (app/graph/store.js kinds; docs/specs/memory-graph.md)
+export type MemoryNodeKind = 'note' | 'person' | 'project' | 'company' | 'meeting' | 'decision' | 'topic' | 'tag' | 'folder';
+export type MemoryEdgeKind = 'links_to' | 'embeds' | 'mentions' | 'attended' | 'works_on' | 'member_of' | 'decided_in' | 'decision_about' | 'about' | 'tagged' | 'in_folder' | 'contradicts' | 'supersedes';
+export type MemoryNodeBrief = { id: string; kind: MemoryNodeKind; name: string; rel: string | null };
+export type MemoryNode = MemoryNodeBrief & { props: Record<string, unknown>; created_at: number; updated_at: number };
+export type MemoryEdge = { id: number; src: string; srcName: string; dst: string; dstName: string; kind: MemoryEdgeKind; provenance: 'explicit' | 'rule' | 'model' | 'person'; source_rel: string | null; source_line: number | null; confidence: number; valid_from: number | null; valid_to: number | null; superseded_by: number | null; props?: Record<string, unknown> };
+export type MemoryTruncated = { shown: number; total: number; budgetNeeded: number };
+export type MemoryGraphStatus = { phase: 'off' | 'idle' | 'building' | 'ready' | 'closed'; done?: number; total?: number; ms?: number | null; builtAt?: number | null; notes?: number; nodes?: number; edges?: number; byKind?: { nodes: Record<string, number>; edges: Record<string, number> } };
+export type MemoryDecision = { id: string; text: string; date: number | null; rel: string | null; line: number | null; about: { id: string; name: string }[]; decidedIn: { id: string; name: string } | null; supersededBy: { id: string; text: string } | null };
+export type MemoryDated = MemoryNodeBrief & { date: number | null; via: MemoryEdgeKind };
+export type MemoryEntity = { node: MemoryNodeBrief; rel: string | null; aliases: string[]; status: string | null; decisions: MemoryDecision[]; meetings: MemoryDated[]; people: MemoryDated[]; projects: MemoryDated[]; notes: MemoryDated[]; truncated: MemoryTruncated & { sections: Record<string, { shown: number; total: number }> } };
+// a name that matches several nodes is refused with the candidates; a name with no match says so
+export type MemoryGraphResult<T> = T | { ambiguous: MemoryNodeBrief[]; for?: 'a' | 'b' } | { notFound: string } | { error: string } | null;
 
 declare global {
   interface Window {
@@ -460,6 +477,14 @@ declare global {
       memorySearch(opts: { q: string; budget?: number; k?: number; folders?: string[]; kinds?: string[]; since?: string }): Promise<MemorySearchResult>;
       memorySearchStatus(): Promise<MemorySearchStatus>;
       vaultBacklinks(rel: string): Promise<Backlink[]>;
+      // memory graph reads (app/graph/); null when no vault is connected
+      memoryGraphStatus(): Promise<MemoryGraphStatus>;
+      memoryGraphQuery(args: { q?: string; seeds?: string[]; budget?: number; depth?: number; kinds?: MemoryEdgeKind[]; current?: boolean }): Promise<MemoryGraphResult<{ seeds: string[]; nodes: (MemoryNodeBrief & { score: number; depth: number })[]; edges: MemoryEdge[]; truncated: MemoryTruncated & { edgesShown: number; edgesTotal: number } }>>;
+      memoryGraphExplain(ref: string): Promise<MemoryGraphResult<{ node: MemoryNode; source: { rel: string } | null; aliases: string[]; community: { community: string; rank: number } | null; out: MemoryEdge[]; in: MemoryEdge[]; history: (MemoryEdge & { supersededBy: MemoryEdge | null })[] }>>;
+      memoryGraphEntity(name: string, opts?: { budget?: number }): Promise<MemoryGraphResult<MemoryEntity>>;
+      memoryGraphDecisions(args: { about?: string; since?: string | number; current?: boolean; budget?: number }): Promise<MemoryGraphResult<{ about: MemoryNodeBrief | null; decisions: MemoryDecision[]; truncated: MemoryTruncated }>>;
+      memoryGraphPath(a: string, b: string, opts?: { undirected?: boolean; kinds?: MemoryEdgeKind[]; current?: boolean; maxDepth?: number }): Promise<MemoryGraphResult<{ path: MemoryNodeBrief[] | null; edges: MemoryEdge[] }>>;
+      onMemoryGraph(fn: (s: MemoryGraphStatus) => void): () => void;
       vaultLinkHealth(fresh?: boolean): Promise<MissingLink[]>;
       // Needs review for Memory health: the items waiting, and the same items by the note they are about and its folders
       memoryReviewCount(): Promise<{ total: number; files: Record<string, number>; folders: Record<string, number> }>;
@@ -483,8 +508,8 @@ declare global {
       fixRuns(): Promise<FixRun[]>;
       fixDismiss(ids: string[]): Promise<number>;
       fixUndo(id: string): Promise<string>;
-      fixPlan(ids: string[] | null, exclude: string[], include?: string[]): Promise<PlanView>;
-      fixPlanApply(ids: string[] | null, exclude: string[], opts?: { saveNote?: boolean }, include?: string[]): Promise<{ run: FixRun | null; note: string | null }>;
+      fixPlan(ids: string[], exclude: string[], include?: string[]): Promise<PlanView>;
+      fixPlanApply(ids: string[], exclude: string[], opts?: { saveNote?: boolean }, include?: string[]): Promise<{ run: FixRun | null; note: string | null }>;
       confidentialMarks(): Promise<{ folders: Record<string, string>; notes: Record<string, string>; values: string[] }>;
       confidentialMark(rel: string, isDir: boolean, value: string | null): Promise<string>;
       onFixRun(cb: (run: FixRun) => void): () => void;
@@ -775,6 +800,10 @@ declare global {
       onFlags(cb: (s: FlagsState) => void): Unsub;
       envStatus(): Promise<EnvStatus>;
       envSetProduction(on: boolean): Promise<EnvStatus>;
+      // a view that failed while drawing (ErrorBoundary.tsx); the main process scrubs it and sends it unless reports are off
+      reportError(r: { view: string; message: string; stack: string; componentStack: string; repeat: boolean }): Promise<boolean>;
+      // reloads the window's page without quitting Quorum
+      reloadWindow(): Promise<void>;
     };
   }
 }

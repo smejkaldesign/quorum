@@ -1,14 +1,14 @@
 // The memory database search writes to: one SQLite file per vault, DATA_DIR/memory/<vault-hash>/memory.db, shared with
 // the graph (app/graph/store.js). A store handed in gives its open handle; with none, search opens the same file itself
 // in WAL mode, so the two can run side by side until the store's handle is passed in.
-import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { storeFile } from '../graph/store.js';
 
 export const SEARCH_VERSION = '1';
-export const vaultHash = (vault) => createHash('sha256').update(String(vault)).digest('hex').slice(0, 16);
-export const memoryDbFile = (dataDir, vault) => path.join(dataDir, 'memory', vaultHash(vault), 'memory.db');
+// the graph store's file for the vault, so both always open the same one
+export const memoryDbFile = (dataDir, vault) => storeFile(path.join(dataDir, 'memory'), vault);
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);

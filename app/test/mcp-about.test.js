@@ -64,17 +64,21 @@ describe('the about tool', () => {
   it('answers the graph, search and decision questions as data', async () => {
     const info = JSON.parse((await session(home({}))).get(3).result.content[0].text);
     expect(info.untrusted).toBeUndefined();
-    expect(info.graph.typedEntities).toBe(false);
-    expect(info.search.semantic).toBe(false);
-    expect(info.findDecisionsAbout).toContain('learned_facts');
+    expect(info.graph.typedEntities).toBe(true);
+    expect(info.graph.provenance).toMatch(/explicit.*rule.*model.*person/);
+    expect(info.search.semantic).toBe(true);
+    expect(info.findDecisionsAbout).toMatch(/^For every decision about project X: call decisions with about X/);
     expect(info.data.length).toBeGreaterThan(0);
     expect(info.notFor.length).toBeGreaterThan(0);
   });
   it('is named in the instructions, which state the graph and search facts', async () => {
     const { instructions } = (await session(home({}))).get(1).result;
     expect(instructions).toContain('about tool');
-    expect(instructions).toMatch(/no typed entity or relationship store/);
-    expect(instructions).toMatch(/no embeddings or semantic search/);
+    expect(instructions).toMatch(/knowledge graph/);
+    expect(instructions).toMatch(/typed edges, each with provenance/);
+    expect(instructions).toMatch(/search is hybrid/);
+    expect(instructions).toMatch(/the one call is decisions with about X/);
+    expect(instructions).toMatch(/start with entity .*, decisions or search/);
     expect(instructions.length).toBeLessThan(2048);
   });
   it('is not listed for the in-app chat, which gets the connector tools only', async () => {

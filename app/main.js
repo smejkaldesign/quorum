@@ -9,12 +9,13 @@ import { appScheme, createConnectorLinks, setLinkScheme } from './connectors/app
 import { createAgentLink } from './agentLink.js';
 import { checkConnection } from './connectionCheck.js';
 import { openSpeech, SPEECH_ENGINES } from './speech/provider.js';
-import { SKIP as TREE_SKIP, createFolder, createNote, duplicateItem, moveItem, readVaultNote, renameItem, vaultPath, vaultTree } from './vault.js';
+import { SKIP as TREE_SKIP, createFolder, createNote, duplicateItem, moveItem, readVaultNote, renameItem, vaultPath, vaultTarget, vaultTree } from './vault.js';
 import { createVaultIndex } from './vindex.js';
+import { createMemoryGraph } from './graph/index.js';
 import { applyUndo, sha, undoRecord } from './fixUndo.js';
 import { changedSince, createFixJournal, createNoteHashes, fixCheck, hashNotes, noteMemo, recoveryReason, rollback } from './fixJournal.js';
 import { createGateStore, gatePasses, gateTriggers, verdictOf } from './gateRun.js';
-import { addAlias, linkSources, retargetLinks, rewriteLinks, unlinkTarget, writeAtomic } from './relink.js';
+import { addAlias, linkSources, relinkMoved, retargetLinks, rewriteLinks, unlinkTarget, writeAtomic } from './relink.js';
 import store from './store/index.js';
 import { registerSources } from './sources/index.js';
 import { DATA_DIR, EDITION, ENV, loadEE, isDevelopment } from './edition.js';
@@ -23,8 +24,10 @@ import { createTokenStore } from './sources/tokens.js';
 import { connectAccount, createAccounts, oauthClients } from './sources/accounts.js';
 import { createConnectorTools } from './connectors/tools/index.js';
 import { actorLabel, createAppActions, currentActor, outsideActor } from './appActions.js';
+import { runMemoryTool } from './cli/memoryTools.mjs';
 import { CONNECTOR_SERVER } from './cli/connectorTools.mjs';
 import { httpUrl, relayFetch, relayUrl } from './relayUrl.js';
+import { createErrorReports } from './errorReports.js';
 import { createViews } from './views.js';
 import { registerOnboarding } from './onboarding.js';
 import { gateOn, registerBeta } from './beta.js';
@@ -52,7 +55,7 @@ import { PROVIDERS as DECISION_PROVIDERS, connectedProvider, decide as decideRaw
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, watchFile, writeFileSync } from 'node:fs';
-import { homedir, tmpdir, userInfo } from 'node:os';
+import { homedir, release, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import updater from 'electron-updater';
@@ -64,6 +67,8 @@ import { ARCHIVE_AFTER, feedPage, feedRows, labelOf, needsReview } from './activ
 import { issueMeta, issueOf } from './memoryHealth.js';
 import { LINK_RULE, LINK_RULE_VERSION, contextNote, isGenerated } from './linkRules.js';
 import { createDecisionLog, fingerprint } from './decisionLog.js';
+import { itemUndo } from './batchItemUndo.js';
+import { batchItems, rollBackItems } from './batchItems.js';
 import { FIX_RECHECK_RULE, FIX_RECHECK_VERSION, fixVersions, recheckAll, undoPlan } from './fixRecheck.js';
 import { buildPlan, checkFirst, checkOrder, effects, groupLabel, groupOf, notesOf, planExclude } from './batchPlan.js';
 import { RETRO_TITLE, ROW, findingItem, itemLine, linkItem, pastFixItem } from './reviewItems.js';
@@ -120,6 +125,9 @@ const FEED_READS = new Set([
   'memory-catchup-status', 'note-chats', 'read-chat', 'event-chats', 'calendar', 'oauth-accounts', 'mcp-status', 'cli-status', 'agents-status', 'claude-status',
   'model-source-status', 'decisions-status', 'screen-context-status', 'ax-status', 'kb-list', 'kb-notes', 'kb-files', 'kb-files-usage', 'kb-file-data', 'kb-hosted',
   'kb-hosted-note', 'kb-drive-status', 'kb-sync-list', 'kb-sync-grants', 'kb-import-progress',
+  // memory graph reads
+  'memory-graph-status', 'memory-graph-query', 'memory-graph-explain', 'memory-graph-entity', 'memory-graph-decisions', 'memory-graph-path',
+  'memory-search', 'memory-search-status',
 ]);
 const TREE_WRITES = new Set([
   'vault-new-note', 'vault-new-folder', 'vault-move', 'vault-rename', 'vault-trash', 'vault-duplicate', 'set-settings', 'guardrails-add', 'guardrails-remove', 'guardrails-set',
@@ -1479,6 +1487,11 @@ ipcMain.handle('set-settings', (_e, next) => {
     settings.memoryHighlight = next.memoryHighlight;
     store.settings.save();
   }
+  // Settings > General: page crash reports (errorReports.js); off sends nothing
+  if (typeof next.errorReports === 'boolean') {
+    settings.errorReports = next.errorReports;
+    store.settings.save();
+  }
   // Settings > Memory: background sweeps of the review rules (memorySweep.js); off pauses them
   if (typeof next.memorySweeps === 'boolean') {
     settings.memorySweeps = next.memorySweeps;
@@ -2474,6 +2487,31 @@ const excludedPath = (rel) => suggester.isExcluded(rel);
 
 // one live index per connected vault; the watcher tells the UI what changed so it can refresh in place
 let vindex = null;
+// memory graph (graph/index.js): typed, sourced and dated connections derived from the vault index, in
+// DATA_DIR/memory/<vault hash>/memory.db. It reads vindex's text, so withheld lines and excluded notes never reach it.
+// openIndex opens it for the connected vault, builds it once the index is read, and hands it every change after that
+let memoryGraph = null;
+function closeMemoryGraph() { memoryGraph?.close(); memoryGraph = null; }
+function openMemoryGraph(vault) {
+  closeMemoryGraph();
+  try {
+    memoryGraph = createMemoryGraph({ dataDir: DATA_DIR, vault, vindex, isExcluded: (t) => suggester.isExcluded(t), log: (...a) => log('memory graph', ...a) });
+    memoryGraph.on('progress', (st) => toUI('memory-graph', st));
+    memoryGraph.on('ready', (st) => toUI('memory-graph', st));
+  } catch (err) { log('memory graph failed to open', String(err)); memoryGraph = null; }
+}
+const graphBudget = (b) => Math.max(100, Math.min(Number(b) || 1500, 50000));
+const graphArgs = (a) => { const o = a && typeof a === 'object' ? { ...a } : {}; if ('budget' in o) o.budget = graphBudget(o.budget); return o; };
+const graphRead = (fn) => { if (!memoryGraph) return null; try { return fn(memoryGraph); } catch (err) { log('memory graph read', String(err)); return { error: 'The memory graph could not answer that.' }; } };
+// as app actions too, so the control socket bridge calls them by name; each takes positional arguments from the window
+// or one object from the bridge ({ q, name, id, a, b, about, budget, ... })
+const graphObj = (x) => (x && typeof x === 'object' && !Array.isArray(x) ? x : null);
+handleAction('memory-graph-status', () => memoryGraph?.status() ?? { phase: 'off' });
+handleAction('memory-graph-query', (_e, args) => graphRead((g) => g.graphQuery(graphArgs(args))));
+handleAction('memory-graph-explain', (_e, ref) => graphRead((g) => g.explain(String(graphObj(ref) ? ref.id ?? ref.ref ?? ref.name ?? '' : ref ?? ''))));
+handleAction('memory-graph-entity', (_e, name, opts) => graphRead((g) => (graphObj(name) ? g.entity(String(name.name ?? name.q ?? name.id ?? ''), graphArgs(name)) : g.entity(String(name ?? ''), graphArgs(opts)))));
+handleAction('memory-graph-decisions', (_e, args) => graphRead((g) => g.decisions(graphArgs(args))));
+handleAction('memory-graph-path', (_e, a, b, opts) => graphRead((g) => (graphObj(a) ? g.graphPath(String(a.a ?? ''), String(a.b ?? ''), graphArgs(a)) : g.graphPath(String(a ?? ''), String(b ?? ''), graphArgs(opts)))));
 // Memory health review rules (rules/index.js) on the cadence memorySweep.js sets: the notes that changed a few seconds
 // after a save, an incremental sweep every 3.5 hours, a full sweep once a day while the person is away
 const memorySweep = createMemorySweep({ file: path.join(DATA_DIR, 'memory-findings.json') });
@@ -2611,6 +2649,7 @@ ipcMain.handle('memory-sweep-now', () => memoryCheck(memorySweep.state(brain()?.
 function openIndex() {
   vindex?.stop();
   vindex = null;
+  closeMemoryGraph();
   // saves waiting for a check belong to the vault that was open; they wait in a file until it opens again
   keepSaves();
   const b = brain();
@@ -2622,12 +2661,14 @@ function openIndex() {
   // enters the index, and a rule change rebuilds it (the guardrails IPC handlers below)
   vindex = createVaultIndex({
     vault: b.vault, isExcludedPath: (rel) => excludedPath(rel) || isPrivatePath(rel) || isSecretPath(rel), isDeniedText: isConfidentialText, isExcludedText: suggester.isExcluded, redact: suggester.redactLines,
-    onChange: (rels) => { toUI('vault-changed', rels); searchChanged(rels); if (!built) { built = true; setTimeout(sweepTick, 5000); const kept = savesWaiting.take(b.vault); if (kept.length) sweepOnSave(kept); } else sweepOnSave(rels); }, renamed: () => settings.clusterNames?.[b.vault] ?? {},
+    onChange: (rels) => { toUI('vault-changed', rels); memoryGraph?.update(rels); searchChanged(rels); if (!built) { built = true; setTimeout(sweepTick, 5000); const kept = savesWaiting.take(b.vault); if (kept.length) sweepOnSave(kept); } else sweepOnSave(rels); }, renamed: () => settings.clusterNames?.[b.vault] ?? {},
     forget: (keys) => { const mine = settings.clusterNames?.[b.vault]; if (!mine) return; for (const k of keys) delete mine[k]; store.settings.save(); }, log: (...a) => log('index', ...a),
-    onPaths: treePaths,
+    onPaths: treePaths, onMoves: relinkMoves,
   });
   dropTree();
-  vindex.start();
+  openMemoryGraph(b.vault);
+  const graph = memoryGraph;
+  vindex.start().then(() => { if (graph && memoryGraph === graph) return graph.build(); }).catch((err) => log('memory graph build', String(err)));
   // the keeper files whatever arrived while the app was closed, once the folder is open
   setTimeout(() => keeper.run({ reason: 'launch' }).catch(() => {}), 4000);
   // the hosted edition's sync watches the same vault for files to push; the vault changed, so it moves with it
@@ -3094,9 +3135,11 @@ async function pumpFixes() {
       stamp();
       fixJournal.append(run.id, { step: 'keep', rel, created });
     };
+    // a batch item that failed on its own put its notes back already; release drops them from the run's undo record
+    const release = (rels) => { let n = 0; for (const r of rels) { const at = kept.findIndex((k) => k.rel === r); if (at >= 0) { kept.splice(at, 1); n++; } } if (n) stamp(); };
     if (run.kind === 'batch') work = agentActivity.start({ kind: 'batch', label: `Applying ${run.target}`, cancellable: true, onCancel: () => { run.cancel = true; run.agentAbort?.abort(); } });
     try {
-      run.outcome = run.kind === 'batch' ? await runBatch(run, step, keep) : await decideLink(run.key, 'approve', step, keep, run.hashes ?? null, run.finding?.proposedFix ?? null);
+      run.outcome = run.kind === 'batch' ? await runBatch(run, step, keep, release) : await decideLink(run.key, 'approve', step, keep, run.hashes ?? null, run.finding?.proposedFix ?? null);
       run.status = 'success';
       // a batch that only kept items as they are wrote nothing, and its Undo still moves them back to review
       run.undoable = saveUndo(run, kept) || (run.kind === 'batch' && !!run.done?.length);
@@ -3104,8 +3147,9 @@ async function pumpFixes() {
     } catch (e) {
       run.status = 'error';
       run.error = e?.message ?? String(e);
-      // a batch is all or nothing: every item goes back with it
-      if (run.kind === 'batch') for (const it of run.items ?? []) it.status = 'error';
+      // a failure the batch could not keep to one item puts every item back: one it had fixed is marked rolled back, one
+      // that failed on its own keeps its reason
+      if (run.kind === 'batch') rollBackItems(run.items);
       // a fix that failed after it wrote (the re-check found it made the links worse, or an error partway) puts the
       // notes back, so a Failed run leaves the vault as it was
       if (kept.length) {
@@ -3326,10 +3370,10 @@ function keepPastFix(id) {
   feedStateSave();
   logPastFix(id, 'archived', 'Kept the fix');
 }
-// Bulk plans (batchPlan.js): Approve on several items, Review everything, and Apply memory fixes on its own all turn the
-// review items (reviewItems.js) into one plan and run it as one batch: one run, one journal and undo record, the hash
-// of every note checked before the first write, the links checked again after the last, and the whole batch put back
-// when any step fails. The plan itself stays in memory; a batch cut short by a quit is recovered like any run
+// Bulk plans (batchPlan.js): Approve on several items and Apply memory fixes on its own both turn the review items
+// (reviewItems.js) into one plan and run it as one batch: one run, one journal and undo record, the hash of every note
+// checked before the first write, and the links checked again after the last. An item that fails puts back its own
+// notes (batchItems.js); a failure that cannot be kept to one item puts the whole batch back. The plan itself stays in memory; a batch cut short by a quit is recovered like any run
 const batchPlans = new Map();
 // the items waiting in Needs review, or the ones with these row ids. Each carries the hash of every note it touches,
 // kept by each note's modified time and size (noteHashes); fresh reads every note again
@@ -3433,7 +3477,7 @@ const scheduleGate = (ms) => gateRuns.schedule(ms);
 const gateOf = (item) => verdictOf(gateFor(brain()?.vault ?? '').verdicts, item, kindOf(item));
 const gateChecking = () => !gateFor(brain()?.vault ?? '').verdicts;
 // the review items with their verdicts, and what the agent does for each on Approve (agentNeed). Without ids
-// (everything in Needs review), the items the gate keeps out of view are left out
+// (Apply memory fixes on its own), the items the gate keeps out of view are left out
 function gatedItems({ ids = null, drafts = true } = {}) {
   const out = reviewItems({ ids, drafts }).map((i) => { const agent = agentNeed(i); return { ...i, gate: gateOf(i), ...(agent ? { agent } : {}) }; });
   return ids ? out : out.filter((i) => i.gate.bucket !== 'quiet');
@@ -3664,15 +3708,13 @@ ipcMain.handle('models-status', () => modelDownload.status());
 // ---- Memory search (search/): hybrid search over heading-scoped chunks of the vault, in the vault's memory database.
 // It reads the vault index's text (opted-out lines already withheld, denied notes never in it), builds its FTS index on
 // the first change the index reports and updates it note by note after that. Vectors come from the bundled bge-small
-// model in the memory engine's process, one small batch at a time, and wait while a recording is live. The graph boost
-// reads the memory graph once its store is passed in here; until then it is off. Read-only IPC: memory-search,
-// memory-search-status
-const memorySearch = createMemorySearch({ dataDir: DATA_DIR, vault: () => brain()?.vault ?? null, vindex: () => vindex, embedder: engineEmbedder((texts, maxTokens) => memoryEngine.embed(texts, maxTokens)), graph: () => null, paused: () => recordingNow(), log });
+// model in the memory engine's process, one small batch at a time, and wait while a recording is live. Its tables sit in
+// the memory graph's database, on the graph store's connection, and the graph boost reads the same store. Read-only
+// actions (the MCP bridge calls them by name): memory-search, memory-search-status
+const memorySearch = createMemorySearch({ dataDir: DATA_DIR, vault: () => brain()?.vault ?? null, vindex: () => vindex, embedder: engineEmbedder((texts, maxTokens) => memoryEngine.embed(texts, maxTokens)), graph: () => memoryGraph?.store ?? null, paused: () => recordingNow(), log });
 function searchChanged(rels) { memorySearch.changed(rels).catch((e) => log('search', 'update failed', e?.message)); }
-FEED_READS.add('memory-search');
-FEED_READS.add('memory-search-status');
-ipcMain.handle('memory-search', (_e, opts) => memorySearch.search({ ...(opts && typeof opts === 'object' ? opts : {}), q: String(opts?.q ?? ''), budget: Math.min(Math.max(Number(opts?.budget) || 1500, 100), 20000), k: Math.min(Math.max(Number(opts?.k) || 20, 1), 100), signals: undefined }));
-ipcMain.handle('memory-search-status', () => memorySearch.status());
+handleAction('memory-search', (_e, opts) => memorySearch.search({ ...(opts && typeof opts === 'object' ? opts : {}), q: String(opts?.q ?? ''), budget: Math.min(Math.max(Number(opts?.budget) || 1500, 100), 20000), k: Math.min(Math.max(Number(opts?.k) || 20, 1), 100), signals: undefined }));
+handleAction('memory-search-status', () => memorySearch.status());
 // ---- end memory search
 const contradictionAgent = memoryEngine.agent;
 // each drafting run is agent activity; Cancel stops the model call, and the item is drafted again later
@@ -4052,8 +4094,9 @@ async function runOp(item, o, { step, keep, written, vault }) {
 const opRels = (o) => { const e = effects(o); return [...e.writes.map((w) => w.rel), ...e.removes, ...e.creates]; };
 // runs a batch's steps in the plan's order, then sends each corrected past fix's link back to review or points it at
 // the note the current rules pick when that fix needs no review of its own, then checks the links of every note it
-// touched. Any failure throws, and the run puts every note back
-async function runBatch(run, step, keep) {
+// touched. An item that fails, or leaves a new broken link, puts back its own notes and the rest go on (batchItems.js).
+// A failure that cannot be kept to one item throws, and the run puts every note back
+async function runBatch(run, step, keep, release = () => {}) {
   const b = brain();
   if (!b || !vindex) throw new Error('No vault connected');
   const saved = batchPlans.get(run.id);
@@ -4085,7 +4128,6 @@ async function runBatch(run, step, keep) {
     items = ready.filter((i) => plan.ok.includes(i.id));
     for (const i of items) Object.assign(run.hashes, i.hashes ?? {});
   }
-  const byId = new Map(items.map((i) => [i.id, i]));
   await step(`Checking the ${Object.keys(run.hashes ?? {}).length} notes in the plan again`);
   const moved = changedSince(b.vault, run.hashes ?? {});
   if (moved.length) throw new Error(`“${moved[0]}” changed after Quorum planned this batch, so Quorum did not write. Review the plan again`);
@@ -4097,22 +4139,23 @@ async function runBatch(run, step, keep) {
   const missingOf = (rels) => new Map([...rels].filter((r) => vindex.rels().includes(r)).map((r) => [movedTo.get(r) ?? r, new Set(vindex.missingIn(r).map((l) => l.target.toLowerCase()))]));
   const before = missingOf(touched);
   const written = new Set();
-  const left = new Map(items.map((i) => [i.id, plan.steps.filter((s) => s.item === i.id).length]));
-  for (const s of plan.steps) {
-    const item = byId.get(s.item);
-    mark(item.id, 'running');
-    await runOp(item, s.op, { step, keep, written, vault: b.vault });
+  const undo = itemUndo(b.vault, (rel) => vaultTarget(b.vault, rel));
+  // the follow-up relink each corrected past fix led to, by the past fix's id; putting that item back undoes it too
+  const follows = new Map();
+  const unfollow = (item) => { const f = follows.get(item.id); if (!f) return; follows.delete(item.id); logFinding(f.finding, 'undone'); };
+  const batch = batchItems({ items, undo, mark, release, journal: (e) => fixJournal.append(run.id, e), trash: (abs) => shell.trashItem(abs), sync: () => vindex.sync(), onPutBack: unfollow });
+  const { failed } = batch;
+  await batch.runSteps(plan.steps, async (item, s) => {
+    await runOp(item, s.op, { step, keep: undo.track(item.id, keep), written, vault: b.vault });
     for (const r of opRels(s.op)) written.add(r);
-    left.set(item.id, left.get(item.id) - 1);
-    if (!left.get(item.id)) mark(item.id, 'success');
-  }
+  }, () => run.cancel);
+  if (!items.some((i) => !failed.has(i.id))) throw new Error(run.items.find((i) => i.error)?.error ?? 'No item in the batch could be fixed');
   vindex.sync();
   diskNamesCache.at = 0;
   // a corrected past fix's link goes back to review; the current rules then point it at a note when that is safe
   const reopened = new Set();
   const gone = new Set(plan.steps.filter((s) => s.op.op === 'trash' || s.op.op === 'move').map((s) => s.op.rel));
-  const followed = [];
-  for (const item of items.filter((i) => i.kind === 'pastfix' && i.link && !i.keep)) {
+  for (const item of items.filter((i) => i.kind === 'pastfix' && i.link && !i.keep && !failed.has(i.id))) {
     const key = String(item.link).toLowerCase();
     reopened.add(key);
     setLinksLeft([key], false);
@@ -4121,20 +4164,27 @@ async function runBatch(run, step, keep) {
     const issue = issueOf(withMarks(entry));
     const c = issue.candidate;
     if (issue.reviewOnly || !['alias', 'relink'].includes(issue.action) || !c || gone.has(c.rel) || c.rel === item.wrong || (readVault(b.vault, c.rel) ?? '').includes(STUB_TEXT)) continue;
-    await decideLink(issue.key, 'approve', step, keep, null, findingOf(issue).proposedFix);
+    // the follow-up writes count as the past fix's own, so putting that item back undoes the relink as well
+    await decideLink(issue.key, 'approve', step, undo.track(item.id, keep), null, findingOf(issue).proposedFix);
+    undo.seal(item.id);
     logFinding(findingOf(issue), actor === 'auto' ? 'auto' : 'approved', actor ?? 'you', 'The rules picked this fix after a corrective fix sent the link back');
+    follows.set(item.id, { target: issue.target, finding: findingOf(issue) });
     for (const r of [...issue.sources, c.rel]) touched.add(r);
     reopened.delete(key);
-    followed.push(issue.target);
   }
   await step('Checking the links again');
-  const after = missingOf(touched);
-  for (const [rel, set] of after) after.set(rel, new Set([...set].filter((t) => !reopened.has(t))));
-  const reason = fixCheck({ before, after });
-  if (reason) throw new Error(reason);
-  run.undid = items.filter((i) => i.kind === 'pastfix' && !i.keep).map((i) => i.key);
+  // a new broken link in a note one item wrote puts back that item alone; a note several items wrote cannot be split
+  await batch.blame(before, () => {
+    const after = missingOf(touched);
+    for (const [rel, set] of after) after.set(rel, new Set([...set].filter((t) => !reopened.has(t))));
+    return after;
+  });
+  if (!items.some((i) => !failed.has(i.id))) throw new Error(run.items.find((i) => i.error)?.error ?? 'No item in the batch could be fixed');
+  const fixed = batch.fixed();
+  const followed = [...follows.values()].map((f) => f.target);
+  run.undid = fixed.filter((i) => i.kind === 'pastfix' && !i.keep).map((i) => i.key);
   // a kept past fix and every finding leave Needs review as done
-  run.done = items.filter((i) => (i.kind === 'pastfix' && i.keep) || i.kind === 'finding').map((i) => i.id);
+  run.done = fixed.filter((i) => (i.kind === 'pastfix' && i.keep) || i.kind === 'finding').map((i) => i.id);
   run.touched = [...touched];
   const done = (run.groups ?? []).map((g) => g.label).join(', ');
   return `Applied the plan: ${done}${followed.length ? `. Then pointed ${followed.length === 1 ? `the link to “${followed[0]}”` : `${followed.length} links`} at the notes the current rules pick` : ''}`;
@@ -4217,9 +4267,11 @@ function savePlanNote(view) {
   return rel;
 }
 const idList = (xs) => (Array.isArray(xs) ? xs.map(String) : []);
-ipcMain.handle('fix-plan', (_e, ids, exclude, include) => planView(gatedItems({ ids: Array.isArray(ids) ? ids.map(String) : null }), idList(exclude), idList(include)));
+// a bulk plan covers the rows picked; there is no plan for everything in Needs review
+const pickedIds = (ids) => { if (!Array.isArray(ids) || !ids.length) throw new Error('Pick the items to fix first'); return ids.map(String); };
+ipcMain.handle('fix-plan', (_e, ids, exclude, include) => planView(gatedItems({ ids: pickedIds(ids) }), idList(exclude), idList(include)));
 handleAction('fix-plan-apply', (_e, ids, exclude, opts, include) => {
-  const items = gatedItems({ ids: Array.isArray(ids) ? ids.map(String) : null });
+  const items = gatedItems({ ids: pickedIds(ids) });
   const note = opts?.saveNote === true ? savePlanNote(planView(items, idList(exclude), idList(include))) : null;
   const plan = buildPlan(items, { exclude: [...planExclude(items, idList(exclude), idList(include))] });
   const run = plan.ok.length ? startPlan(plan, items) : null;
@@ -4339,6 +4391,14 @@ function relocate(rel, doMove) {
   vindex.sync();
   log('relocated', rel, '->', next, `rewrote ${done.links} links in ${done.files} notes`);
   return { rel: next, ...done };
+}
+// a note moved outside the app (Finder, git, another editor), as the index's watcher paired it: the file is already at
+// its new path, so this is relocate's rewrite without the move. The index still holds the old paths when this runs
+function relinkMoves(moves) {
+  if (!vindex || !moves.length) return;
+  const done = relinkMoved({ vault: brain().vault, index: vindex, moves });
+  for (const m of moves) log('moved outside the app', m.from, '->', m.to);
+  if (done.links) log(`rewrote ${done.links} links in ${done.files} notes after an outside move`);
 }
 ipcMain.handle('vault-rename', (_e, rel, name) => relocate(String(rel), () => renameItem(brain().vault, String(rel), String(name))));
 ipcMain.handle('vault-move', (_e, rel, folder) => relocate(String(rel), () => moveItem(brain().vault, String(rel), String(folder))));
@@ -4607,6 +4667,16 @@ ipcMain.handle('guardrail-denials', (_e, opts) => guardrails.denials({ since: op
 ipcMain.handle('update-status', () => updates?.state() ?? { status: 'off', current: app.getVersion(), version: null, percent: 0, notes: null, checkedAt: null, error: null });
 ipcMain.handle('update-check', async () => (updates ? updates.check() : { status: 'off' }));
 ipcMain.handle('update-install', () => !!updates?.install());
+// page crash reports (errorReports.js): the renderer's error boundaries send each crash here; on unless
+// settings.errorReports is false. The report goes to the relay's /v1/errors for the admin Errors page
+const errorReports = createErrorReports({
+  dataDir: DATA_DIR, version: app.getVersion(), edition: EDITION, os: `macOS ${process.getSystemVersion?.() ?? release()} ${process.arch}`, appRoot: here, home: homedir(),
+  enabled: () => settings.errorReports !== false, log,
+  send: (body) => relayFetch('/v1/errors', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, { source: relaySource() }),
+});
+ipcMain.handle('report-error', (_e, r) => errorReports.report(r));
+// Reload Quorum on a crash page: the window's page loads again; recording, sync and the tray keep running
+ipcMain.handle('reload-window', (e) => { e.sender.reloadIgnoringCache(); });
 ipcMain.handle('calendar', async () => {
   const c = calSettings();
   const win = calendarWindow(c.days);
@@ -5396,6 +5466,13 @@ async function control({ cmd, args = {} }) {
     case 'connector_tool': return connectorTools.run(String(args.name ?? ''), args.args ?? {});
     // a Memory health or Knowledge tool, through the handlers the buttons use; appActions.js checks read only and the setting
     case 'app_action': return appActions.run(String(args.name ?? ''), args.args ?? {}, args.via ?? null);
+    // memory graph and search tools (cli/memoryTools.mjs): each forwards to the graph or search handler of that name;
+    // all read only. A handler that is not registered yet answers that the index is not ready. Withheld notes and lines
+    // are taken out before the answer leaves the app
+    case 'memory_tool': return runMemoryTool(args.name, args.args ?? {}, {
+      handler: (h) => { const fn = actionHandlers.get(h); return fn ? (a) => fn(null, a) : null; },
+      withheld: excludedPath, isExcluded: suggester.isExcluded, redact: suggester.redactLines,
+    });
     case 'start':
       // start acts on a noticed call, so it follows meeting-capture; stop, go and end work on any running session
       if (!gate().meetingCapture) throw new Error('Quorum does not watch for calls in this build. Start listening from the app for a note of your own.');
