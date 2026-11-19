@@ -124,8 +124,10 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
   let cloud = resolveCloudConfig(settings);
   const makeClient = (c) => (c.url && c.key ? createClient(c.url, c.key, { auth: { flowType: 'pkce', persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, storage: fileStorage(perConfig(c, 'auth', 'json')) } }) : null);
   let client = makeClient(cloud);
-  // live is whether the Realtime channel is subscribed (sync.js live()); the UI shows "Live" or "Polling" from it
-  const state = { configured: !!client, signedIn: false, email: null, userId: null, workspace: null, workspaces: [], invites: [], domainMatches: [], sync: settings.sync === true, lastSyncAt: null, lastPullAt: null, syncError: null, live: false };
+  // live is whether the Realtime channel is subscribed (sync.js live()); the UI shows "Live" or "Polling" from it.
+  // accountGone is the email of the account this Mac last held once the server says it no longer exists (migration
+  // 0047, account_gone), so the account card can say so; a sign-in clears it
+  const state = { configured: !!client, signedIn: false, email: null, userId: null, workspace: null, workspaces: [], invites: [], domainMatches: [], sync: settings.sync === true, lastSyncAt: null, lastPullAt: null, syncError: null, live: false, accountGone: null };
   const listeners = new Set();
   const snapshot = () => JSON.parse(JSON.stringify(state));
   // every state change also lets sync.js bring its channel and watcher in line with the sign-in, switch and workspace
@@ -186,12 +188,36 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
   };
 
   // one read of everything the account page shows: memberships, invites waiting for this email, domain matches
+  // whether the account this Mac held is gone on the server: asked once per user id, and only when the session ended or
+  // the server refused the user. An offline Mac or an older project without the function reads as not gone
+  let goneAsked = null;
+  const checkGone = async (known) => {
+    if (!known?.id || goneAsked === known.id) return;
+    goneAsked = known.id;
+    try {
+      const { data, error } = await client.rpc('account_gone', { uid: known.id });
+      if (!error && data === true) { state.accountGone = known.email ?? ''; log('account', 'the account on this Mac was deleted on the server'); }
+    } catch {}
+  };
+  let userChecked = null;
   async function refresh() {
     if (!client) return snapshot();
     try {
+      // read before getSession, which removes a session the server refused
+      const known = state.userId ? { id: state.userId, email: state.email } : storedUser();
       const { data: { session } } = await client.auth.getSession();
-      if (!session) { signedOut(); emit(); return snapshot(); }
-      state.signedIn = true; state.email = session.user.email ?? null; state.userId = session.user.id;
+      if (!session) { await checkGone(known); signedOut(); emit(); return snapshot(); }
+      // a token that has not expired yet still reads as a session after the account is deleted; the server's own answer
+      // about the user, asked once per account and launch, catches that
+      if (userChecked !== session.user.id) {
+        const { error } = await client.auth.getUser();
+        if (error && (error.code === 'user_not_found' || /user.*(not found|does not exist)/i.test(error.message ?? ''))) {
+          await checkGone({ id: session.user.id, email: session.user.email });
+          if (state.accountGone !== null) { try { await client.auth.signOut({ scope: 'local' }); } catch {} signedOut(); emit(); return snapshot(); }
+        }
+        if (!error) userChecked = session.user.id;
+      }
+      state.signedIn = true; state.email = session.user.email ?? null; state.userId = session.user.id; state.accountGone = null; goneAsked = null;
       const [members, invites, domains] = await Promise.all([
         memberships(),
         client.rpc('pending_invites'),
@@ -353,6 +379,17 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
       signedOut(); emit();
       return { ok: true };
     }),
+    // Delete my data, the hosted half (migration 0047): the caller's notes, chats, meetings and personal KBs go, the
+    // account and every plan stay, then this Mac signs out. main.js then deletes what Quorum keeps on this Mac
+    'account-data-delete': signedInGuard(async (typed) => {
+      if (String(typed ?? '').trim().toLowerCase() !== String(state.email ?? '').toLowerCase()) return { error: 'Type your email address to confirm.' };
+      const { error } = await client.rpc('delete_my_data');
+      if (error) return fail(error, 'Your data could not be deleted.');
+      state.sync = false;
+      try { await client.auth.signOut({ scope: 'local' }); } catch (err) { log('account sign-out', err?.message ?? err); }
+      signedOut(); emit();
+      return { ok: true };
+    }),
     // deletes the chosen workspace, which the caller owns, with everything synced to it; members lose access
     'org-delete': signedInGuard(async (workspaceId, typed) => {
       if (String(typed ?? '').trim().toLowerCase() !== String(state.email ?? '').toLowerCase()) return { error: 'Type your email address to confirm.' };
@@ -443,14 +480,15 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
 
   // the signed-in email. getSession refreshes an expired token over the network and answers no session when that
   // fails, so an offline Mac falls back to the stored session; a sign-out or a refused refresh removes it from the file
-  const storedEmail = () => {
+  const storedUser = () => {
     const all = (() => { try { return JSON.parse(readFileSync(perConfig(cloud, 'auth', 'json'), 'utf8')); } catch { return {}; } })();
     for (const [k, v] of Object.entries(all)) {
       if (!k.endsWith('-auth-token')) continue;
-      try { const s = typeof v === 'string' ? JSON.parse(v) : v; if (s?.refresh_token && s?.user?.email) return s.user.email; } catch {}
+      try { const s = typeof v === 'string' ? JSON.parse(v) : v; if (s?.refresh_token && s?.user?.email) return { id: s.user.id ?? null, email: s.user.email }; } catch {}
     }
     return null;
   };
+  const storedEmail = () => storedUser()?.email ?? null;
   const sessionEmail = async () => {
     if (!client) return null;
     try { const { data } = await client.auth.getSession(); if (data?.session?.user?.email) return data.session.user.email; } catch {}

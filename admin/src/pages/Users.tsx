@@ -1,16 +1,19 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { CODE_PLAN_LABEL, type Install, type User, activityLabel, installActive, onDate } from '../shape';
-import { Badge, Card, Empty, Input, PageHeader, SectionTitle, SkeletonRows, Table, TableHead, TableRow } from '../ui';
+import { Badge, Button, Card, Empty, Input, PageHeader, SectionTitle, SkeletonRows, Table, TableHead, TableRow } from '../ui';
+import { ResetUser } from './ResetUser';
 
-// every account on this Quorum, newest first: when it signed up, when it was last seen, how many workspaces it is in.
-// Below it, every install that checked in with an access code during the beta, both editions, newest heartbeat first
+// every account on this Quorum, newest first: when it signed up, when it was last seen, how many workspaces it is in,
+// and Reset user for any account but the platform owner's (ResetUser.tsx). Below it, every install that checked in with an access code during the beta, both editions, newest heartbeat first
 export function Users() {
   const [list, setList] = useState<User[] | null>(null);
   const [installs, setInstalls] = useState<Install[] | null>(null);
   const [error, setError] = useState('');
   const [q, setQ] = useState('');
-  useEffect(() => { api.users().then((r) => (r.ok ? setList(r.value) : setError(r.error))); api.installs().then((r) => (r.ok ? setInstalls(r.value) : setError(r.error))); }, []);
+  const [resetting, setResetting] = useState<User | null>(null);
+  const loadUsers = () => api.users().then((r) => (r.ok ? setList(r.value) : setError(r.error)));
+  useEffect(() => { loadUsers(); api.installs().then((r) => (r.ok ? setInstalls(r.value) : setError(r.error))); }, []);
   const shownInstalls = (installs ?? []).filter((i) => !q.trim() || (i.email ?? '').toLowerCase().includes(q.trim().toLowerCase()));
   const shown = (list ?? []).filter((u) => !q.trim() || u.email.toLowerCase().includes(q.trim().toLowerCase()));
   return (
@@ -18,8 +21,8 @@ export function Users() {
       <PageHeader title={list ? `${list.length} ${list.length === 1 ? 'account' : 'accounts'}` : 'Accounts'} actions={<Input className="search" placeholder="Find by email" value={q} onChange={(e) => setQ(e.target.value)} />} />
       {error && <p className="error">{error}</p>}
       <Card list>
-        <Table columns="minmax(220px, 2fr) 120px 150px 90px">
-          <TableHead><span>Email</span><span>Signed up</span><span>Last seen</span><span>Workspaces</span></TableHead>
+        <Table columns="minmax(220px, 2fr) 120px 150px 90px 110px">
+          <TableHead><span>Email</span><span>Signed up</span><span>Last seen</span><span>Workspaces</span><span /></TableHead>
           {list === null && <SkeletonRows />}
           {shown.map((u) => (
             <TableRow key={u.userId}>
@@ -27,11 +30,13 @@ export function Users() {
               <span className="hide">{onDate(u.createdAt)}</span>
               <span>{u.lastSignInAt ? activityLabel(u.lastSignInAt) : 'Never signed in'}</span>
               <span className="hide">{u.workspaces}</span>
+              <span style={{ textAlign: 'right' }}>{!u.owner && <Button variant="link" onClick={() => setResetting(u)}>Reset user</Button>}</span>
             </TableRow>
           ))}
           {list && !shown.length && <Empty>No accounts match.</Empty>}
         </Table>
       </Card>
+      {resetting && <ResetUser user={resetting} onClose={(reset) => { setResetting(null); if (reset) loadUsers(); }} />}
       <SectionTitle>{installs ? `${installs.length} ${installs.length === 1 ? 'install' : 'installs'}` : 'Installs'}</SectionTitle>
       <Card list>
         <Table columns="minmax(200px, 2fr) 90px 90px 90px 120px 150px">

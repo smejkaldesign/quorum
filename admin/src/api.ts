@@ -2,6 +2,7 @@
 // owner-only RPCs, and the relay for the one thing a browser page cannot do itself, sending the code email.
 import { createClient, type Session, type SupabaseClient } from '@supabase/supabase-js';
 import { token } from './session';
+import { type ResetOutcome, shapeReset } from './reset';
 import { type ErrorCounts, type ErrorDetail, type ErrorGroup, type ErrorSort, type ErrorStatus, shapeErrorCounts, shapeErrorDetail, shapeErrorGroup } from './errors';
 import { type AccessRequest, type AuditRow, type CodePlan, type Flag, type Install, type Member, type Overview, type PlanDraft, type Usage, type User, type Workspace, periodStart, plain, requestWithCode, shapeAudit, shapeFlag, shapeInstall, shapeMember, shapeOverview, shapeRequest, shapeUser, shapeUsage, shapeWorkspace } from './shape';
 
@@ -71,6 +72,9 @@ export const api = {
   setPlan: (workspaceId: string, draft: PlanDraft): Promise<Result<{ plan: string; seatsIncluded: number; notes: string | null }>> =>
     rpc('platform_set_plan', { workspace_id: workspaceId, plan: draft.plan, seats_included: draft.seatsIncluded, notes: draft.notes || null }, (d) => { const o = (d ?? {}) as Record<string, unknown>; return { plan: String(o.plan), seatsIncluded: Number(o.seats_included) || 0, notes: (o.notes as string | null) ?? null }; }, 'The plan could not be saved.'),
   users: (): Promise<Result<User[]>> => rpc('platform_users', undefined, (d) => rows(d).map(shapeUser)),
+  // Reset user (migration 0047): the account and the workspaces it is alone in go; with reinvite a new code for the same email
+  resetUser: (userId: string, reinvite: boolean, plan: CodePlan): Promise<Result<ResetOutcome>> =>
+    rpc('platform_reset_user', { uid: userId, reinvite, plan }, (d) => shapeReset((d ?? {}) as Record<string, unknown>), 'The account could not be reset.'),
   // feature flags (migration 0021): the owner's list, the switch, and the name, description and tags around it
   flags: (): Promise<Result<Flag[]>> => rpc('platform_flags', undefined, (d) => rows(d).map(shapeFlag)),
   setFlag: (key: string, enabled: boolean): Promise<Result<Flag>> => rpc('platform_flag_set', { key, enabled }, (d) => shapeFlag((d ?? {}) as Record<string, unknown>), 'The flag could not be changed.'),

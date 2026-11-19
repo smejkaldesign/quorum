@@ -180,10 +180,15 @@ export type AccountState = {
   invites: AccountInvite[];
   domainMatches: { workspaceId: string; name: string }[];
   sync: boolean; lastSyncAt: string | null; lastPullAt?: string | null; syncError: string | null;
+  // the email of the account this Mac last held, once the server says it was deleted (migration 0047)
+  accountGone?: string | null;
 };
 export type Result = { ok?: boolean; error?: string };
 // what the danger zone reads before it offers a delete (migration 0039): the signed-in email, whether the account runs
 // Quorum itself, and the workspaces it owns
+// what the Delete my data confirm names: the vault folder that stays, whether the models stay, and whether a Cloud
+// account is signed in (then the typed value is its email, else the phrase)
+export type DataResetInfo = { vault: string | null; keepsModels: boolean; hosted: boolean; email: string | null; phrase: string };
 export type AccountDeleteStatus = { email: string | null; platformOwner: boolean; owned: { id: string; name: string }[] };
 
 // Settings › Sources (sources/catalog.js, sources/jobs.js)
@@ -739,6 +744,8 @@ declare global {
       accountDeleteStatus(): Promise<AccountDeleteStatus | { error: string }>;
       accountDelete(typed: string): Promise<Result>;
       orgDelete(workspaceId: string, typed: string): Promise<Result>;
+      dataResetInfo(): Promise<DataResetInfo>;
+      dataDelete(typed: string): Promise<Result>;
       exportNotes(): Promise<{ ok?: boolean; canceled?: boolean; error?: string; path?: string; files?: number; skipped?: number; bytes?: number }>;
       exportReveal(file: string): Promise<void>;
       onExportProgress(cb: (p: { done: number; total: number }) => void): Unsub;

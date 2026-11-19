@@ -29,7 +29,8 @@ import { CONNECTOR_SERVER } from './cli/connectorTools.mjs';
 import { httpUrl, relayFetch, relayUrl } from './relayUrl.js';
 import { createErrorReports } from './errorReports.js';
 import { createViews } from './views.js';
-import { registerOnboarding } from './onboarding.js';
+import { defaultVaultDir, registerOnboarding } from './onboarding.js';
+import { KEPT_BY_DEFAULT, checkDataDir, forgetKeychain, protectedPaths, resetData } from './dataReset.js';
 import { gateOn, registerBeta } from './beta.js';
 import { registerFlags } from './flags.js';
 import { CALL_ACTIVE, DICTATION_OFF, keepActions, notetakerGates, recordDecision, screenReadsAllowed, sessionGates, startDecision, termsPlan } from './notetaker.js';
@@ -5163,6 +5164,35 @@ ipcMain.handle('connect-brain', async () => {
 ipcMain.handle('reveal-brain', () => { if (settings.brainRoot) shell.openPath(settings.brainRoot); });
 // forgetting the Agent OS leaves every file where it is; Quorum stops reading it, and a meetings folder found inside it is no longer found
 ipcMain.handle('disconnect-brain', () => { Object.assign(settings, { brainRoot: null, vaultPath: null, brainMade: null }); store.settings.save(); log('disconnected Agent OS'); suggester.reset(); openIndex(); brainChanged(); return null; });
+// Delete my data (Settings, Preferences, Danger zone; dataReset.js). Signed in to Cloud, the typed value is the email
+// and the hosted data goes first (ee/account.js, migration 0047); otherwise it is the phrase. Then the Keychain items
+// and the data folder go, every vault folder Quorum knows stays, and Quorum starts again into onboarding. The relaunch
+// skips will-quit, so nothing writes the old settings or state back after the delete.
+const DELETE_PHRASE = 'delete my data';
+const knownVaults = () => protectedPaths({ settings, env: process.env, defaultVault: defaultVaultDir() });
+ipcMain.handle('data-reset-info', () => {
+  const hosted = EDITION === 'cloud' && account.state?.().signedIn === true;
+  return { vault: settings.vaultPath || settings.brainRoot || null, keepsModels: KEPT_BY_DEFAULT.includes('models'), hosted, email: hosted ? account.state().email : null, phrase: DELETE_PHRASE };
+});
+ipcMain.handle('data-delete', async (_e, typed) => {
+  const hosted = EDITION === 'cloud' && account.state?.().signedIn === true;
+  if (!hosted && String(typed ?? '').trim().toLowerCase() !== DELETE_PHRASE) return { error: `Type ${DELETE_PHRASE} to confirm.` };
+  const protect = knownVaults();
+  try { checkDataDir(DATA_DIR, { home: homedir() }); } catch (err) { return { error: err.message }; }
+  if (hosted) {
+    const r = await account.handlers['account-data-delete'](typed);
+    if (r?.error) return r;
+  }
+  try { await session.defaultSession.clearStorageData(); } catch (err) { log('delete my data', 'storage', err?.message ?? err); }
+  const keys = await forgetKeychain({ appName: app.getName(), secretsFile: path.join(DATA_DIR, 'secrets.json'), security: (args) => new Promise((resolve) => execFile('/usr/bin/security', args, (err) => resolve(err ? null : ''))) });
+  helperSend({ cmd: 'quit' });
+  let done;
+  try { done = resetData({ dataDir: DATA_DIR, home: homedir(), protect }); } catch (err) { return { error: err.message }; }
+  console.log(`delete my data: ${done.removed.length} removed, ${done.kept.length} kept, ${keys.length} Keychain items`);
+  app.relaunch();
+  app.exit(0);
+  return { ok: true };
+});
 ipcMain.handle('clear-meetings-dir', () => { settings.meetingsDir = null; saveSettings(); brainChanged(); return true; });
 // Settings, Export your notes: the person picks where the zip goes; progress reaches the page as 'export-progress'
 let exporting = false;

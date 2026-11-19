@@ -304,6 +304,9 @@ contextBridge.exposeInMainWorld('quorum', {
   accountDeleteStatus: () => ipcRenderer.invoke('account-delete-status'),
   accountDelete: (typed) => ipcRenderer.invoke('account-delete', typed),
   orgDelete: (workspaceId, typed) => ipcRenderer.invoke('org-delete', workspaceId, typed),
+  // Delete my data, both editions (main.js, dataReset.js): what the confirm names, then the delete and a relaunch
+  dataResetInfo: () => ipcRenderer.invoke('data-reset-info'),
+  dataDelete: (typed) => ipcRenderer.invoke('data-delete', typed),
   onAccountOAuth: on('account-oauth'),
   orgCreate: (name, domain, domainJoin) => ipcRenderer.invoke('org-create', name, domain, domainJoin),
   orgJoin: (how) => ipcRenderer.invoke('org-join', how),

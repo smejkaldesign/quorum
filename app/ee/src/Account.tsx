@@ -3,6 +3,7 @@ import type { AccountState, Member, MemberInvite, Result, Role } from '../../src
 import { Row, Toggle, useMenu } from '../../src/controls';
 import { IconBuilding, IconMore, IconPower, IconReset, IconTrash, ProviderMark } from '../../src/icons';
 import { accountApi } from './accountMock';
+import { PhraseConfirm, useDataResetInfo } from '../../src/DeleteData';
 
 const api = accountApi();
 
@@ -45,11 +46,32 @@ export function useAccount() {
 }
 
 export function AccountCard({ account }: { account: AccountState }) {
+  const [signIn, setSignIn] = useState(false);
+  const gone = !account.signedIn && account.accountGone != null && !signIn;
   return (
     <div data-ee={EE_MARKER}>
       <h3>Account</h3>
-      {!account.signedIn ? <SignIn /> : !account.workspace ? <PickOrg account={account} /> : <OrgCard account={account} />}
+      {gone ? <AccountGone email={account.accountGone ?? ''} onSignIn={() => setSignIn(true)} /> : !account.signedIn ? <SignIn /> : !account.workspace ? <PickOrg account={account} /> : <OrgCard account={account} />}
     </div>
+  );
+}
+
+// the account this Mac held no longer exists on the server (migration 0047, account_gone): it was deleted, here or
+// from the admin app. The person can clear what Quorum keeps on this Mac, or sign in again
+function AccountGone({ email, onSignIn }: { email: string; onSignIn: () => void }) {
+  const info = useDataResetInfo();
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <div className="set-card">
+        <Row icon={<IconPower width={18} height={18} />} title="This account was deleted"
+          desc={`${email ? `The Quorum account for ${email}` : 'The Quorum account on this Mac'} no longer exists, so you are signed out. Quorum still keeps its files on this Mac`}>
+          <button className="pill danger-pill" onClick={() => setOpen(true)}>Delete my data on this Mac</button>
+          <button className="pill" onClick={onSignIn}>Sign in</button>
+        </Row>
+      </div>
+      {open && <PhraseConfirm info={info} onClose={() => setOpen(false)} />}
+    </>
   );
 }
 
