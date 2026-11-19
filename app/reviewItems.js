@@ -55,7 +55,7 @@ export function pastFixItem({ run, res, plan }) {
 
 // a review rule's finding: its own fix (rules/confidential.js: tag, move, or move and tag; rules/nearDuplicates.js:
 // link two notes; rules/contradictions.js: add a marker to one line; rules/hygiene.js: trash litter folders, compact a
-// note, commit notes), else the change Approve makes for its rule (reviewApprove.js approveFinding, kept on the finding as
+// note, commit notes; the Memory setup rules and duplicates and oversized: their ops as they are, kind 'ops'), else the change Approve makes for its rule (reviewApprove.js approveFinding, kept on the finding as
 // approve), else keep as is
 export function findingItem(f) {
   // a finding on the vault as a whole (rules/hygiene.js litter and uncommitted notes) has no note and goes by its title
@@ -65,6 +65,7 @@ export function findingItem(f) {
     const a = f.approve ?? { kind: 'keep', ops: [{ op: 'keep' }] };
     return { ...base, autoFix: false, group: a.kind === 'keep' ? 'keep' : undefined, keep: a.kind === 'keep', ops: a.ops };
   }
+  if (x.kind === 'ops') return { ...base, ...(x.group ? { group: x.group } : {}), ops: x.ops.map((o) => ({ ...o })) };
   const ops = [];
   if (x.kind === 'link') ops.push({ op: 'link', rel: f.rel, to: x.to });
   if (x.kind === 'annotate') ops.push({ op: 'annotate', rel: f.rel, line: x.line, text: x.text, add: x.add });
@@ -84,6 +85,10 @@ export function itemLine(item) {
   const o = item.ops?.[0];
   if (!o) return item.hold ?? '';
   if (item.group === 'merge') return `Merge ${q(item.ops[1]?.rel)} into ${q(o.rel)}`;
+  if (o.op === 'merge') return item.ops.length > 1 ? `Merge ${item.ops.length} copies into ${q(o.rel)}` : `Merge ${q(o.drop)} into ${q(o.rel)}`;
+  if (o.op === 'create' && item.kind === 'finding') return `Write ${q(o.rel)} and link ${item.ops.length - 1 === 1 ? 'its mention' : `${item.ops.length - 1} mentions`} to it`;
+  if (o.op === 'mention') return item.ops.length > 1 ? `Link ${item.ops.length} names in ${q(o.rel)} to their notes` : `Link ${q(o.name)} in ${q(o.rel)} to ${q(o.to)}`;
+  if (o.op === 'split') return `Move ${o.parts.length} ${o.parts.length === 1 ? 'section' : 'sections'} of ${q(o.rel)} into notes beside it`;
   if (item.group === 'rewrite') return `Rewrite ${q(o.rel)} as the agent drafted it`;
   if (o.op === 'keep') return item.kind === 'pastfix' ? `Keep the earlier fix on ${q(item.title)} as it is` : `Keep ${q(item.title)} as it is`;
   if (item.kind === 'pastfix' && item.group === 'retro' && item.retro) {

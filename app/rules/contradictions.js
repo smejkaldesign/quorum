@@ -10,7 +10,8 @@
 // applies on its own only when every auto-approve criterion holds; everything else waits in review, and the batch
 // planner lists it under Check these first.
 //
-// ctx.contradictions: { provider, bar } from main; without it the rule reads structured claims only
+// ctx.contradictions: { provider, bar } from main; without it the rule reads structured claims only. ctx.graph: a pair
+// joined by a current supersedes edge is resolved; main records each finding as a contradicts edge (memorySetup.js)
 import { ancestors, finding, isOff, quote, skipped } from './common.js';
 import { hashText, indexNote, pruneIndexCache } from '../contradictionIndex.js';
 import { structuredClaims } from '../contradictionClaims.js';
@@ -135,6 +136,8 @@ export function run(ctx) {
   const out = [];
   for (const [first, ...rest] of byOlder.values()) {
     const { p, res } = first;
+    // a pair a person already resolved holds a current supersedes edge in the memory graph (memorySetup.js)
+    if (ctx.graph?.linked(res.newer.rel, res.older.rel, ['supersedes'])) continue;
     // a save sweep keeps only the findings on the notes it checks (rules/index.js), so the others are not built
     if (touched && !touched.has(res.older.rel) && !touched.has(res.newer.rel)) continue;
     const { older, newer } = res;

@@ -1,6 +1,8 @@
 // the keeper: what maintains an Agent OS after Quorum writes into it. Each new meeting note gets an index line, a line
 // in the daily note, and a line under "## Meetings" in every people note and project note it concerns; a dated entry in
-// .quorum/changelog.md records each change. With a model source chosen, a few learned facts per note go into a marked
+// .quorum/changelog.md records each change. With the memory graph open, each filed meeting also records typed edges in
+// it: attended for each person, mentions for each project it names, decided_in for each decision. With a model source
+// chosen, a few learned facts per note go into a marked
 // list in .quorum/learned.md, or in a vault note linked from index.md. Claude Code loads neither on its own; the Quorum
 // MCP server reads them (learned_facts). The list stays under a budget in characters: the oldest lines move to
 // .quorum/changelog.md when it runs over, and a line marked #keep stays. A fact that only says a note is empty or holds
@@ -29,6 +31,7 @@ import { SETUP_FILE, plan, readSetup, slug } from './starter.js';
 import { LEARNED_CLOSE, LEARNED_FILE, LEARNED_OPEN, blockAt, learnedFileIn, learnedLines } from './cli/learned.mjs';
 import { junkOf } from './noteJunk.js';
 import { DAILY_DEFAULT, choose, dailyName, dailyPattern, isGenerated, owns, resolvePlugins } from './plugins.js';
+import { entityId, noteKind } from './graph/extract.js';
 
 export const KEEPER_FILE = path.join('.quorum', 'keeper.json');
 export const CHANGELOG = path.join('.quorum', 'changelog.md');
@@ -287,7 +290,26 @@ export function linkMentions(text, links) {
   return fm + body;
 }
 
-export function createKeeper({ onStep = () => {}, brain, settings, saveSettings = () => {}, guards = () => null, wouldBlock = () => null, runText = null, hasModel = () => false, owner = () => '', log = () => {}, onChange = () => {}, errorLog = null, versions = null, live = null, onGuarded = () => {} }) {
+// The typed edges of a filed meeting (graph/store.js): each person the keeper matched attended it, it mentions each
+// project it names, and each decision line the graph holds for it was decided in it. Ids as the graph extracts them
+// (graph/extract.js entityId); rule provenance, since they come from the keeper's name match. have(edge) answers true
+// for an edge the graph holds already, which is left out. Pure
+export function meetingEdges({ rel, props = {}, date, people = [], projects = [], decisions = [], at = Date.now(), have = () => false }) {
+  const meeting = entityId(noteKind(rel, props).kind, rel);
+  const day = Date.parse(String(date ?? '').slice(0, 10));
+  const from = Number.isFinite(day) ? day : null;
+  const idOf = (r, fallback) => { const k = noteKind(r, {}).kind; return entityId(k === 'note' ? fallback : k, r); };
+  // by: the keeper's own edges, which the graph keeps when it reads the note again (graph/index.js)
+  const edge = (src, dst, kind, line = null, confidence = 0.9) => ({ src, dst, kind, provenance: 'rule', source_rel: rel, source_line: line, confidence, valid_from: from, recorded_at: at, props: { by: 'keeper' } });
+  return [
+    ...people.map((p) => edge(idOf(p, 'person'), meeting, 'attended')),
+    ...projects.map((p) => edge(meeting, idOf(p, 'project'), 'mentions')),
+    ...decisions.map((d) => edge(d.id, meeting, 'decided_in', d.line ?? null, 0.8)),
+  ].filter((e) => !have(e));
+}
+
+// graph: the memory graph's store (graph/store.js) or null while it is not open; a filed meeting's typed edges go there
+export function createKeeper({ onStep = () => {}, brain, settings, saveSettings = () => {}, guards = () => null, wouldBlock = () => null, runText = null, hasModel = () => false, owner = () => '', log = () => {}, onChange = () => {}, errorLog = null, versions = null, live = null, onGuarded = () => {}, graph = () => null }) {
   // factsBudget and factsNote are null until the user picks one
   // meetingsIndex writes the meeting index lines to <meetings folder>/index.md while the vault owns the root index
   // editVault lets the keeper edit files Quorum did not make, and factsInClaude turns on the copy in CLAUDE.md; both are
@@ -648,13 +670,15 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
     }
     // memories this note was filed into, linked inline in it once filing is done
     const inline = [];
+    // the people and project notes it was filed into, for the typed edges
+    const filed = { people: [], projects: [] };
     // people: a note per participant, matched by slug
     if (f.people && owns(rows, 'links')) {
       if (people.length) step(`Checking notes for ${people.length} ${people.length === 1 ? 'person' : 'people'}`);
       for (const p of people) {
         const abs = path.join(vault, f.people, `${slug(p)}.md`);
         const cur = read(abs);
-        if (cur != null) { touch(abs, appendUnder(cur, '## Meetings', `- ${date} ${link} ${title}`), cur); inline.push({ name: p, target: slug(p) }); }
+        if (cur != null) { touch(abs, appendUnder(cur, '## Meetings', `- ${date} ${link} ${title}`), cur); inline.push({ name: p, target: slug(p) }); filed.people.push(posix(path.join(f.people, `${slug(p)}.md`))); }
       }
     }
     // projects: a note whose title appears in the meeting text
@@ -670,7 +694,7 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
         const name = (parseFrontmatter(cur).props.title ?? cur.match(/^#\s+(.+)$/m)?.[1] ?? path.basename(n, '.md')).toString().trim();
         if (name.length < 3) continue;
         const hit = new RegExp(`(^|[^a-z0-9])${name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`, 'i').test(body);
-        if (hit) { touch(abs, appendUnder(cur, '## Meetings', `- ${date} ${link} ${title}`), cur); inline.push({ name, target: path.basename(n, '.md') }); }
+        if (hit) { touch(abs, appendUnder(cur, '## Meetings', `- ${date} ${link} ${title}`), cur); inline.push({ name, target: path.basename(n, '.md') }); filed.projects.push(posix(path.join(f.projects, n))); }
       }
     }
     // the same links inline in the meeting note: a name it mentions points at the memory it was filed into. Only in a
@@ -683,6 +707,18 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
         writeNote(vault, path.join(vault, rel), linked);
         changed.push(rel);
       }
+    }
+    // the typed edges in the memory graph: attended, mentions, decided_in. The graph is derived data, so a failure here
+    // is logged and filing goes on
+    const store = graph();
+    if (store) {
+      try {
+        const r = posix(rel);
+        const decisions = store.nodesByRel(r).filter((x) => x.kind === 'decision').map((x) => ({ id: x.id, line: x.props?.line ?? null }));
+        const have = (e) => store.edgesOf(e.src, { dir: 'out', kinds: [e.kind], current: true }).some((x) => x.dst === e.dst);
+        const edges = meetingEdges({ rel: r, props, date, people: filed.people, projects: filed.projects, decisions, have });
+        store.tx(() => { for (const e of edges) store.addEdge(e); });
+      } catch (e) { fail('graph', e); }
     }
     // learned facts, with the person's own model source, into the learned list (saveFacts); lines pruned to fit the
     // budget are kept in the changelog entry

@@ -20,11 +20,14 @@ import { MAX_RULE_TEXT, ruleText } from './rules/common.js';
 import { MEMORY_MODELS } from './memoryModels.js';
 import { DECIDER_ON, createDecider } from './decide/index.js';
 import { createPairGate } from './decide/gate.js';
+import { ruleGraph } from './rules/entities.js';
 
 // the text cut the rules read (rules/common.js), exported here for the callers that already import it
 export { MAX_RULE_TEXT, ruleText };
 
-export function createMemoryEngine({ dataDir, ask = async () => { throw new Error('No model'); }, emit = () => {}, log = () => {}, now = () => Date.now() }) {
+// graph(vault): the memory graph's store for the vault, read-only (graph/store.js), asked for once main's cond says
+// the graph is built (graphReady); the rules read it through rules/entities.js ruleGraph and fall back to the notes alone
+export function createMemoryEngine({ dataDir, ask = async () => { throw new Error('No model'); }, emit = () => {}, log = () => {}, now = () => Date.now(), graph = () => null }) {
   let vault = null;
   // rel -> { rel, text, note, mtime, size, inbound, outbound, chars }
   let notes = new Map();
@@ -111,7 +114,9 @@ export function createMemoryEngine({ dataDir, ask = async () => { throw new Erro
     if (kind === 'full' || kind === 'first' || hygiene?.vault !== vault) {
       try { hygiene = { vault, ...scanHygiene({ vault, notes: list, file: path.join(dataDir, 'memory-hygiene.json'), now: now() }) }; } catch (e) { log('memory engine', 'hygiene scan', e?.message); hygiene = null; }
     }
-    const ctx = { notes: list, resolve, tags, folders: cond.folders ?? {}, contradictions: contradictions(), hygiene };
+    let g = null;
+    if (cond.graphReady === true) { try { g = ruleGraph(graph(vault)); } catch (e) { log('memory engine', 'graph', e?.message); } }
+    const ctx = { notes: list, resolve, tags, folders: cond.folders ?? {}, contradictions: contradictions(), hygiene, graph: g, owner: cond.owner ?? '' };
     const s = sweeps.run(vault, kind, ctx, { only });
     return { state: s, tags };
   }

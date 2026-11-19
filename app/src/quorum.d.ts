@@ -125,6 +125,34 @@ export type ScreenContextStatus = { available?: boolean; on: boolean; granted: b
 export type SetupRecord = { version: number; name: string; answers: SetupAnswers; createdAt: string; updatedAt?: string };
 // the workspace vault: where teammates' shared notes land on this Mac, with their provenance bonds
 export type TeamVault = { root: string; notes: number; behind: number; last: { written: number; behind: number; removed: number; skipped: number } };
+// memory setup (memorySetup.js): the scan's phases and progress, and its report
+export type MemorySetupGap = { id: string; label: string; count: number; fixable: number; sample: string[] };
+export type MemorySetupReport = {
+  at: number;
+  counts: {
+    notes: number;
+    links: { resolved: number; total: number };
+    entities: { people: number; projects: number; meetings: number; decisions: number; source: 'graph' | 'notes' };
+    embeddings: { built: number; total: number } | null;
+    graph: { nodes: number | null; edges: number | null } | null;
+  };
+  gaps: MemorySetupGap[];
+  fixes: number;
+  freshness: { days: number; confirmed: number | null; basis: 'facts' | 'notes'; contradictions: number; staleSummaries: number };
+  outside: { file: string; chars: number; budget: number; over: boolean; dead: string[] }[];
+  keeper: { on: boolean; made: boolean } | null;
+  model: { available: boolean };
+};
+export type MemorySetupState = {
+  running: boolean;
+  phase: 'index' | 'graph' | 'checks' | 'report' | 'done' | null;
+  progress: { done: number; total: number; label: string } | null;
+  phases: { id: string; label: string }[];
+  error: string | null;
+  report: MemorySetupReport | null;
+  done: boolean;
+};
+export type MemorySetupStatus = MemorySetupState & { made: 'quorum' | null; keeper: { on: boolean; editVault: boolean }; graph: boolean };
 export type Brain = { root: string; vault: string; name: string; made?: 'quorum' | null; markers: { agentOS: string | null; obsidian: boolean; safetyHooks: boolean } };
 // hosted edition: who is signed in, which organization they are in, and whether notes sync
 export type Role = 'owner' | 'admin' | 'member';
@@ -664,6 +692,10 @@ declare global {
       setupRead(): Promise<SetupRecord | null>;
       setupRerun(answers: SetupInput): Promise<Brain & { written: string[] }>;
       keeperStatus(): Promise<KeeperStatus>;
+      // memory setup (memorySetup.js): the scan on connect and from Settings, Memory
+      memorySetupStatus(): Promise<MemorySetupStatus | null>;
+      memorySetupRun(opts?: { keeper?: boolean }): Promise<MemorySetupStatus | null>;
+      onMemorySetup(cb: (s: MemorySetupState) => void): Unsub;
       screenContextStatus(): Promise<ScreenContextStatus>;
       screenContextSet(on: boolean): Promise<ScreenContextStatus>;
       screenContextPrivacy(): Promise<void>;

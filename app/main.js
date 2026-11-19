@@ -72,6 +72,7 @@ import { batchItems, rollBackItems } from './batchItems.js';
 import { FIX_RECHECK_RULE, FIX_RECHECK_VERSION, fixVersions, recheckAll, undoPlan } from './fixRecheck.js';
 import { buildPlan, checkFirst, checkOrder, effects, groupLabel, groupOf, notesOf, planExclude } from './batchPlan.js';
 import { RETRO_TITLE, ROW, findingItem, itemLine, linkItem, pastFixItem } from './reviewItems.js';
+import { SETUP_OPS, approvedEdges, createMemorySetup, endEdges, graphFreshness, nodeIdOf, outsideInstructions, recordContradictions, resolveContradiction, runSetupOp, setupReport } from './memorySetup.js';
 import { approveFinding, approvePastFix, gitReader, retroCandidates, withLinkLine } from './reviewApprove.js';
 import { frontBlock, removeFrontmatterKey, withDate } from './frontmatter.js';
 import { createResolver } from './linkparse.js';
@@ -355,6 +356,8 @@ const keeper = createKeeper({
   log: (...a) => log(...a), onChange: (r) => toUI('keeper', r), errorLog: KEEPER_ERRORS, versions: memoryVersions, live: liveRuns,
   // a meeting note the guardrails keep the keeper out of goes on the Recent denials list
   onGuarded: (rel, why) => guardrails.recordDenial({ path: rel, reason: why, surface: 'keeper' }),
+  // memory setup: a filed meeting's typed edges go into the memory graph
+  graph: () => graphStore(),
 });
 ipcMain.handle('keeper-status', () => keeper.status());
 ipcMain.handle('keeper-set', (_e, patch) => keeper.set(patch ?? {}));
@@ -2539,6 +2542,7 @@ async function sweepNow(kind, only, { after }) {
     if (!r?.state || brain()?.vault !== b.vault) return null;
     setTags(b.vault, r.tags ?? []);
     memorySweep.put(b.vault, r.state);
+    recordSweepContradictions(b.vault);
     const s = r.state;
     log('memory sweep', kind, `${s.last.notes} notes`, `${s.last.ms} ms`, `${s.last.found} findings`);
     toUI('memory-updates', null);
@@ -2648,6 +2652,91 @@ ipcMain.handle('memory-findings-archive', (_e, keys, on) => {
 // Check again in Memory health: a full sweep now
 ipcMain.handle('memory-sweep-now', () => memoryCheck(memorySweep.state(brain()?.vault ?? '')?.lastFull ? 'full' : 'first'));
 
+// ---- Memory setup (memorySetup.js) ----
+// The scan on connect and from Settings, Memory, its IPC, and the graph edges approved fixes, the keeper and
+// contradictions record. The graph's store is used once memoryGraph is built; until then every graph step is skipped
+const graphReady = () => { try { return memoryGraph?.status().phase === 'ready'; } catch { return false; } };
+const graphStore = () => (graphReady() ? memoryGraph.store : null);
+const waitUntil = async (ok, { ms = 120000, every = 250, onTick = () => {} } = {}) => {
+  const end = Date.now() + ms;
+  while (!ok()) { if (Date.now() > end) return false; onTick(); await new Promise((r) => setTimeout(r, every)); }
+  return true;
+};
+const memorySetup = createMemorySetup({
+  file: path.join(DATA_DIR, 'memory-setup.json'),
+  emit: (s) => toUI('memory-setup', s),
+  log,
+  steps: {
+    index: async (progress) => { await waitUntil(() => !!vindex?.watching(), { onTick: () => progress(0, 0, `Reading the notes: ${(vindex?.size() ?? 0).toLocaleString('en-US')} so far`) }); },
+    graph: async (progress) => {
+      if (!memoryGraph) return;
+      await waitUntil(() => !memoryGraph || ['ready', 'closed'].includes(memoryGraph.status().phase), { ms: 300000, onTick: () => { const p = memoryGraph?.status(); if (p?.total) progress(p.done, p.total, `Building the memory graph: ${p.done.toLocaleString('en-US')} of ${p.total.toLocaleString('en-US')} notes`); } });
+    },
+    // a memory check already running (the first check of a vault) is waited for instead of run twice
+    checks: async () => {
+      if (checkWork) { await waitUntil(() => !checkWork, { ms: 30 * 60000, every: 1000 }); return; }
+      await memoryCheck(memorySweep.state(brain()?.vault ?? '')?.lastFull ? 'full' : 'first');
+    },
+    report: async () => setupReportNow(),
+  },
+});
+function setupReportNow() {
+  const b = brain();
+  if (!b || !vindex) throw new Error('No vault connected');
+  const notes = vindex.snapshot();
+  const store = graphStore();
+  let stats = null;
+  try { stats = store?.stats() ?? null; } catch (e) { log('memory graph', e?.message); }
+  return setupReport({
+    notes, missing: notes.reduce((n, x) => n + vindex.missingIn(x.rel).length, 0),
+    findings: findingsNow(), links: linkIssues().map((e) => issueOf(withMarks(e))),
+    graph: store ? { stats, freshness: (since) => graphFreshness(store, since) } : null,
+    search: searchCounts(), keeper: keeper.status(), made: b.made,
+    outside: outsideInstructions({ root: b.root, vault: b.vault, resolve: (t, f) => vindex.resolve(t, f) }),
+  });
+}
+// the search index's passages and how many are embedded, or null while it is off
+function searchCounts() {
+  try { const s = memorySearch.status(); return s?.chunks ? { chunks: s.chunks, embedded: s.embedded ?? 0 } : null; } catch { return null; }
+}
+function setupStatus() {
+  const b = brain();
+  if (!b) return null;
+  const k = keeper.status();
+  return { ...memorySetup.status(b.vault), made: b.made ?? null, keeper: { on: !!k.on, editVault: !!k.editVault }, graph: !!memoryGraph };
+}
+// once per vault, after its index is in: the scan of a vault that has no report yet
+function scheduleSetup(vault) {
+  setTimeout(() => { if (brain()?.vault === vault && !memorySetup.status(vault).report) memorySetup.run(vault).catch(() => {}); }, 6000);
+}
+function recordSweepContradictions(vault) {
+  const store = graphStore();
+  if (!store) return;
+  try { recordContradictions(store, memorySweep.findings(vault)); } catch (e) { log('memory graph', e?.message); }
+}
+// the edges of a batch's approved connections and resolved contradictions; their ids, so Undo can end them
+function recordApproved(items) {
+  const store = graphStore();
+  if (!store) return [];
+  const ids = [];
+  const at = Date.now();
+  try {
+    store.tx(() => { for (const e of approvedEdges(items, { at, idOf: (rel, props) => nodeIdOf(store, rel, props) })) ids.push(store.addEdge(e)); });
+    for (const it of items) { const id = resolveContradiction(store, it, { at }); if (id != null) ids.push(id); }
+  } catch (e) { log('memory graph', e?.message); }
+  return ids;
+}
+ipcMain.handle('memory-setup-status', () => setupStatus());
+// runs in the background and reports through memory-setup events; keeper: true or false sets the keeper first
+ipcMain.handle('memory-setup-run', (_e, opts) => {
+  const b = brain();
+  if (!b) throw new Error('No vault connected');
+  if (typeof opts?.keeper === 'boolean') keeper.set({ on: opts.keeper });
+  memorySetup.run(b.vault).catch(() => {});
+  return setupStatus();
+});
+FEED_READS.add('memory-setup-status');
+// ---- end Memory setup ----
 function openIndex() {
   vindex?.stop();
   vindex = null;
@@ -2676,6 +2765,8 @@ function openIndex() {
   vindex.start().then(() => { if (graph && memoryGraph === graph) return graph.build(); }).catch((err) => log('memory graph build', String(err)));
   // the keeper files whatever arrived while the app was closed, once the folder is open
   setTimeout(() => keeper.run({ reason: 'launch' }).catch(() => {}), 4000);
+  // memory setup: a vault with no setup report yet gets its scan
+  scheduleSetup(b.vault);
   // the hosted edition's sync watches the same vault for files to push; the vault changed, so it moves with it
   account.sync.live();
 }
@@ -3687,6 +3778,9 @@ function memoryCond(heavy = false) {
     busy: recordingNow() || (!!draftAbort && !catchup.running()) || fixRunList().some((r) => r.status === 'queued' || r.status === 'running'),
     idleMs: powerMonitor.getSystemIdleTime() * 1000,
     drafts: settings.memoryDrafts === true,
+    // memory setup: the rules read the memory graph once it is built (memoryEngine.js)
+    graphReady: graphReady(),
+    owner: USER_NAME,
   };
   if (!heavy || !b) return out;
   let bar = null;
@@ -4045,6 +4139,8 @@ async function runOp(item, o, { step, keep, written, vault }) {
     const now = readVault(vault, o.rel);
     if ((now == null ? null : sha(now)) !== o.expect) throw new Error(`“${o.rel}” changed after Quorum planned this batch, so Quorum did not write. Review the plan again`);
   }
+  // memory setup: the ops its rules add (memorySetup.js)
+  if (item.kind === 'finding' && SETUP_OPS.has(o.op)) { await runSetupOp(item, o, { step, keep, vault }, { vindex, trash: (p) => shell.trashItem(p) }); return; }
   const past = item.kind === 'pastfix';
   if (o.op === 'restore') {
     await step(past ? `Putting back ${o.rel} as it read before the earlier fix` : item.relinkTo ? `Pointing the links to ${item.target} in ${o.rel} at ${item.relinkTo}` : `Writing ${o.rel} as the agent drafted it`);
@@ -4191,6 +4287,8 @@ async function runBatch(run, step, keep, release = () => {}) {
   // a kept past fix and every finding leave Needs review as done
   run.done = fixed.filter((i) => (i.kind === 'pastfix' && i.keep) || i.kind === 'finding').map((i) => i.id);
   run.touched = [...touched];
+  // memory setup: the connections the person approved, as person-provenance edges in the memory graph
+  run.graphEdges = recordApproved(fixed);
   const done = (run.groups ?? []).map((g) => g.label).join(', ');
   return `Applied the plan: ${done}${followed.length ? `. Then pointed ${followed.length === 1 ? `the link to “${followed[0]}”` : `${followed.length} links`} at the notes the current rules pick` : ''}`;
 }
@@ -4233,6 +4331,8 @@ function undoBatch(run, rels) {
     else if (it.kind === 'pastfix') logPastFix(it.key, 'undone');
     else if (it.finding) { try { decisionLog.record(run.vault, { ...it.finding, decision: 'undone', actor: currentActor() }); } catch (e) { log('decision log', e?.message); } }
   }
+  // memory setup: the edges the batch recorded end with it
+  try { endEdges(graphStore(), run.graphEdges); } catch (e) { log('memory graph', e?.message); }
   try { sweep('save', rels); } catch (e) { log('memory sweep', e?.message); }
 }
 // Apply memory fixes on its own (Settings > Memory, off by default): after a sweep, every item with an automatic fix
