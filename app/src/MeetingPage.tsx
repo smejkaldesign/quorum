@@ -242,23 +242,33 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
   }, [e.id, e.title]);
 
   // Generate anyway, and Regenerate once there is a one-off brief: written from the invite and the vault, kept on the meeting
-  const generate = (force: boolean) => {
+  // A failed Regenerate keeps the last brief on the page with an error line. Generate anyway swaps its button for the
+  // loading lines, so focus moves to the section's heading once the brief is there
+  const prepHead = useRef<HTMLHeadingElement>(null), aboutHead = useRef<HTMLHeadingElement>(null);
+  const generate = (force: boolean, from: 'prep' | 'about') => {
     setWriting(true);
     window.quorum.meetingBrief({ title: e.title, organizer: e.organizer, id: e.id, generate: true, anyway: true, force })
       .then((g) => setData((d) => ({ ...g, related: g.related ?? d?.related })))
-      .catch(() => setData((d) => (d ? { ...d, status: 'failed' } : d)))
-      .finally(() => setWriting(false));
+      .catch(() => setData((d) => (d ? (d.brief ? { ...d, failed: true } : { ...d, status: 'failed' }) : d)))
+      .finally(() => {
+        setWriting(false);
+        requestAnimationFrame(() => { if (!document.activeElement || document.activeElement === document.body) (from === 'prep' ? prepHead : aboutHead).current?.focus(); });
+      });
   };
   const at = new Date(e.start), end = new Date(e.end);
   const platform = e.platform ? PLATFORM_APP[e.platform] : null;
   const brief = data?.brief;
-  const loading = !data || writing;
+  // a kept brief stays on the page while it is written again
+  const loading = !data || (writing && !data.brief);
   const min = data?.min ?? 3;
   // a meeting with too few past meetings, where Generate anyway is offered (the meeting-prep flag is on)
   const canAnyway = !!data?.anyway && !brief && (data.status === 'few' || data.status === 'failed');
   const onWiki = (target: string) => { const file = data?.links?.[target]; if (file) onOpenNote(file); };
-  const oneOffFoot = brief?.oneOff ? <p className="mp-prep-foot"><button className="up-all" disabled={writing} onClick={() => generate(true)}>Regenerate</button></p> : null;
-  const anywayFoot = canAnyway ? <p className="mp-prep-foot"><button className="up-all" disabled={writing} onClick={() => generate(false)}>Generate anyway</button></p> : null;
+  const oneOffFoot = (from: 'prep' | 'about') => (brief?.oneOff ? <>
+    {data?.failed && !writing && <p className="set-error" role="alert">Quorum could not write new prep notes. These are the last ones it wrote.</p>}
+    <p className="mp-prep-foot"><button className="up-all" disabled={writing} aria-busy={writing} onClick={() => generate(true, from)}>{writing ? 'Writing…' : 'Regenerate'}</button></p>
+  </> : null);
+  const anywayFoot = (from: 'prep' | 'about') => (canAnyway ? <p className="mp-prep-foot"><button className="up-all" disabled={writing} onClick={() => generate(false, from)}>Generate anyway</button></p> : null);
   // once the brief arrives, every section types itself in together over about half a second
   const reveal = useReveal(brief ? [brief.prep, brief.what, brief.who, brief.how].join('').length : 0, brief);
   const emptyText = data?.status === 'few' ? `Not recurring yet. After ${min} or more meetings, Quorum starts showing a summary and prep notes for this meeting, specific to you.${data.anyway ? ' Generate anyway writes them now from the invite and your vault.' : ''}`
@@ -311,18 +321,18 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
 
         {tab === 'prep' && <>
         {vaultPrep ? <VaultPrep event={e} onOpenNote={onOpenNote} /> : <section className="mp-section mp-prep">
-          <h2>Meeting prep notes</h2>
+          <h2 ref={prepHead} tabIndex={-1}>Meeting prep notes</h2>
           {loading ? <Skeleton lines={4} />
             : brief?.prep ? <>
               {brief.sources && <p className="muted" role="status">{brief.sources}</p>}
               <Markdown text={reveal(brief.prep)} onWiki={onWiki} />
-              {oneOffFoot}
+              {oneOffFoot('prep')}
             </>
-            : <><p className="mp-empty" role="status">{emptyText}</p>{anywayFoot}</>}
+            : <><p className="mp-empty" role="status">{emptyText}</p>{anywayFoot('prep')}</>}
         </section>}
 
         <section className="mp-section">
-          <h2>About this meeting</h2>
+          <h2 ref={aboutHead} tabIndex={-1}>About this meeting</h2>
           {/* with the vault prep note in the Prep section, the one-off brief's sources and Regenerate sit here */}
           {vaultPrep && !loading && brief?.oneOff && brief.sources && <p className="muted" role="status">{brief.sources}</p>}
           {ABOUT.map(([key, label]) => (
@@ -333,7 +343,7 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
                 : <p className="mp-empty">{data?.status === 'few' ? `Shows after ${min} ${min === 1 ? 'meeting' : 'meetings'}.` : 'Not written yet.'}</p>}
             </div>
           ))}
-          {!loading && (canAnyway ? anywayFoot : vaultPrep ? oneOffFoot : null)}
+          {!loading && (canAnyway ? anywayFoot('about') : vaultPrep ? oneOffFoot('about') : null)}
         </section>
 
         {(() => {

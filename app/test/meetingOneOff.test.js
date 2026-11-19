@@ -1,5 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
-import { NOTHING, ONE_OFF_SYSTEM, inviteSource, oneOffBrief, oneOffPrompt, parseOneOff, sourcesLine } from '../meetingOneOff.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { createBriefCache } from '../meetingBrief.js';
+import { KEEP_MS, NOTHING, ONE_OFF_SYSTEM, createOneOff, inviteSource, oneOffBrief, oneOffPrompt, parseOneOff, sourcesLine } from '../meetingOneOff.js';
 import { gatherPrep, prepSettings } from '../meetingPrep.js';
 import { prepNoteFor, withPrepLink } from '../meetingPrepRun.js';
 import { mapEvent } from '../sources/gcal.js';
@@ -122,7 +126,8 @@ describe('meeting note link back to its prep note', () => {
   it('adds one prep_note line to the frontmatter and changes nothing else', () => {
     const note = '---\ngranola_id: m1\ntitle: "Interview"\n---\n\n# Interview\n\nMy notes.\n';
     const out = withPrepLink(note, 'Daily/prep/2026-11-20 Interview Jane Doe a1b2c3.md');
-    expect(out).toBe('---\ngranola_id: m1\ntitle: "Interview"\nprep_note: "[[Daily/prep/2026-11-20 Interview Jane Doe a1b2c3]]"\n---\n\n# Interview\n\nMy notes.\n');
+    // the note's name only: no vault folder reaches a note that syncs
+    expect(out).toBe('---\ngranola_id: m1\ntitle: "Interview"\nprep_note: "[[2026-11-20 Interview Jane Doe a1b2c3]]"\n---\n\n# Interview\n\nMy notes.\n');
     expect(withPrepLink(note, null)).toBe(note);
   });
 });
@@ -132,5 +137,90 @@ describe('Google attachments', () => {
     const m = mapEvent({ id: 'ev1', summary: 'Interview', start: { dateTime: '2026-11-20T15:00:00Z' }, end: { dateTime: '2026-11-20T16:00:00Z' }, attachments: [{ title: 'Resume.pdf', fileUrl: 'https://drive.google.com/file/d/x' }] }, 'primary');
     expect(m.attachments).toEqual(['Resume.pdf']);
     expect(JSON.stringify(m)).not.toContain('drive.google.com');
+  });
+});
+
+describe('createOneOff', () => {
+  let dir, file, n = 0;
+  beforeEach(() => { dir = mkdtempSync(path.join(tmpdir(), 'quorum-oneoff-')); });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  const BRIEF = { prep: '- Ask about the portfolio. (invite)', what: 'An interview.', who: 'Invited: Jane Doe.', how: NOTHING, sources: 'Built from the invite. No past meetings in this series.', oneOff: true };
+  const T = Date.parse('2026-11-19T12:00:00Z');
+  function setup({ ev = event(), on = true, min = 3, build = async () => ({ status: 'ready', brief: BRIEF }), never = () => false, model = true } = {}) {
+    file = path.join(dir, `briefs-${++n}.json`);
+    const cache = createBriefCache(file);
+    const d = { on: () => on, min: () => min, cache, event: async (id) => (id === ev?.id ? ev : null), isMe: (a) => a.self === true, onNeverList: never, isExcluded: () => false, modelReady: () => model, build: vi.fn(build), links: () => ({}), now: () => T };
+    return { d, cache, run: createOneOff(d) };
+  }
+  const q = (over = {}) => ({ title: 'Interview: Jane Doe', id: 'e1', ...over });
+
+  it('offers nothing with the flag off and writes nothing without Generate anyway', async () => {
+    const off = setup({ on: false });
+    expect(await off.run(q({ anyway: true, generate: true }), [], [])).toMatchObject({ status: 'few', anyway: false });
+    const { d, run } = setup();
+    expect(await run(q({ generate: true }), [], [])).toMatchObject({ status: 'few', anyway: true, min: 3 });
+    expect(d.build).not.toHaveBeenCalled();
+  });
+  it('writes on Generate anyway, keeps it on the event, and writes it again when the invite changes', async () => {
+    const s = setup();
+    expect(await s.run(q({ anyway: true, generate: true }), [], [])).toMatchObject({ status: 'ready', brief: BRIEF });
+    expect(await s.run(q(), [], [])).toMatchObject({ status: 'ready', brief: BRIEF });
+    expect(s.d.build).toHaveBeenCalledTimes(1);
+    // same event id, new time: the kept brief shows as stale, and opening the page writes it again without Generate anyway
+    const moved = setup({ ev: event({ start: '2026-11-21T15:00:00.000Z', end: '2026-11-21T16:00:00.000Z' }) });
+    moved.cache.set('event:e1', s.cache.entry('event:e1').stamp, BRIEF, { end: '2026-11-20T16:00:00.000Z' });
+    expect(await moved.run(q(), [], [])).toMatchObject({ status: 'stale', brief: BRIEF });
+    expect(await moved.run(q({ generate: true }), [], [])).toMatchObject({ status: 'ready' });
+    expect(moved.d.build).toHaveBeenCalledTimes(1);
+  });
+  it('writes one on open with the threshold at 0', async () => {
+    const s = setup({ min: 0 });
+    expect(await s.run(q(), [], [])).toMatchObject({ status: 'stale', brief: null });
+    expect(await s.run(q({ generate: true }), [], [])).toMatchObject({ status: 'ready' });
+  });
+  it('hides and deletes a kept brief once someone invited is on the never-listen list', async () => {
+    const s = setup();
+    await s.run(q({ anyway: true, generate: true }), [], []);
+    const later = setup({ never: (e) => e === 'jane.doe@example.com' });
+    later.cache.set('event:e1', s.cache.entry('event:e1').stamp, BRIEF, { end: event().end });
+    expect(await later.run(q(), [], [])).toMatchObject({ status: 'opted-out', brief: null });
+    expect(later.cache.entry('event:e1')).toBeNull();
+    expect(later.d.build).not.toHaveBeenCalled();
+  });
+  it('deletes the kept brief when a Regenerate comes back opted out', async () => {
+    const s = setup();
+    await s.run(q({ anyway: true, generate: true }), [], []);
+    s.d.build.mockImplementation(async () => ({ status: 'opted-out' }));
+    expect(await s.run(q({ generate: true, force: true }), [], [])).toMatchObject({ status: 'opted-out', brief: null });
+    expect(s.cache.entry('event:e1')).toBeNull();
+  });
+  it('keeps the last brief, marked failed, when Regenerate fails or no model is set', async () => {
+    const s = setup();
+    await s.run(q({ anyway: true, generate: true }), [], []);
+    s.d.build.mockImplementation(async () => ({ status: 'failed' }));
+    expect(await s.run(q({ generate: true, force: true }), [], [])).toMatchObject({ status: 'ready', brief: BRIEF, failed: true });
+    s.d.modelReady = () => false;
+    expect(await s.run(q({ generate: true, force: true }), [], [])).toMatchObject({ status: 'ready', brief: BRIEF, failed: true });
+    await expect(setup({ model: false }).run(q({ anyway: true, generate: true }), [], [])).resolves.toMatchObject({ status: 'no-model', brief: null });
+  });
+  it('runs one write per event at a time', async () => {
+    let release;
+    const s = setup({ build: () => new Promise((r) => { release = () => r({ status: 'ready', brief: BRIEF }); }) });
+    const a = s.run(q({ anyway: true, generate: true }), [], []);
+    await new Promise((r) => setTimeout(r, 0));
+    const b = s.run(q({ anyway: true, generate: true }), [], []);
+    await new Promise((r) => setTimeout(r, 0));
+    release();
+    expect((await a).status).toBe('ready');
+    expect((await b).status).toBe('ready');
+    expect(s.d.build).toHaveBeenCalledTimes(1);
+  });
+  it('drops one-off briefs for events that ended more than a week ago, and keeps series briefs', async () => {
+    const s = setup();
+    s.cache.set('event:old', 'x', BRIEF, { end: new Date(T - KEEP_MS - 1000).toISOString() });
+    s.cache.set('weekly sync', 'y', BRIEF);
+    await s.run(q(), [], []);
+    const saved = JSON.parse(readFileSync(file, 'utf8'));
+    expect(Object.keys(saved)).toEqual(['weekly sync']);
   });
 });

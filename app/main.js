@@ -105,9 +105,9 @@ import { open as openAsync, stat as statAsync } from 'node:fs/promises';
 import { titleOf } from './notificationSummary.js';
 import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
 import { BRIEF_SYSTEM, SERIES_MIN, briefPrompt, createBriefCache, parseBrief, relatedOf, seriesKey, seriesOf } from './meetingBrief.js';
-import { inviteesOf, prepSettings } from './meetingPrep.js';
+import { prepSettings } from './meetingPrep.js';
 import { createPrepCache, createPrepRunner, prepLinks, prepNoteFor, withPrepLink } from './meetingPrepRun.js';
-import { oneOffBrief } from './meetingOneOff.js';
+import { createOneOff, oneOffBrief } from './meetingOneOff.js';
 import { collectExport, exportFileName, writeZip } from './exportNotes.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -2474,45 +2474,32 @@ async function oneOffRels(title, invitees) {
   for (const h of hits?.results?.length ? hits.results : vindex?.search(title, 8) ?? []) if (h?.rel) rels.add(h.rel);
   return [...rels];
 }
-const oneOffRunning = new Map();
-async function oneOffFor(q, past, list) {
-  const min = briefMin();
-  const few = { past: list, brief: null, status: 'few', min, anyway: oneOffOn() };
-  const id = String(q?.id ?? '');
-  if (!oneOffOn() || !id) return few;
-  const key = `event:${id}`;
-  const withLinks = (brief) => ({ past: list, brief, status: 'ready', min, anyway: true, links: brain()?.vault ? prepLinks(brain().vault, brief.prep) : {} });
-  const kept = q?.force ? null : briefCache.get(key, 'one-off');
-  if (kept) return withLinks(kept);
-  // with the threshold at 0 every meeting gets one without asking
-  if (!q?.anyway && min > 0) return few;
-  if (!q?.generate) return { ...few, status: 'stale' };
-  if (modelSource() === 'none') return { ...few, status: 'no-model' };
-  if (oneOffRunning.has(key)) return oneOffRunning.get(key);
-  const run = (async () => {
-    const e = await rawEvent(id);
-    if (!e) return { ...few, status: 'failed' };
-    try {
-      const invitees = inviteesOf(e, { isMe: prepIsMe });
-      const b = brain();
-      const r = await oneOffBrief({
-        event: e, past,
-        notes: vindex ? vindex.snapshot().map((n) => ({ rel: n.rel, title: n.note?.title ?? null, text: n.text, cut: n.cut })) : [],
-        meetings: meetingIndex().map((m) => ({ rel: m.rel, title: m.title, date: m.date, people: m.people })),
-        topicRels: vindex ? await oneOffRels(String(e.title ?? ''), invitees) : [],
-        isMe: prepIsMe, mentionsOptOut, onNeverList, isExcluded: (t) => suggester.isExcluded(t), redact: (t) => suggester.redactLines(t),
-        runModel: (prompt, system) => runClaude(prompt, system, settings.model, { role: 'summary' }),
-        instructions: (() => { try { return b?.markers?.agentOS ? readFileSync(path.join(b.root, b.markers.agentOS), 'utf8') : ''; } catch { return ''; } })(),
-        owner: OWNER, about: aboutMe(),
-      });
-      if (r.status !== 'ready') return { ...few, status: r.status };
-      briefCache.set(key, 'one-off', r.brief);
-      return withLinks(r.brief);
-    } catch (err) { log('meeting brief one-off', err?.message); return { ...few, status: 'failed' }; }
-  })().finally(() => oneOffRunning.delete(key));
-  oneOffRunning.set(key, run);
-  return run;
-}
+const oneOffFor = createOneOff({
+  on: oneOffOn,
+  min: briefMin,
+  cache: briefCache,
+  event: rawEvent,
+  isMe: prepIsMe,
+  mentionsOptOut,
+  onNeverList,
+  isExcluded: (t) => suggester.isExcluded(t),
+  modelReady: () => modelSource() !== 'none',
+  build: async (e, invitees, past) => {
+    const b = brain();
+    return oneOffBrief({
+      event: e, past,
+      notes: vindex ? vindex.snapshot().map((n) => ({ rel: n.rel, title: n.note?.title ?? null, text: n.text, cut: n.cut })) : [],
+      meetings: meetingIndex().map((m) => ({ rel: m.rel, title: m.title, date: m.date, people: m.people })),
+      topicRels: vindex ? await oneOffRels(String(e.title ?? ''), invitees) : [],
+      isMe: prepIsMe, mentionsOptOut, onNeverList, isExcluded: (t) => suggester.isExcluded(t), redact: (t) => suggester.redactLines(t),
+      runModel: (prompt, system) => runClaude(prompt, system, settings.model, { role: 'summary' }),
+      instructions: (() => { try { return b?.markers?.agentOS ? readFileSync(path.join(b.root, b.markers.agentOS), 'utf8') : ''; } catch { return ''; } })(),
+      owner: OWNER, about: aboutMe(),
+    });
+  },
+  links: (prep) => (brain()?.vault ? prepLinks(brain().vault, prep) : {}),
+  log,
+});
 
 // Meeting prep (meetingPrep.js, meetingPrepRun.js): the note an upcoming event opens to, built from the vault and
 // written by the person's own model source, saved into the vault next to the daily note. Behind the meeting-prep flag
@@ -2558,10 +2545,11 @@ const prep = createPrepRunner({
 });
 const prepAhead = () => prep.prepAhead();
 // a meeting note filed from a notes source links back to the prep note Quorum wrote for its event (issue 63), as one
-// frontmatter line Quorum owns. Nothing else in the note changes
+// frontmatter line Quorum owns. Nothing else in the note changes. In Cloud a meeting note syncs to the workspace and can
+// go to a team knowledge base (ee/meetingsKb.js), so the private prep note is linked only in the Local edition
 function linkPrepNote(text, m) {
   const vault = brain()?.vault;
-  if (!prepOn() || !vault) return text;
+  if (!prepOn() || !vault || account.meetingsKb) return text;
   const rel = prepNoteFor(prepCache.entries(), { title: m?.title, start: m?.meetingAt ?? m?.date }, (r) => existsSync(path.join(vault, r)));
   return withPrepLink(text, rel);
 }

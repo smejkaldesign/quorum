@@ -5,7 +5,7 @@
 // is gathered by gatherPrep (meetingPrep.js) as numbered sources. The model writes the bullets and the three About
 // lines, and each must cite a source that reached the prompt; anything that cites none is dropped, and an empty part
 // reads "Nothing found." The brief says what it was built from, since there is no series behind it.
-import { asData, displayName, gatherPrep, inviteesOf, isPrepRel, optedOut, plainText, stripCredentialsInText, wikiLink } from './meetingPrep.js';
+import { asData, displayName, gatherPrep, inviteStamp, inviteesOf, isPrepRel, optedOut, plainText, stripCredentialsInText, wikiLink } from './meetingPrep.js';
 
 export const NOTHING = 'Nothing found.';
 
@@ -111,9 +111,14 @@ export function renderOneOff({ parsed, gathered, used, invitees, series = [], me
 // threshold); notes is the vault snapshot ({ rel, title, text, cut }); meetings is the meeting index ({ rel, title,
 // date, people }); topicRels are the notes the memory graph and search found for the invitees and the title.
 // Returns { status: 'opted-out' | 'failed' | 'ready', brief }
+// an event with anyone on the never-listen list, or an opt-out customer in its invitees, title or description
+export function oneOffOptedOut(event, invitees, { mentionsOptOut = () => false, onNeverList, isExcluded } = {}) {
+  return mentionsOptOut(event?.title) || mentionsOptOut(event?.notes) || optedOut(invitees, { onNeverList, isExcluded }).length > 0;
+}
+
 export async function oneOffBrief({ event, past = [], notes = [], meetings = [], topicRels = [], isMe, mentionsOptOut = () => false, onNeverList, isExcluded, redact = (t) => t, runModel, instructions = '', owner, about, now = Date.now() }) {
   const invitees = inviteesOf(event, { isMe });
-  if (mentionsOptOut(event?.title) || mentionsOptOut(event?.notes) || optedOut(invitees, { onNeverList, isExcluded }).length) return { status: 'opted-out' };
+  if (oneOffOptedOut(event, invitees, { mentionsOptOut, onNeverList, isExcluded })) return { status: 'opted-out' };
   // earlier prep notes are never a source: by their folder and name, or by their type
   const usable = notes.filter((n) => !n.cut && !isPrepRel(n.rel) && !/^---\n[\s\S]*?^type:\s*meeting-prep\b/m.test(n.text ?? ''))
     .map((n) => ({ rel: n.rel, title: n.title ?? null, text: n.text }));
@@ -123,4 +128,53 @@ export async function oneOffBrief({ event, past = [], notes = [], meetings = [],
   const parsed = parseOneOff(reply, used);
   if (!parsed) return { status: 'failed' };
   return { status: 'ready', brief: renderOneOff({ parsed, gathered, used, invitees, series: past.map((m) => m.rel), meetingRels: meetings.map((m) => m.rel) }) };
+}
+
+// briefs for events that ended more than this long ago are dropped from the cache
+export const KEEP_MS = 7 * 86400000;
+
+// The meeting page's one-off path in the main process (main.js meeting-brief): the kept brief for an event, written
+// again when its invite changes, and Generate anyway / Regenerate. The cache entry is keyed by the event id and stamped
+// with the invite (inviteStamp), so a changed title, time, invitee list or description writes it again. Every answer
+// first checks the event against the opt-out lists: an opted-out event shows no brief, and its kept one is deleted.
+// A failed Regenerate keeps showing the last brief, with failed: true.
+// d: { on(), min(), cache, event(id), isMe(a), mentionsOptOut, onNeverList, isExcluded, modelReady(),
+// build(event, invitees, past) -> oneOffBrief result, links(prep), now(), log(...) }
+export function createOneOff(d) {
+  const now = () => (d.now ? d.now() : Date.now());
+  const running = new Map();
+  return async function oneOffFor(q, past, list) {
+    const min = d.min();
+    const few = { past: list, brief: null, status: 'few', min, anyway: d.on() };
+    const id = String(q?.id ?? '');
+    if (!d.on() || !id) return few;
+    const key = `event:${id}`;
+    d.cache.prune((k, v) => !k.startsWith('event:') || !v.end || new Date(v.end).getTime() > now() - KEEP_MS);
+    const e = await d.event(id);
+    if (!e) return few;
+    const invitees = inviteesOf(e, { isMe: d.isMe });
+    if (oneOffOptedOut(e, invitees, d)) { d.cache.delete(key); return { ...few, status: 'opted-out' }; }
+    const stamp = inviteStamp(e, invitees);
+    const prior = d.cache.entry(key);
+    const shown = (brief, extra = {}) => ({ past: list, brief, status: 'ready', min, anyway: true, links: d.links(brief.prep), ...extra });
+    if (prior?.brief && prior.stamp === stamp && !q?.force) return shown(prior.brief);
+    // with the threshold at 0 every meeting gets one without asking; a kept brief whose invite changed is written again
+    if (!q?.anyway && min > 0 && !prior?.brief) return few;
+    // the last brief stays on the page while it is written again, and when that fails
+    const held = (status) => (prior?.brief ? shown(prior.brief, { failed: true, status: 'ready' }) : { ...few, status });
+    if (!q?.generate) return prior?.brief ? shown(prior.brief, { status: 'stale' }) : { ...few, status: 'stale' };
+    if (!d.modelReady()) return held('no-model');
+    if (running.has(key)) return running.get(key);
+    const run = (async () => {
+      try {
+        const r = await d.build(e, invitees, past);
+        if (r.status === 'opted-out') { d.cache.delete(key); return { ...few, status: 'opted-out' }; }
+        if (r.status !== 'ready') return held('failed');
+        d.cache.set(key, stamp, r.brief, { end: e.end ?? e.start ?? null });
+        return shown(r.brief);
+      } catch (err) { d.log?.('meeting brief one-off', err?.message); return held('failed'); }
+    })().finally(() => running.delete(key));
+    running.set(key, run);
+    return run;
+  };
 }

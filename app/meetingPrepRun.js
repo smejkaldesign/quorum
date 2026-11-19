@@ -52,9 +52,11 @@ export function prepNoteFor(entries, { title, start }, exists = () => true) {
     .sort((a, b) => String(b.at ?? '').localeCompare(String(a.at ?? '')))[0];
   return hit ? hit.rel : null;
 }
-// a filed meeting note with its link back to the prep note: one prep_note line in its frontmatter, nothing else changed
+// a filed meeting note with its link back to the prep note: one prep_note line in its frontmatter, nothing else changed.
+// The link is the note's name only, so no vault folder reaches a note that syncs; prep names carry an event hash
 export function withPrepLink(text, rel) {
-  return rel ? setFrontmatterKey(text, 'prep_note', JSON.stringify(`[[${String(rel).replace(/\.md$/i, '')}]]`)) : text;
+  const name = String(rel ?? '').split('/').pop().replace(/\.md$/i, '').replace(/[[\]|]/g, ' ').trim();
+  return name ? setFrontmatterKey(text, 'prep_note', JSON.stringify(`[[${name}]]`)) : text;
 }
 
 // d: { on(), conf(), brain() -> { vault, agentDoc() } | null, snapshot(), search(q, n), meetings(), isMe(a),
