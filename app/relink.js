@@ -73,6 +73,15 @@ export function rewriteLinks({ vault, mapping, sources, resolve, allRels, aliase
   return { files, links };
 }
 
+// notes already moved on disk (outside the app, paired by the index's watcher): relocate's rewrite without the move.
+// index must still hold the old paths, so its resolver and backlinks name what pointed at them
+export function relinkMoved({ vault, index, moves }) {
+  const mapping = new Map(moves.map((m) => [m.from, m.to]));
+  const sources = linkSources(index, [...mapping.keys()]);
+  const allRels = index.rels().map((r) => mapping.get(r) ?? r);
+  return rewriteLinks({ vault, mapping, sources, resolve: index.resolve, allRels, aliasesOf: index.aliasesOf });
+}
+
 // point every link written as `target` (case-insensitive) in the given notes at an existing note instead
 // add a name to a note's aliases: list, leaving the rest of the file byte-for-byte; one edit fixes every link to it
 export function addAlias(abs, alias) {

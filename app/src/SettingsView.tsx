@@ -1,4 +1,5 @@
 import { ConfirmModal } from './ConfirmModal';
+import { ErrorBoundary } from './ErrorBoundary';
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { SetupForm, answersFrom, draftFrom, draftIsEmpty, emptyDraft, type SetupDraft } from './SetupForm';
 import type { AccountState, BetaState, Brain, CalendarSettings, DecisionProvider, DecisionsStatus, KeeperStatus, OptOut, Profile, ScreenContextStatus, Settings, TeamVault, Transcription, UpdateState, Voice, Workspace } from './quorum';
@@ -167,6 +168,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
       </aside>
 
       <main className="set-main" ref={mainRef} onScroll={(e) => { scrollState.current.top = e.currentTarget.scrollTop; }}>
+        <ErrorBoundary view={`settings/${page}`} resetKey={page}>
         <div className="set-col">
           {page === 'connectors' && ((connectorDetail && connectorDetailName(connectorDetail)) || connLib)
             ? <h1 className="set-title crumbs" ref={titleRef} tabIndex={-1}>
@@ -224,6 +226,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
             : page === 'connectors' ? <ConnectorsPage detail={connectorDetail} onDetail={setConnectorDetail} library={connLib} onLibrary={setConnLib} brain={brain} onFolder={onConnect} onNotes={() => go('memory')} focus={connectorsFocus} />
             : <VoicePage settings={settings} onSettings={onSettings} dictionaryOnly={voice === 'dictionary'} screenRow={nt.screenContext} />}
         </div>
+        </ErrorBoundary>
       </main>
     </div>
   );
@@ -588,6 +591,12 @@ function WorkspacePage({ settings, onSettings, onGo, billing, organization }: { 
       <ProductionNote />
       {billing && <p className="set-note">The plan, the card on file and this month's usage live under <button className="link-btn" onClick={() => onGo('billing')}>Billing</button>.</p>}
       {!organization && <CompanySettings settings={settings} onSettings={onSettings} />}
+      <h3>Diagnostics</h3>
+      <div className="set-card">
+        <Row icon={<IconInfo width={18} height={18} />} title="Send error reports" desc="When a page fails to draw, Quorum sends the error, the page and the app version so it can be fixed. Never your notes.">
+          <Toggle on={settings.errorReports !== false} onChange={async (v) => onSettings(await window.quorum.setSettings({ errorReports: v }))} />
+        </Row>
+      </div>
     </>
   );
 }

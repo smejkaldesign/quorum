@@ -82,11 +82,11 @@ export const CONNECTORS = [
   c('onenote', 'OneNote', 'docs', 'onenote.com', 'Save meeting notes to OneNote.'),
   // ai and automation
   c('claude-code', 'Claude Code', 'ai', 'claude.com', 'Ask about your meetings and write specs, PRs and bug reports from what was said, through the quorum MCP server.', 'available', 'quorum-mcp'),
-  c('codex', 'Codex', 'ai', 'openai.com', 'Bring your meeting notes into Codex through the quorum MCP server.', 'soon', 'quorum-mcp'),
+  c('codex', 'Codex', 'ai', 'openai.com', 'Search your notes, meetings and knowledge bases from Codex through the quorum MCP server. Codex can also run your summaries and notes on your ChatGPT sign-in.', 'available', 'quorum-mcp'),
   c('cursor', 'Cursor', 'ai', 'cursor.com', 'Bring your meeting notes into Cursor through the quorum MCP server.', 'soon', 'quorum-mcp'),
   c('claude', 'Claude', 'ai', 'claude.ai', 'Ask Claude about your meetings: search notes, pull out action items, answer from your history.'),
   c('chatgpt', 'ChatGPT', 'ai', 'chatgpt.com', 'Ask ChatGPT about your meetings: search notes, pull out action items, answer from your history.'),
-  c('gemini', 'Gemini', 'ai', 'gemini.google.com', 'Bring your meeting notes into Gemini.'),
+  c('gemini', 'Gemini', 'ai', 'gemini.google.com', 'Run your summaries and notes on Gemini, with your Antigravity sign-in or a Google API key. Set it up in Settings, AI tools.', 'available', 'ai-tool'),
   c('copilot', 'Microsoft 365 Copilot', 'ai', 'microsoft.com', 'Bring your meeting notes into Microsoft 365 Copilot.'),
   c('figma', 'Figma', 'ai', 'figma.com', 'Bring your meeting notes into Figma.'),
   c('lovable', 'Lovable', 'ai', 'lovable.dev', 'Bring your meeting notes into Lovable.'),
@@ -115,7 +115,8 @@ const OVERRIDES = {
   slack: () => ['Connects your Slack account; the token stays in this Mac\'s Keychain', 'Soon: shares a meeting note to any Slack channel', 'Soon: posts notes from a folder on their own'],
   gmail: () => ['Drafts a follow-up email after each meeting, ready to review and send'],
   'claude-code': () => ['Lets Claude Code search your notes and meetings through the quorum MCP server', 'Writes specs, PRs and bug reports from what was said', 'Runs on this Mac; no server in between'],
-  codex: () => ['Lets Codex search your notes and meetings through the quorum MCP server', 'Writes specs, PRs and bug reports from what was said'],
+  codex: () => ['Lets Codex search your notes, meetings and knowledge bases through the quorum MCP server', 'Runs summaries and notes on your ChatGPT sign-in', 'Runs on this Mac; no server in between'],
+  gemini: () => ['Runs summaries and notes on Gemini models', 'Uses your Antigravity sign-in or your own Google API key, kept in this Mac\'s Keychain'],
   cursor: () => ['Lets Cursor search your notes and meetings through the quorum MCP server', 'Writes specs and issues from what was said'],
   zapier: () => ['Sends a meeting note to thousands of apps through a Zap', 'Starts an automation when a note is saved'],
   github: () => ['Connects your GitHub account; the token stays in this Mac\'s Keychain', 'Reads only the repositories where you install the Quorum GitHub App, and never writes to them', 'Soon: imports a private repository as a knowledge base', 'Soon: turns action items into GitHub issues'],
@@ -190,6 +191,8 @@ export function isConnected(x, live, { explicit = false } = {}) {
   if (x.account) { const a = live.accounts?.find((y) => y.id === x.id); if (a) return !!a.connected; }
   if (x.id === 'google-calendar') return !!live.cal?.google?.connected;
   if (x.id === 'claude-code') return !!live.mcp?.added;
+  if (x.id === 'codex') return !!live.codex?.added && !live.codex.error;
+  if (x.id === 'gemini') return !!live.gemini;
   return false;
 }
 

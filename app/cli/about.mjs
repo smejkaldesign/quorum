@@ -1,0 +1,78 @@
+// What Quorum provides, for an agent connected over MCP with no access to the source: the about tool's answer. The
+// server instructions (quorum.mjs) state the same facts in prose. The tool list comes from the tools the server lists,
+// and a test checks every listed tool has an entry in TOOL_USE and every entry is a real tool.
+
+export const ABOUT = {
+  data: [
+    { what: 'meeting notes', where: 'markdown files in the meetings folder of the person\'s vault, one subfolder per imported source', truth: true },
+    { what: 'link lines', where: 'appended by Quorum after it files a note: a line in the index, the daily note, and under "## Meetings" in each people and project note the note concerns', truth: true },
+    { what: 'learned facts', where: 'a marked list in .quorum/learned.md in the vault, or a vault note linked from index.md; plain text lines a model wrote from meeting notes, each citing its note', truth: true },
+    { what: 'chats, settings, Memory health findings, the review decision log and the fix journal', where: 'Quorum\'s data folder on this Mac, outside the vault', truth: true },
+    { what: 'Quorum Cloud copies and knowledge bases', where: 'a hosted Postgres database, Cloud edition only: notes and meeting notes sync both ways with the vault, and knowledge base notes live there', truth: 'the vault files for notes; the database for knowledge bases' },
+  ],
+  graph: {
+    typedEntities: false,
+    relationships: 'only [[wikilinks]] written in the markdown notes',
+    appView: 'the Quorum app builds an untyped link graph of the vault (notes, missing link targets, color clusters) for its own Graph view; no MCP tool returns it',
+    decisions: 'no typed decision records. learned_facts holds up to 3 model-written facts per meeting (roles, project decisions, commitments), kept under a size budget, so older facts roll off',
+  },
+  search: {
+    semantic: false,
+    embeddings: 'none for search. Two small local models (an embedding model and an NLI model) run on this Mac only to screen contradiction checks in Memory health',
+    search_meetings: 'case-insensitive text match over each meeting note\'s title, attendees and text; every word of the query must appear; ranked by how often the words occur',
+    kb_search: 'Postgres full-text search with English stemming, then a plain-word pass for names and codes; every word must match, quotes make a phrase, -word excludes; when nothing matches every word, notes matching any word come back',
+    granola_search: 'Granola\'s own search, run live through the Granola sign-in connected in Quorum',
+    models: 'learned facts, chat answers and memory checks use the person\'s own model source (Claude Code or their own API key); Quorum hosts no model',
+  },
+  findDecisionsAbout: 'For every decision about project X: call learned_facts and keep the lines naming X, then search_meetings with X (add a word such as decided to narrow it) and get_meeting on each hit; in Quorum Cloud also kb_search X.',
+  notFor: [
+    'notes outside the meetings folder: use your own vault search or file tools',
+    'a graph or entity query: there is none',
+    'semantic or similarity search',
+    'the web, calendars or upcoming meetings',
+    'sending messages or writing to Slack, Notion or GitHub: those tools only read',
+    'meetings or lines naming an opted-out customer: they are withheld',
+  ],
+};
+
+export const TOOL_USE = {
+  quorum_status: { returns: 'the vault, the meetings folder, note counts per source, chat count, whether a call is recording', useWhen: 'first, or when another tool returns nothing' },
+  about: { returns: 'this description of Quorum as JSON', useWhen: 'to check what Quorum stores and searches before choosing a tool' },
+  list_meetings: { returns: 'filed meeting notes newest first, with id, title, date, source and people', useWhen: 'browsing recent meetings or one source; no query needed' },
+  search_meetings: { returns: 'meeting notes containing every word, best first, with one matching line each', useWhen: 'finding meetings by person, project or topic; the default for recall' },
+  get_meeting: { returns: 'one meeting note in full, frontmatter, notes, summary and any transcript', useWhen: 'after list_meetings or search_meetings, to read what was said' },
+  granola_search: { returns: 'Granola meetings or transcript passages, each marked inQuorum when filed', useWhen: 'your own Granola MCP fails, or the meeting is not filed in Quorum yet' },
+  list_chats: { returns: 'recent chats the person had with Quorum, with ids', useWhen: 'looking for an earlier question asked in the Quorum app' },
+  get_chat: { returns: 'the questions and answers of one chat', useWhen: 'after list_chats' },
+  learned_facts: { returns: 'the learned facts list: plain lines, each citing its meeting note and date', useWhen: 'a quick summary of roles, decisions and commitments; confirm details with get_meeting' },
+  live_transcript: { returns: 'the transcript so far of the call being recorded, or recording: false', useWhen: 'questions about the call happening now' },
+  kb_search: { returns: 'Quorum Cloud knowledge base notes, best first, with passage, id and link', useWhen: 'workspace or team knowledge in Quorum Cloud' },
+  kb_read: { returns: 'one knowledge base note in full', useWhen: 'after kb_search, by id or path' },
+  kb_list: { returns: 'the knowledge bases the person can read, their role and folders', useWhen: 'choosing a knowledge base to search' },
+  import_meeting: { returns: 'the file it saved, or skipped when Quorum already has that meeting', useWhen: 'saving a meeting found in another app into the vault' },
+  review_items: { returns: 'Memory health items to review: missing links, rule findings such as contradictions and duplicates, past fixes, proposed rules', useWhen: 'checking what in the notes needs attention' },
+  review_item: { returns: 'one review item with its problem, proposed fix, reason and evidence', useWhen: 'before approving or dismissing an item' },
+  review_approve: { returns: 'the fix run or batch it started', useWhen: 'the person asked to apply a proposed fix' },
+  review_dismiss: { returns: 'the archived items', useWhen: 'the person asked to set items aside without fixing' },
+  review_mark_read: { returns: 'the items marked read or unread', useWhen: 'tidying the review list; changes no notes' },
+  memory_check_start: { returns: 'that a full check started', useWhen: 'the person asked to check every note now' },
+  memory_check_status: { returns: 'whether a check is running, its progress and what it found', useWhen: 'after memory_check_start' },
+  fix_runs: { returns: 'Memory health fixes from the last week, with status and what changed', useWhen: 'finding a fix to undo or a batch to cancel' },
+  fix_cancel: { returns: 'the cancelled batch', useWhen: 'stopping a running batch of fixes' },
+  fix_undo: { returns: 'the undone fix', useWhen: 'reverting a fix that ran' },
+  kb_create: { returns: 'the new knowledge base', useWhen: 'the person asked for a new knowledge base' },
+  kb_attach_github: { returns: 'the attachment and a GitHub sign-in to finish', useWhen: 'syncing a repository into a knowledge base' },
+  kb_list_attachments: { returns: 'Drive and GitHub folders synced into a knowledge base, with status', useWhen: 'checking a knowledge base\'s sources' },
+  connector_status: { returns: 'each connectable account, whether connected, as whom, and its read tools', useWhen: 'a slack_, notion_ or github_ tool is missing or fails' },
+  slack_search: { returns: 'Slack messages from channels the person can see, with channel, author, time, ts and link', useWhen: 'what was said in Slack' },
+  slack_channels: { returns: 'the Slack channels the person is in, with ids', useWhen: 'finding a channel for slack_channel_history' },
+  slack_channel_history: { returns: 'recent messages in one channel, newest first', useWhen: 'reading a channel' },
+  slack_thread: { returns: 'a thread\'s first message and replies', useWhen: 'reading a thread from a ts' },
+  notion_search: { returns: 'Notion pages and databases shared with Quorum, matched by title', useWhen: 'finding a Notion page' },
+  notion_page: { returns: 'one Notion page as markdown', useWhen: 'after notion_search' },
+  github_repos: { returns: 'repositories where the Quorum GitHub App is installed', useWhen: 'choosing a repo for github_file or github_search_code' },
+  github_search_code: { returns: 'matching code with repository, path, link and lines', useWhen: 'finding code on the default branch' },
+  github_file: { returns: 'a text file, or a folder listing', useWhen: 'reading a file at a path and ref' },
+};
+
+export const about = (tools) => ({ ...ABOUT, tools: tools.map((t) => ({ name: t.name, ...(TOOL_USE[t.name] ?? { returns: t.description, useWhen: null }) })) });
