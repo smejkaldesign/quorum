@@ -39,7 +39,7 @@ export function Errors({ onCounts }: { onCounts?: (c: ErrorCounts) => void }) {
           <TableHead><span>Error</span><span>Events</span><span>Installs</span><span>Versions</span><span>Last seen</span></TableHead>
           {list === null && error && <div className="pad"><p className="error" style={{ marginTop: 0 }}>{error}</p><Button onClick={load}>Try again</Button></div>}
           {list === null && !error && <SkeletonRows />}
-          {list !== null && list.length === 0 && <Empty>{filter === 'new' ? 'No new errors.' : 'No error groups here.'}</Empty>}
+          {list !== null && list.length === 0 && <Empty>{filter === 'new' ? 'No new errors.' : 'No error groups here.'} Reports are deleted after 90 days; fixed and ignored groups keep their counts and status.</Empty>}
           {list?.map((g) => <Row key={g.fingerprint} g={g} onChange={put} />)}
         </Table>
       </Card>
@@ -53,7 +53,7 @@ function Row({ g, onChange }: { g: ErrorGroup; onChange: (g: ErrorGroup) => void
     <TableItem open={open}>
       <TableRowButton on={open} onClick={() => setOpen(!open)}>
         <span className="who">
-          <strong title={g.message}>{g.message || (g.purged ? 'Details removed after 90 days' : '(no message)')}</strong>
+          <strong title={g.message}>{g.message || (g.purged ? 'Details expired' : '(no message)')}</strong>
           <em><code className="flag-key">{g.view || 'unknown view'}</code></em>
           <span className="badges" style={{ marginTop: 4 }}>
             <Badge tone={TONE[g.status]}>{statusLine(g)}</Badge>
@@ -83,8 +83,8 @@ function Detail({ fingerprint, onChange }: { fingerprint: string; onChange: (g: 
   const copyPrompt = async () => { try { await navigator.clipboard.writeText(agentPrompt(d)); toast.success('Agent prompt copied.'); } catch { toast.error('Could not copy the prompt.'); } };
   return (
     <div className="err-detail">
-      <p style={{ marginTop: 0, wordBreak: 'break-word' }}><strong>{g.message || (g.purged ? 'Details removed after 90 days' : '(no message)')}</strong></p>
-      {g.purged && <p className="muted">No report from the last 90 days. The message, stacks and events were deleted; the counts and status stay so a new report can reopen it.</p>}
+      <p style={{ marginTop: 0, wordBreak: 'break-word' }}><strong>{g.message || (g.purged ? 'Details expired' : '(no message)')}</strong></p>
+      {g.purged && <p className="muted">Details expired: no report in the last 90 days, so the message, stacks and events were deleted. The counts and status stay, so a new report can reopen it.</p>}
       <div className="err-facts">
         <CardLine label="View"><code>{g.view || 'unknown'}</code></CardLine>
         <CardLine label="Fingerprint"><code className="flag-key">{g.fingerprint.slice(0, 8)}</code></CardLine>
@@ -113,7 +113,7 @@ function Detail({ fingerprint, onChange }: { fingerprint: string; onChange: (g: 
           <thead><tr><th>When</th><th>Version</th><th>Edition</th><th>OS</th><th>Kind</th><th>Reload</th><th>Signed in</th></tr></thead>
           <tbody>
             {d.events.map((e) => <tr key={e.id}><td title={e.receivedAt}>{new Date(e.receivedAt).toLocaleString()}</td><td>{e.version || '?'}</td><td>{e.edition}</td><td>{e.os || '?'}</td><td>{e.kind}</td><td>{e.repeat ? 'Failed again' : ''}</td><td>{e.workspaceId ? 'Yes' : ''}</td></tr>)}
-            {d.events.length === 0 && <tr><td colSpan={7} className="muted">No events kept. Events older than 90 days are deleted.</td></tr>}
+            {d.events.length === 0 && <tr><td colSpan={7} className="muted">No events kept. Reports are deleted after 90 days.</td></tr>}
           </tbody>
         </table>
       </div>
