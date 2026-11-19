@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { AgentSchedule, Brain, CalendarSettings, McpInheritedServer, McpOverlap, McpOverlapServer, MeetingSourceInfo, OAuthAccount, OAuthCheck, PlatformInfo, SourceJob } from './quorum';
 import { CHECKABLE, installSummary } from '../connectors/oauthApps';
-import { CONNECTOR_RETURN } from './connectorsNav';
+import { CONNECTOR_RETURN, type OpenSettingsDetail } from './connectorsNav';
 import { libraryAreas } from './libraryFilter';
 import { createInstallsReader, type InstallsView } from './githubInstalls';
 import { useSession } from './session';
@@ -24,7 +24,7 @@ import { BRAND_LOGOS, brandSrc } from './brandLogos';
 // (sources/accounts.js), one sign-in each through Quorum's registered apps. The meeting apps that listen on this Mac appear only
 // with the meeting-capture flag on; with it off, Zoom stays as its cloud recordings import.
 type Provider = Awaited<ReturnType<typeof window.quorum.meetingProviders>>[number];
-type Live = { sources: MeetingSourceInfo[]; cal: CalendarSettings | null; mcp: { added: boolean; command: string } | null; providers: Provider[]; platforms: PlatformInfo[]; accounts: OAuthAccount[] };
+type Live = { sources: MeetingSourceInfo[]; cal: CalendarSettings | null; mcp: { added: boolean; command: string } | null; codex?: { added: boolean; error?: string | null } | null; gemini?: boolean; providers: Provider[]; platforms: PlatformInfo[]; accounts: OAuthAccount[] };
 type Act = (fn: () => Promise<unknown>) => Promise<void>;
 
 const sourceFor = (x: LibraryConnector, live: Live) => (x.source ? live.sources.find((s) => s.id === x.source) ?? null : null);
@@ -50,7 +50,7 @@ const accountConnected = (x: LibraryConnector, live: Live) => (x.kind === 'meeti
 const unavailable = (x: LibraryConnector, live: Live) => !!x.account && accountFor(x, live)?.configured !== true;
 const googleFor = (x: LibraryConnector, live: Live) => (x.id === 'google-calendar' ? live.cal?.google ?? null : null);
 const connectionType = (x: LibraryConnector) =>
-  x.kind === 'mcp-source' ? `${x.name} account, over its MCP server (OAuth)` : x.kind === 'macos' ? 'Permission on this Mac' : cloudOnly(x) ? `${x.name} account, through Quorum Cloud` : x.kind === 'meeting-app' ? `Reads ${appWhere(x)} on this Mac; no account` : x.kind === 'quorum-mcp' ? `The quorum MCP server, registered in ${x.name}` : x.account ? `${x.name} account (OAuth through Quorum's registered app)` : `${x.name} account (OAuth)`;
+  x.kind === 'mcp-source' ? `${x.name} account, over its MCP server (OAuth)` : x.kind === 'ai-tool' ? 'Your Antigravity sign-in or a Google API key, set up in Settings, AI tools' : x.kind === 'macos' ? 'Permission on this Mac' : cloudOnly(x) ? `${x.name} account, through Quorum Cloud` : x.kind === 'meeting-app' ? `Reads ${appWhere(x)} on this Mac; no account` : x.kind === 'quorum-mcp' ? `The quorum MCP server, registered in ${x.name}` : x.account ? `${x.name} account (OAuth through Quorum's registered app)` : `${x.name} account (OAuth)`;
 
 const ago = (iso: string | null) => {
   if (!iso) return 'never';
@@ -116,8 +116,10 @@ export function ConnectorsPage({ detail, onDetail, library, onLibrary, brain, fo
   const approval = (x: LibraryConnector): Approval => approvalOf(x, policy, accountConnected(x, live));
   const load = async () => {
     // the local edition has no platform handlers; the call fails and the list stays empty
-    const [sources, cal, mcp, providers, platforms, accounts] = await Promise.all([window.quorum.sourcesList(), window.quorum.calendarStatus(), window.quorum.mcpStatus(), window.quorum.meetingProviders(), window.quorum.platformsList().catch(() => [] as PlatformInfo[]), window.quorum.oauthAccounts().catch(() => [] as OAuthAccount[])]);
-    setLive({ sources, cal, mcp, providers, platforms, accounts });
+    const [sources, cal, mcp, providers, platforms, accounts, agents, models] = await Promise.all([window.quorum.sourcesList(), window.quorum.calendarStatus(), window.quorum.mcpStatus(), window.quorum.meetingProviders(), window.quorum.platformsList().catch(() => [] as PlatformInfo[]), window.quorum.oauthAccounts().catch(() => [] as OAuthAccount[]), window.quorum.agentsStatus().catch(() => null), window.quorum.modelSourceStatus().catch(() => null)]);
+    // Gemini runs a step through a Google key or the Antigravity sign-in
+    const gemini = !!models && (!!models.keys?.google || Object.values(models.providers ?? {}).some((p) => p === 'google' || p === 'antigravity'));
+    setLive({ sources, cal, mcp, providers, platforms, accounts, codex: agents?.codex ?? null, gemini });
     setLoaded(true);
   };
   useEffect(() => {
@@ -346,7 +348,8 @@ const metaLine = (x: LibraryConnector, live: Live) => {
   if (x.kind === 'mcp-source' && src) return src.job?.status === 'running' ? null : `${plural(src.notes, 'note')} · synced ${ago(src.lastSyncAt)}`;
   if (x.id === 'apple-calendar') return 'Upcoming meetings on Home';
   if (x.id === 'google-calendar') { const g = googleFor(x, live); return g?.connected ? `${g.account ?? 'Google account'} · ${plural(g.calendars, 'calendar')}` : null; }
-  if (x.id === 'claude-code') return 'quorum MCP server added';
+  if (x.id === 'claude-code' || x.id === 'codex') return 'quorum MCP server added';
+  if (x.id === 'gemini') return 'Set up in AI tools';
   if (x.account) return accountFor(x, live)?.account ?? `${x.name} account`;
   const p = providerFor(x, live);
   if (p) { const plat = platformFor(x, live); return `${p.inCall ? 'In a call now' : 'Listening on this Mac'}${plat?.connected ? ` · ${plural(plat.notes, 'recording')} imported` : ''}`; }
@@ -370,6 +373,7 @@ function disconnectOf(x: LibraryConnector, live: Live): { text: string; run: () 
   if (x.kind === 'mcp-source' && src) return { text: `Quorum stops importing ${x.name} notes and signs out of ${x.name}. Notes already imported stay in your vault.`, run: () => window.quorum.sourceDisconnect(src.id) };
   if (x.id === 'apple-calendar') return { text: 'Quorum stops reading the Calendar app. Upcoming meetings leave Home and new notes lose their meeting title and people.', run: () => window.quorum.calendarSet({ enabled: false }) };
   if (x.account) return { text: `Quorum removes its ${x.name} sign-in from this Mac and revokes it with ${x.name}. The ${x.name} features stop until you connect again.`, run: () => window.quorum.oauthDisconnect(x.id) };
+  if (x.id === 'codex') return { text: 'Quorum removes its MCP server from Codex. Codex can no longer search your notes and meetings through Quorum.', run: () => window.quorum.codexRemove() };
   if (x.id === 'claude-code') return { text: 'Quorum removes its MCP server from Claude Code. Claude Code can no longer search your notes and meetings through Quorum.', run: () => window.quorum.mcpRemove() };
   if (x.kind === 'meeting-app' && x.app && platformFor(x, live)?.connected) return { text: `Quorum stops importing ${x.name} cloud recordings and signs out of your ${x.name} account. Recordings already imported stay in your vault.`, run: () => window.quorum.platformDisconnect(x.app!) };
   return null;
@@ -692,6 +696,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
 const startConnect = async (x: LibraryConnector, fresh = false): Promise<{ ok?: boolean; error?: string; wrongAccount?: boolean }> => {
   if (x.kind === 'mcp-source' && x.source) return window.quorum.sourceConnect(x.source, fresh ? { fresh: true } : undefined);
   if (x.id === 'apple-calendar') { const c = await window.quorum.calendarConnect(); return c.status === 'granted' ? { ok: true } : c.status === 'denied' ? { error: 'Calendar access is off for Quorum in System Settings.' } : { error: 'macOS did not grant calendar access.' }; }
+  if (x.id === 'codex') { const a = await window.quorum.codexAdd(); return a.added && !a.error ? { ok: true } : { error: a.error ?? 'Codex did not accept the server.' }; }
   if (x.id === 'claude-code') { const a = await window.quorum.mcpAdd(); return a.added ? { ok: true } : { error: a.error ?? 'Claude Code did not accept the server.' }; }
   if (x.account) { const a = await window.quorum.oauthConnect(x.id); return 'connected' in a && a.connected && !a.error ? { ok: true } : { error: a.error ?? `${x.name} did not finish the sign-in.` }; }
   if (cloudOnly(x) && x.app) return window.quorum.platformConnect(x.app).catch(() => ({ error: `${x.name} cloud recordings are part of Quorum Cloud.` }));
@@ -721,6 +726,7 @@ function ConnectButton({ connector: x, live, busy, act, onWrongAccount }: { conn
   const prov = providerFor(x, live);
   if (prov?.enabled && prov.installed && prov.access === false) return <button className="pill" onClick={() => window.quorum.axSettingsOpen()}>Open System Settings</button>;
   if (prov?.enabled && !prov.installed) return <button className="pill" disabled={busy} onClick={() => act(async () => { await window.quorum.meetingProviderCheck(); await new Promise((r) => setTimeout(r, 1500)); })}>{busy ? 'Checking…' : 'Check again'}</button>;
+  if (x.kind === 'ai-tool') return <button className="pill primary" onClick={() => window.dispatchEvent(new CustomEvent<OpenSettingsDetail>('quorum-open-settings', { detail: 'developers' }))}>Open AI tools</button>;
   const fresh = x.kind === 'mcp-source' && !!sourceFor(x, live)?.freshNext;
   return <button className="pill primary" disabled={busy} onClick={() => act(async () => { const r = await startConnect(x, fresh); if (r.wrongAccount && r.error && onWrongAccount) { onWrongAccount(r.error); return null; } return r; })}>{busy ? connectLabel(x, true, true) : fresh ? 'Connect with a different account' : connectLabel(x, false, false)}</button>;
 }
