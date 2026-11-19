@@ -8,8 +8,8 @@
 //   --weights '{"graph":1}' overrides hybrid.js WEIGHTS for a run; --fresh drops the cached index first
 //
 // recall@k counts the expected notes in the top k distinct notes, over min(expected, k); MRR is 1 over the rank of the
-// first expected note in the top 20. The graph signal comes from the stand-in in miniGraph.js until app/graph lands.
-// The index lives in --out (a temp folder by default), so a second run reuses its chunks and vectors.
+// first expected note in the top 20. The graph is the real memory graph (app/graph), built first; search keeps its
+// tables in the graph's database in --out (a temp folder by default), so a second run reuses its chunks and vectors.
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
@@ -19,7 +19,7 @@ import { createSearchIndex } from '../index.js';
 import { WEIGHTS, createHybridSearch } from '../hybrid.js';
 import { hashEmbedder, localEmbedder } from '../embed.js';
 import { makeEvalVault } from './make-vault.mjs';
-import { miniGraph } from './miniGraph.js';
+import { createMemoryGraph } from '../../graph/index.js';
 
 const argv = process.argv.slice(2);
 const opt = (k, d = null) => { const i = argv.indexOf(`--${k}`); return i >= 0 ? argv[i + 1] : d; };
@@ -52,9 +52,15 @@ const tokensTotal = snap.reduce((s, n) => s + Math.ceil(n.text.length / 4), 0);
 console.log(`vault index: ${snap.length} notes, about ${(tokensTotal / 1e6).toFixed(2)}M tokens, ${ms(t)} ms`);
 
 const embedder = kind === 'hash' ? hashEmbedder() : await localEmbedder({ dir: modelsDir, threads: 2 });
-const dbFile = path.join(out, `memory-${embedder.id}.db`);
-if (argv.includes('--fresh')) for (const f of [dbFile, `${dbFile}-wal`, `${dbFile}-shm`]) rmSync(f, { force: true });
-const { db } = openMemoryDb({ file: dbFile });
+const dataDir = path.join(out, `data-${embedder.id}`);
+if (argv.includes('--fresh')) rmSync(dataDir, { recursive: true, force: true });
+t = performance.now();
+const memoryGraph = createMemoryGraph({ dataDir, vault, vindex });
+await memoryGraph.build();
+const gs = memoryGraph.status();
+console.log(`graph: ${gs.nodes} nodes, ${gs.edges} edges, ${ms(t)} ms`);
+const { db } = openMemoryDb({ store: memoryGraph.store });
+const dbFile = memoryGraph.store.path;
 const index = createSearchIndex({ db, embedder: null });
 t = performance.now();
 const changed = await index.build(snap);
@@ -85,7 +91,7 @@ await withVec.update([one]);
 await withVec.drain();
 console.log(`incremental update of one note: ${incMs} ms`);
 
-const graph = miniGraph(snap, (target, from) => vindex.resolve(target, from));
+const graph = memoryGraph.store;
 const weights = { ...WEIGHTS, ...JSON.parse(opt('weights', '{}')) };
 const hybrid = createHybridSearch({ db, embedder, graph: () => graph, version: withVec.version, weights });
 // the single-signal baselines rank by their signal alone: no recency, kind hint or supersession factor
@@ -116,4 +122,4 @@ lat.sort((a, b) => a - b);
 console.log(`hybrid search latency: median ${lat[Math.floor(lat.length / 2)].toFixed(1)} ms, p95 ${lat[Math.floor(lat.length * 0.95)].toFixed(1)} ms`);
 writeFileSync(path.join(out, 'results.json'), JSON.stringify({ notes: snap.length, tokens: tokensTotal, chunks: st.chunks, ftsMs, embedMs, embedded, dbBytes: size, incMs, rows }, null, 2));
 await embedder.release?.();
-db.close();
+memoryGraph.close();

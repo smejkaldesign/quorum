@@ -127,6 +127,7 @@ const FEED_READS = new Set([
   'kb-hosted-note', 'kb-drive-status', 'kb-sync-list', 'kb-sync-grants', 'kb-import-progress',
   // memory graph reads
   'memory-graph-status', 'memory-graph-query', 'memory-graph-explain', 'memory-graph-entity', 'memory-graph-decisions', 'memory-graph-path',
+  'memory-search', 'memory-search-status',
 ]);
 const TREE_WRITES = new Set([
   'vault-new-note', 'vault-new-folder', 'vault-move', 'vault-rename', 'vault-trash', 'vault-duplicate', 'set-settings', 'guardrails-add', 'guardrails-remove', 'guardrails-set',
@@ -3710,13 +3711,11 @@ ipcMain.handle('models-status', () => modelDownload.status());
 // ---- Memory search (search/): hybrid search over heading-scoped chunks of the vault, in the vault's memory database.
 // It reads the vault index's text (opted-out lines already withheld, denied notes never in it), builds its FTS index on
 // the first change the index reports and updates it note by note after that. Vectors come from the bundled bge-small
-// model in the memory engine's process, one small batch at a time, and wait while a recording is live. The graph boost
-// reads the memory graph once its store is passed in here; until then it is off. Read-only IPC: memory-search,
-// memory-search-status
+// model in the memory engine's process, one small batch at a time, and wait while a recording is live. Its tables sit in
+// the memory graph's database, on the graph store's connection, and the graph boost reads the same store. Read-only
+// actions (the MCP bridge calls them by name): memory-search, memory-search-status
 const memorySearch = createMemorySearch({ dataDir: DATA_DIR, vault: () => brain()?.vault ?? null, vindex: () => vindex, embedder: engineEmbedder((texts, maxTokens) => memoryEngine.embed(texts, maxTokens)), graph: () => memoryGraph?.store ?? null, paused: () => recordingNow(), log });
 function searchChanged(rels) { memorySearch.changed(rels).catch((e) => log('search', 'update failed', e?.message)); }
-FEED_READS.add('memory-search');
-FEED_READS.add('memory-search-status');
 handleAction('memory-search', (_e, opts) => memorySearch.search({ ...(opts && typeof opts === 'object' ? opts : {}), q: String(opts?.q ?? ''), budget: Math.min(Math.max(Number(opts?.budget) || 1500, 100), 20000), k: Math.min(Math.max(Number(opts?.k) || 20, 1), 100), signals: undefined }));
 handleAction('memory-search-status', () => memorySearch.status());
 // ---- end memory search

@@ -4,7 +4,8 @@
 //   paraphrase  a project's goal asked in other words, so shared words are few
 //   entity      the meetings a person attended, named only in the meeting's frontmatter (search reads no frontmatter,
 //               so only the graph knows)
-//   current     a project's current database, where an older decision was superseded by a newer one
+//   current     a project's current database, where a newer decision with the same key ("Database: ...") replaced
+//               an older one, so the graph supersedes it
 // node search/eval/make-vault.mjs <dir> [--notes 2500] [--tokens 1200]
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -117,8 +118,8 @@ export function makeEvalVault(dir, { notes = 2500, tokens = 1200, seed = 11 } = 
     const newRel = `decisions/2026-11-${String(1 + (i % 18)).padStart(2, '0')}-${p} database change.md`;
     const a = DBS[i % DBS.length];
     const b = DBS[(i + 2) % DBS.length];
-    put(oldRel, `---\ntype: decision\nproject: "[[${p}]]"\n---\n# ${p} database\n\nDecision: ${p} stores its data in ${a}.\n\n${pad('', tokens / 4)}\n`);
-    put(newRel, `---\ntype: decision\nproject: "[[${p}]]"\nsupersedes: "[[${path.basename(oldRel, '.md')}]]"\n---\n# ${p} database change\n\nDecision: ${p} moves its data from ${a} to ${b}.\n\n${pad('', tokens / 4)}\n`);
+    put(oldRel, `---\ntype: decision\nproject: "[[${p}]]"\n---\n# ${p} database\n\nDecision: Database: ${p} stores its data in ${a}.\n\n${pad('', tokens / 4)}\n`);
+    put(newRel, `---\ntype: decision\nproject: "[[${p}]]"\n---\n# ${p} database change\n\nDecision: Database: ${p} moves its data from ${a} to ${b}.\n\n${pad('', tokens / 4)}\n`);
     written += 2;
     questions.push({ type: 'current', q: `What database does ${p} use now?`, expect: [newRel] });
   }

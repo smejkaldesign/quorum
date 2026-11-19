@@ -7,8 +7,10 @@ import { openMemoryDb } from '../search/db.js';
 import { createMemorySearch, createSearchIndex } from '../search/index.js';
 import { createHybridSearch } from '../search/hybrid.js';
 import { hashEmbedder } from '../search/embed.js';
+import { formatMemory } from '../cli/budget.mjs';
+import { runMemoryTool } from '../cli/memoryTools.mjs';
 import { makeEvalVault } from '../search/eval/make-vault.mjs';
-import { miniGraph } from '../search/eval/miniGraph.js';
+import { createMemoryGraph } from '../graph/index.js';
 
 let dir;
 let vault;
@@ -25,13 +27,18 @@ function vindexOf() {
   v.sync();
   return v;
 }
-function setup(embedder = counting(), opts = {}) {
+// the vault index, the real memory graph built over it, and search on the graph's connection
+const opened = [];
+async function setup(embedder = counting(), opts = {}) {
   const v = vindexOf();
-  const { db } = openMemoryDb({ file: path.join(dir, 'memory.db') });
+  const memoryGraph = createMemoryGraph({ dataDir: dir, vault, vindex: v });
+  opened.push(memoryGraph);
+  await memoryGraph.build();
+  const { db } = openMemoryDb({ store: memoryGraph.store });
   const index = createSearchIndex({ db, embedder, pauseMs: 5, retryMs: 5, ...opts });
-  const graph = miniGraph(v.snapshot(), (t, from) => v.resolve(t, from));
+  const graph = memoryGraph.store;
   const hybrid = createHybridSearch({ db, embedder, graph: () => graph, version: index.version });
-  return { v, db, index, hybrid, embedder };
+  return { v, db, index, hybrid, embedder, memoryGraph };
 }
 
 beforeEach(() => {
@@ -39,11 +46,11 @@ beforeEach(() => {
   vault = path.join(dir, 'vault');
   makeEvalVault(vault, { notes: 150, tokens: 200 });
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => { for (const g of opened.splice(0)) g.close(); rmSync(dir, { recursive: true, force: true }); });
 
 describe('search index on a generated vault', () => {
   it('builds chunks, FTS and vectors, and skips notes whose text did not change', async () => {
-    const { v, index, hybrid, embedder } = setup();
+    const { v, index, hybrid, embedder } = await setup();
     expect(await index.build(v.snapshot())).toBe(150);
     await index.drain();
     const s = index.status();
@@ -60,7 +67,7 @@ describe('search index on a generated vault', () => {
   });
 
   it('re-embeds only the section that changed, and a renamed note keeps its vectors', async () => {
-    const { v, index, embedder } = setup();
+    const { v, index, embedder } = await setup();
     await index.build(v.snapshot());
     await index.drain();
     const rel = 'projects/Project Heron.md';
@@ -84,7 +91,7 @@ describe('search index on a generated vault', () => {
 
   it('holds the embed queue while paused and runs it after', async () => {
     let live = true;
-    const { v, index } = setup(counting(), { paused: () => live });
+    const { v, index } = await setup(counting(), { paused: () => live });
     await index.build(v.snapshot());
     const run = index.drain();
     await new Promise((r) => setTimeout(r, 30));
@@ -97,7 +104,7 @@ describe('search index on a generated vault', () => {
   it('keeps chunks queued when the model fails and fills them once it works', async () => {
     let fail = true;
     const e = hashEmbedder();
-    const { v, index } = setup({ ...e, embed: (t) => (fail ? Promise.reject(new Error('The local embedding model is missing')) : e.embed(t)) });
+    const { v, index } = await setup({ ...e, embed: (t) => (fail ? Promise.reject(new Error('The local embedding model is missing')) : e.embed(t)) });
     await index.build(v.snapshot());
     const run = index.drain();
     await new Promise((r) => setTimeout(r, 20));
@@ -107,9 +114,27 @@ describe('search index on a generated vault', () => {
     expect(index.status()).toMatchObject({ pending: 0, error: null });
   });
 
+  it('weighs the vector list by how many chunks have a vector while the queue runs', async () => {
+    const e = hashEmbedder();
+    let calls = 0;
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const { v, index, hybrid } = await setup({ ...e, embed: async (t) => { if (t.length > 1 && calls++) await gate; return e.embed(t); } });
+    await index.build(v.snapshot());
+    const run = index.drain();
+    await new Promise((r) => setTimeout(r, 20));
+    const s = index.status();
+    expect(s.embedded).toBeGreaterThan(0);
+    expect(s.embedded).toBeLessThan(s.chunks / 10);
+    const r = await hybrid.search({ q: 'QX-1000' });
+    expect(r.results[0].rel).toBe('projects/Project Heron.md');
+    release();
+    await run;
+  });
+
   it('never indexes withheld lines', async () => {
     put('inbox/private.md', '# Plans\n\nThe falcon secret is the launch date.\nThe public part is the venue.\n');
-    const { v, index, hybrid, db } = setup();
+    const { v, index, hybrid, db } = await setup();
     await index.build(v.snapshot());
     expect(db.prepare("SELECT COUNT(*) AS n FROM chunks WHERE text LIKE '%launch date%'").get().n).toBe(0);
     expect((await hybrid.search({ q: 'launch date', signals: ['fts'] })).results.some((r) => r.rel === 'inbox/private.md')).toBe(false);
@@ -117,7 +142,7 @@ describe('search index on a generated vault', () => {
   });
 
   it('filters by folder, kind and date, and trims to the budget with a summary', async () => {
-    const { v, index, hybrid } = setup();
+    const { v, index, hybrid } = await setup();
     await index.build(v.snapshot());
     await index.drain();
     const all = await hybrid.search({ q: 'project open items', k: 20, budget: 1e6 });
@@ -139,7 +164,7 @@ describe('search index on a generated vault', () => {
   });
 
   it('finds meetings a person attended through the graph, though the name is only in frontmatter', async () => {
-    const { v, index, hybrid } = setup();
+    const { v, index, hybrid } = await setup();
     await index.build(v.snapshot());
     await index.drain();
     const who = 'Ada Arden';
@@ -153,7 +178,7 @@ describe('search index on a generated vault', () => {
   });
 
   it('ranks a superseded decision below the one that replaced it', async () => {
-    const { v, index, hybrid } = setup();
+    const { v, index, hybrid } = await setup();
     await index.build(v.snapshot());
     await index.drain();
     const r = await hybrid.search({ q: 'Project Heron database', kinds: ['decision'] });
@@ -166,7 +191,7 @@ describe('search index on a generated vault', () => {
   });
 
   it('reads the "project" in a project name as part of the name, so project notes get no kind boost', async () => {
-    const { v, index, hybrid } = setup();
+    const { v, index, hybrid } = await setup();
     await index.build(v.snapshot());
     await index.drain();
     const r = await hybrid.search({ q: 'What database does Project Heron use now?', k: 50 });
@@ -181,7 +206,7 @@ describe('search index on a generated vault', () => {
 
 describe('hybrid search on the graph store shapes', () => {
   it('reads supersession through decided_in, and note rels from meeting ids', async () => {
-    const { v, index, db } = setup();
+    const { v, index, db } = await setup();
     await index.build(v.snapshot());
     await index.drain();
     const older = v.rels().find((r) => /^decisions\/.*Project Heron database\.md$/.test(r));
@@ -197,19 +222,50 @@ describe('hybrid search on the graph store shapes', () => {
       edgesOf: (id, { dir = 'both', kinds = null, current = true } = {}) => edges.filter((e) => (dir === 'both' ? e.src === id || e.dst === id : dir === 'out' ? e.src === id : e.dst === id) && (!kinds || kinds.includes(e.kind)) && (!current || e.superseded_by == null)),
     };
     const hybrid = createHybridSearch({ db, embedder: hashEmbedder(), graph: () => graph, version: index.version });
-    const r = await hybrid.search({ q: 'Project Heron database', k: 50, budget: 1e6 });
+    const r = await hybrid.search({ q: 'Project Heron database', kinds: ['decision'], k: 50, budget: 1e6 });
     expect(r.results.find((x) => x.rel === older).parts.superseded).toBe(true);
     const m = await hybrid.search({ q: 'zz only', signals: ['graph'] });
     expect(m.results.map((x) => x.rel)).toContain(meeting);
   });
 });
 
+describe('the MCP bridge on a real search', () => {
+  it('runs search and memory_status through the handlers by name and formats the passages', async () => {
+    const v = vindexOf();
+    const g = createMemoryGraph({ dataDir: dir, vault, vindex: v });
+    opened.push(g);
+    await g.build();
+    const s = createMemorySearch({ dataDir: dir, vault: () => vault, vindex: () => v, embedder: hashEmbedder(), graph: () => g.store });
+    await s.changed(v.rels());
+    // main registers these with handleAction; the bridge calls fn(null, args)
+    const handlers = new Map([['memory-search', (_e, a) => s.search(a)], ['memory-search-status', () => s.status()], ['memory-graph-status', () => g.status()]]);
+    const handler = (h) => { const fn = handlers.get(h); return fn ? (a) => fn(null, a) : null; };
+    const withheld = (rel) => rel === 'projects/Project Lantern.md';
+    await s.idle();
+    const r = await runMemoryTool('search', { q: 'QX-1000', budget: 4000 }, { handler, withheld });
+    expect(r.results[0]).toMatchObject({ rel: 'projects/Project Heron.md', heading: 'Project Heron' });
+    expect(r.results.some((x) => x.rel === 'projects/Project Lantern.md')).toBe(false);
+    const lines = formatMemory('search', r, { budget: 4000, args: { q: 'QX-1000' } });
+    const first = r.results[0];
+    expect(lines[0]).toBe(`projects/Project Heron.md:${first.start_line}  # Project Heron  (${first.score.toFixed(3)})  ${first.text}`);
+    const st = await runMemoryTool('memory_status', {}, { handler });
+    expect(st.search).toMatchObject({ notes: 150, chunks: expect.any(Number), embedded: expect.any(Number), built: true });
+    expect(st.graph).toMatchObject({ phase: 'ready' });
+    s.close();
+  });
+});
+
 describe('createMemorySearch', () => {
   it('builds on the first change, follows later changes and reports status', async () => {
     const v = vindexOf();
-    const s = createMemorySearch({ dataDir: dir, vault: () => vault, vindex: () => v, embedder: hashEmbedder() });
+    let g = createMemoryGraph({ dataDir: dir, vault, vindex: v });
+    opened.push(g);
+    await g.build();
+    const s = createMemorySearch({ dataDir: dir, vault: () => vault, vindex: () => v, embedder: hashEmbedder(), graph: () => g?.store ?? null });
     await s.changed(v.rels());
     expect(s.status()).toMatchObject({ notes: 150, built: true });
+    // search's tables sit in the graph's file, on its connection
+    expect(g.store.db().prepare('SELECT COUNT(*) AS n FROM search_files').get().n).toBe(150);
     put('inbox/new idea.md', '# New idea\n\nA kayak rental desk by the river.\n');
     v.sync();
     const at = performance.now();
@@ -220,6 +276,11 @@ describe('createMemorySearch', () => {
     v.sync();
     await s.changed(['inbox/new idea.md']);
     expect((await s.search({ q: 'kayak rental' })).results.some((r) => r.rel === 'inbox/new idea.md')).toBe(false);
+    // a new graph store (the vault reopened) opens search again on its connection, with nothing to rebuild
+    g.close();
+    g = createMemoryGraph({ dataDir: dir, vault, vindex: v });
+    opened.push(g);
+    expect(s.status()).toMatchObject({ notes: 150 });
     s.close();
     expect(createMemorySearch({ dataDir: dir, vault: () => null, vindex: () => v }).status().state).toBe('off');
   });

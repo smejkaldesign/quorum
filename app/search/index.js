@@ -6,6 +6,7 @@
 // paused() holds (a recording is live). The text comes from the vault index (vindex.js), with opted-out lines
 // already withheld, and notes the guardrails deny never reach it.
 import { createHash } from 'node:crypto';
+import { statSync } from 'node:fs';
 import path from 'node:path';
 import { chunkNote, embedText } from './chunk.js';
 import { openMemoryDb } from './db.js';
@@ -145,6 +146,9 @@ export function createSearchIndex({ db, embedder = null, paused = () => false, l
           version++;
           await tick();
         }
+      } catch (e) {
+        // the connection closed under the queue (the graph store closed with its vault); the next index starts over
+        log('search', 'embed queue stopped', String(e?.message ?? e));
       } finally {
         if (done) st.embedRate = Math.round((done / Math.max(1, now() - at)) * 1000 * 10) / 10;
         draining = null;
@@ -164,8 +168,9 @@ export function createSearchIndex({ db, embedder = null, paused = () => false, l
 }
 
 // Main's side: one index per vault, opened on the first change the vault index reports and built from its snapshot;
-// later changes update it note by note. vindex() is the vault index, vault() the open vault, embed(texts, maxTokens)
-// the memory host's embed, graph() the memory graph's store or null, paused() a recording is live
+// later changes update it note by note. vindex() is the vault index, vault() the open vault, embedder the memory host's
+// (embed.js), graph() the memory graph's store or null, paused() a recording is live. Search runs on the store's
+// connection, so a new store (the vault changed, or the graph opened late) opens the index again
 export function createMemorySearch({ dataDir, vault, vindex, embedder = null, graph = () => null, paused = () => false, log = () => {} }) {
   let cur = null;
   const close = () => { if (!cur) return; cur.index.stop(); if (cur.own) try { cur.db.close(); } catch {} cur = null; };
@@ -173,12 +178,13 @@ export function createMemorySearch({ dataDir, vault, vindex, embedder = null, gr
     const v = vault();
     const ix = vindex();
     if (!v || !ix) { close(); return null; }
-    if (cur?.vault === v) return cur;
+    const store = graph();
+    if (cur?.vault === v && cur.store === store) return cur;
     close();
-    const { db, own } = openMemoryDb({ dataDir, vault: v, store: graph() });
+    const { db, own } = openMemoryDb({ dataDir, vault: v, store });
     const index = createSearchIndex({ db, embedder, paused, log });
-    const hybrid = createHybridSearch({ db, embedder, graph: () => graph(), version: index.version });
-    cur = { vault: v, db, own, index, hybrid, ready: null };
+    const hybrid = createHybridSearch({ db, embedder, graph: () => store, version: index.version });
+    cur = { vault: v, store, db, own, index, hybrid, ready: null };
     cur.ready = index.build(ix.snapshot()).catch((e) => log('search', 'build failed', e?.message));
     return cur;
   }
@@ -189,15 +195,25 @@ export function createMemorySearch({ dataDir, vault, vindex, embedder = null, gr
     if (!c) return;
     if (c !== was) return c.ready;
     await c.ready;
-    const want = new Set(rels);
-    const notes = vindex().snapshot().filter((n) => want.has(n.rel));
-    const seen = new Set(notes.map((n) => n.rel));
-    return c.index.update(notes, rels.filter((r) => !seen.has(r)));
+    const ix = vindex();
+    const notes = [];
+    const gone = [];
+    for (const rel of new Set(rels)) {
+      // the index's text, with withheld lines already taken out; null once the note left the index
+      const text = ix.text(rel);
+      if (text == null) { gone.push(rel); continue; }
+      let mtime = 0;
+      try { mtime = statSync(path.join(c.vault, rel)).mtimeMs; } catch {}
+      notes.push({ rel, text, note: ix.note(rel), mtime });
+    }
+    return c.index.update(notes, gone);
   }
   return {
     changed,
     async search(opts = {}) { const c = open(); if (!c) return { results: [], truncated: { shown: 0, total: 0, budgetNeeded: 0 } }; await c.ready; return c.hybrid.search(opts); },
     status() { const c = open(); return c ? c.index.status() : { state: 'off', notes: 0, chunks: 0, embedded: 0, pending: 0, model: embedder?.id ?? null, error: null, lastBuildMs: null, built: false, embedPerSecond: null }; },
+    // settles once the open index's build and embed queue are done
+    idle: async () => { const c = cur; if (!c) return; await c.ready; await c.index.idle(); },
     close,
   };
 }

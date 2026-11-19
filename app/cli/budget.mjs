@@ -21,7 +21,9 @@ export function day(v) {
 }
 // a node named by id, or an object with one
 const ref = (v) => (typeof v === 'string' ? v : pick(v, 'id', 'rel', 'name'));
-const at = (rel, line) => (rel ? `${rel}${line != null ? `:${line}` : ''}` : null);
+// lines are stored 0-based (vindex and the chunker); agents and editors count from 1
+const human = (line) => (line == null || line === '' || Number.isNaN(Number(line)) ? null : Number(line) + 1);
+const at = (rel, line) => (rel ? `${rel}${human(line) != null ? `:${human(line)}` : ''}` : null);
 
 export function nodeLine(node) {
   const id = pick(node, 'id') ?? '';
@@ -52,8 +54,8 @@ export function edgeLine(edge) {
 }
 
 export function passageLine(c) {
-  const start = pick(c, 'start_line', 'startLine');
-  const end = pick(c, 'end_line', 'endLine');
+  const start = human(pick(c, 'start_line', 'startLine'));
+  const end = human(pick(c, 'end_line', 'endLine'));
   const lines = start != null ? `:${start}${end != null && end !== start ? `-${end}` : ''}` : '';
   const heading = oneLine(pick(c, 'heading'));
   const score = pick(c, 'score');
