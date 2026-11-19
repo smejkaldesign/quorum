@@ -1,13 +1,16 @@
 #!/usr/bin/env node
-// Edition boundary check (docs/open-source-strategy.md). Two rules:
+// Edition boundary check (docs/open-source-strategy.md). Three rules:
 //  1. Source outside app/ee/ may reach ee/ only through a dynamic import() inside the two edition modules
 //     (edition.js for the main process, src/edition.tsx for the renderer). Every other import of ee/ fails.
 //  2. The built renderer in dist/ must not contain the ee marker string in the local edition, and must contain it in
 //     the cloud edition. QUORUM_EDITION decides which edition dist/ is expected to be (default local).
+//  3. Nothing the renderer loads (src/, ee/src/ and every module they reach through relative imports) may import a Node
+//     built-in. Vite swaps those for empty stubs, so the page builds and then throws the moment the module loads.
 // Run after `vite build`. Exits 1 with a list of problems, 0 when the boundary holds. Optional: --root <app dir>.
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { builtinModules } from 'node:module';
 
 // --root <dir> points the check at another app tree (the tests use a temp copy); the default is the folder above scripts/
 const rootArg = process.argv.indexOf('--root');
@@ -53,6 +56,41 @@ for (const file of walk(app)) {
 // edition.js builds its import path from a template string, so the regex above does not see it; check the file by hand
 const editionSrc = readFileSync(path.join(app, 'edition.js'), 'utf8');
 if (!/import\(`\.\/ee\/\$\{file\}`\)/.test(editionSrc)) problems.push('edition.js: loadEE no longer imports from ./ee/; the boundary check expects it to');
+
+// rule 3: follow the renderer's runtime imports (type-only imports are erased) and flag any Node built-in they reach
+const BUILTIN = new Set(builtinModules.flatMap((m) => [m, m.split('/')[0]]));
+const isBuiltin = (spec) => spec.startsWith('node:') || BUILTIN.has(spec.split('/')[0]);
+const RUNTIME = /(?:^|\n)\s*(import|export)(?!\s+type\b)\s[^'"\n]*?from\s*['"]([^'"]+)['"]|(?:^|\n)\s*import\s*['"]([^'"]+)['"]|\bimport\(\s*['"]([^'"]+)['"]\s*\)/g;
+const RESOLVE = ['', '.ts', '.tsx', '.mjs', '.js', '/index.ts', '/index.tsx', '/index.js'];
+const resolveRel = (from, spec) => {
+  const base = path.resolve(path.dirname(from), spec);
+  for (const ext of RESOLVE) { const f = base + ext; if (existsSync(f) && statSync(f).isFile() && !f.endsWith('.d.ts')) return f; }
+  const stripped = base.replace(/\.js$/, '');
+  for (const ext of ['.ts', '.tsx']) if (existsSync(stripped + ext)) return stripped + ext;
+  return null;
+};
+const rendererEntries = ['src', path.join('ee', 'src')].map((d) => path.join(app, d)).filter(existsSync)
+  .flatMap((d) => [...walk(d)]).filter((f) => !f.endsWith('.d.ts') && !/\.test\.[jt]sx?$/.test(f));
+const seen = new Set();
+const chain = new Map(rendererEntries.map((f) => [f, null]));
+const queue = [...rendererEntries];
+while (queue.length) {
+  const file = queue.shift();
+  if (seen.has(file)) continue;
+  seen.add(file);
+  for (const m of readFileSync(file, 'utf8').matchAll(RUNTIME)) {
+    const spec = m[2] ?? m[3] ?? m[4];
+    if (!spec) continue;
+    if (isBuiltin(spec)) {
+      const via = []; for (let f = file; f; f = chain.get(f)) via.unshift(path.relative(app, f));
+      problems.push(`renderer reaches Node built-in '${spec}' through ${via.join(' -> ')}; move what the page needs into a module with no Node imports`);
+      continue;
+    }
+    if (!spec.startsWith('.')) continue;
+    const target = resolveRel(file, spec);
+    if (target && !seen.has(target)) { if (!chain.has(target)) chain.set(target, file); queue.push(target); }
+  }
+}
 
 const dist = path.join(app, 'dist');
 if (!existsSync(dist)) {

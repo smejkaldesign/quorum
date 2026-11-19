@@ -84,4 +84,15 @@ describe('edition boundary check', () => {
     expect(r.status).toBe(1);
     expect(r.err).toMatch(/dist\/ is missing/);
   });
+  it('fails when the renderer reaches a Node built-in through a shared module', () => {
+    tree({ 'src/Page.tsx': 'import { T } from "../sources/shared";\nexport const P = T;\n', 'sources/shared.js': 'import { spawn } from "node:child_process";\nimport { a } from "./deep.js";\nexport const T = [spawn, a];\n', 'sources/deep.js': 'import { readFileSync } from "fs";\nexport const a = readFileSync;\n' });
+    const r = check();
+    expect(r.status).toBe(1);
+    expect(r.err).toContain("'node:child_process' through src/Page.tsx -> sources/shared.js");
+    expect(r.err).toContain("'fs' through src/Page.tsx -> sources/shared.js -> sources/deep.js");
+  });
+  it('allows type-only imports from Node-side modules and Node imports the renderer never reaches', () => {
+    tree({ 'src/Page.tsx': 'import type { T } from "../sources/main-only";\nimport { S } from "../sources/shared";\nexport const P = S;\n', 'sources/main-only.js': 'import fs from "node:fs";\nexport const T = fs;\n', 'sources/shared.js': 'export const S = 1;\n', 'main.js': 'import { spawn } from "node:child_process";\n' });
+    expect(check().status).toBe(0);
+  });
 });

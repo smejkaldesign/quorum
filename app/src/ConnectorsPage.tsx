@@ -6,7 +6,7 @@ import { CONNECTOR_RETURN } from './connectorsNav';
 import { libraryAreas } from './libraryFilter';
 import { createInstallsReader, type InstallsView } from './githubInstalls';
 import { useSession } from './session';
-import { TRADEOFFS } from '../sources/agent-import';
+import { TRADEOFFS } from '../sources/agent-import-shared';
 import { AREAS, CONNECTORS_CHANGED, CONNECTOR_BY_ID, aboutFor, areaOf, areaOfCategory, connectorsFor, featuresFor, isConnected, mcpPathsOf, type LibraryConnector } from '../connectors/library';
 import { BLOCKED_SENTENCE, ORG_LABEL, ORG_SENTENCE, UNAPPROVED_LABEL, approvalOf, canConnect, hasLocalPart, hiddenFromList, isGoverned, type Approval } from '../connectors/approval';
 import { SyncedFolderConnections, useConnectorPolicy } from './edition';
