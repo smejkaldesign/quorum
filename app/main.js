@@ -64,6 +64,7 @@ import { ARCHIVE_AFTER, feedPage, feedRows, labelOf, needsReview } from './activ
 import { issueMeta, issueOf } from './memoryHealth.js';
 import { LINK_RULE, LINK_RULE_VERSION, contextNote, isGenerated } from './linkRules.js';
 import { createDecisionLog, fingerprint } from './decisionLog.js';
+import { itemUndo } from './batchItemUndo.js';
 import { FIX_RECHECK_RULE, FIX_RECHECK_VERSION, fixVersions, recheckAll, undoPlan } from './fixRecheck.js';
 import { buildPlan, checkFirst, checkOrder, effects, groupLabel, groupOf, notesOf, planExclude } from './batchPlan.js';
 import { RETRO_TITLE, ROW, findingItem, itemLine, linkItem, pastFixItem } from './reviewItems.js';
@@ -3092,9 +3093,11 @@ async function pumpFixes() {
       stamp();
       fixJournal.append(run.id, { step: 'keep', rel, created });
     };
+    // a batch item that failed on its own put its notes back already; release drops them from the run's undo record
+    const release = (rels) => { let n = 0; for (const r of rels) { const at = kept.findIndex((k) => k.rel === r); if (at >= 0) { kept.splice(at, 1); n++; } } if (n) stamp(); };
     if (run.kind === 'batch') work = agentActivity.start({ kind: 'batch', label: `Applying ${run.target}`, cancellable: true, onCancel: () => { run.cancel = true; run.agentAbort?.abort(); } });
     try {
-      run.outcome = run.kind === 'batch' ? await runBatch(run, step, keep) : await decideLink(run.key, 'approve', step, keep, run.hashes ?? null, run.finding?.proposedFix ?? null);
+      run.outcome = run.kind === 'batch' ? await runBatch(run, step, keep, release) : await decideLink(run.key, 'approve', step, keep, run.hashes ?? null, run.finding?.proposedFix ?? null);
       run.status = 'success';
       // a batch that only kept items as they are wrote nothing, and its Undo still moves them back to review
       run.undoable = saveUndo(run, kept) || (run.kind === 'batch' && !!run.done?.length);
@@ -3102,8 +3105,9 @@ async function pumpFixes() {
     } catch (e) {
       run.status = 'error';
       run.error = e?.message ?? String(e);
-      // a batch is all or nothing: every item goes back with it
-      if (run.kind === 'batch') for (const it of run.items ?? []) it.status = 'error';
+      // a failure the batch could not keep to one item puts every item back: one it had fixed is marked rolled back, one
+      // that failed on its own keeps its reason
+      if (run.kind === 'batch') for (const it of run.items ?? []) { if (it.status === 'success' || it.status === 'running') it.rolledBack = true; it.status = 'error'; }
       // a fix that failed after it wrote (the re-check found it made the links worse, or an error partway) puts the
       // notes back, so a Failed run leaves the vault as it was
       if (kept.length) {
@@ -4037,8 +4041,9 @@ async function runOp(item, o, { step, keep, written, vault }) {
 const opRels = (o) => { const e = effects(o); return [...e.writes.map((w) => w.rel), ...e.removes, ...e.creates]; };
 // runs a batch's steps in the plan's order, then sends each corrected past fix's link back to review or points it at
 // the note the current rules pick when that fix needs no review of its own, then checks the links of every note it
-// touched. Any failure throws, and the run puts every note back
-async function runBatch(run, step, keep) {
+// touched. An item that fails, or leaves a new broken link, puts back its own notes and the rest go on (itemRollback).
+// A failure that cannot be kept to one item throws, and the run puts every note back
+async function runBatch(run, step, keep, release = () => {}) {
   const b = brain();
   if (!b || !vindex) throw new Error('No vault connected');
   const saved = batchPlans.get(run.id);
@@ -4083,14 +4088,35 @@ async function runBatch(run, step, keep) {
   const before = missingOf(touched);
   const written = new Set();
   const left = new Map(items.map((i) => [i.id, plan.steps.filter((s) => s.item === i.id).length]));
+  const undo = itemUndo(b.vault, (rel) => vaultPath(b.vault, rel));
+  const failed = new Set();
+  // puts back one item's notes and marks it failed, or throws when another item also wrote one of them
+  const putBack = async (item, why) => {
+    const rels = undo.rels(item.id);
+    if (!undo.alone(item.id)) throw new Error(`${why}. Another item in this batch changed the same note, so Quorum put back the whole batch`);
+    await undo.restore(item.id, (abs) => shell.trashItem(abs));
+    release(rels);
+    failed.add(item.id);
+    mark(item.id, 'error', why);
+    fixJournal.append(run.id, { step: 'item-rolled-back', item: item.id, rels, why });
+    vindex.sync();
+  };
   for (const s of plan.steps) {
     const item = byId.get(s.item);
+    if (failed.has(item.id)) continue;
     mark(item.id, 'running');
-    await runOp(item, s.op, { step, keep, written, vault: b.vault });
+    try {
+      await runOp(item, s.op, { step, keep: undo.track(item.id, keep), written, vault: b.vault });
+    } catch (e) {
+      if (run.cancel) throw e;
+      await putBack(item, e?.message ?? String(e));
+      continue;
+    }
     for (const r of opRels(s.op)) written.add(r);
     left.set(item.id, left.get(item.id) - 1);
     if (!left.get(item.id)) mark(item.id, 'success');
   }
+  if (!items.some((i) => !failed.has(i.id))) throw new Error(run.items.find((i) => i.error)?.error ?? 'No item in the batch could be fixed');
   vindex.sync();
   diskNamesCache.at = 0;
   // a corrected past fix's link goes back to review; the current rules then point it at a note when that is safe
@@ -4113,13 +4139,22 @@ async function runBatch(run, step, keep) {
     followed.push(issue.target);
   }
   await step('Checking the links again');
-  const after = missingOf(touched);
-  for (const [rel, set] of after) after.set(rel, new Set([...set].filter((t) => !reopened.has(t))));
-  const reason = fixCheck({ before, after });
-  if (reason) throw new Error(reason);
-  run.undid = items.filter((i) => i.kind === 'pastfix' && !i.keep).map((i) => i.key);
+  // a new broken link in a note one item wrote puts back that item alone; a note several items wrote cannot be split
+  for (let pass = 0; pass <= items.length; pass++) {
+    const after = missingOf(touched);
+    for (const [rel, set] of after) after.set(rel, new Set([...set].filter((t) => !reopened.has(t))));
+    const reason = fixCheck({ before, after });
+    if (!reason) break;
+    const worse = [...after].filter(([rel, now]) => [...now].some((t) => !(before.get(rel) ?? new Set()).has(t))).map(([rel]) => rel);
+    const blame = items.filter((i) => !failed.has(i.id) && undo.rels(i.id).some((r) => worse.includes(r)));
+    if (!blame.length) throw new Error(reason);
+    for (const item of blame) await putBack(item, reason);
+  }
+  if (!items.some((i) => !failed.has(i.id))) throw new Error(run.items.find((i) => i.error)?.error ?? 'No item in the batch could be fixed');
+  const fixed = items.filter((i) => !failed.has(i.id));
+  run.undid = fixed.filter((i) => i.kind === 'pastfix' && !i.keep).map((i) => i.key);
   // a kept past fix and every finding leave Needs review as done
-  run.done = items.filter((i) => (i.kind === 'pastfix' && i.keep) || i.kind === 'finding').map((i) => i.id);
+  run.done = fixed.filter((i) => (i.kind === 'pastfix' && i.keep) || i.kind === 'finding').map((i) => i.id);
   run.touched = [...touched];
   const done = (run.groups ?? []).map((g) => g.label).join(', ');
   return `Applied the plan: ${done}${followed.length ? `. Then pointed ${followed.length === 1 ? `the link to “${followed[0]}”` : `${followed.length} links`} at the notes the current rules pick` : ''}`;

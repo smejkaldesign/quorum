@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { batchSummary } from './batchSummary';
 import type { MissingLink } from './quorum';
 // every Quorum agent row shows the blue mark; review state shows through the badges and counts
 import markReview from '../assets/quorum-mark.png';
@@ -91,8 +92,8 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   // the latest bulk Approve, read from the runs Quorum keeps, so its progress shows again after leaving and coming back.
   // Dismiss hides it on this Mac
   const [hiddenBatch, setHiddenBatch] = useState<string | null>(() => { try { return localStorage.getItem('quorum.hiddenBatch'); } catch { return null; } });
-  // the bulk plan sheet: Approve on several issues (their row ids), or Review everything (null: all of Needs review)
-  const [plan, setPlan] = useState<{ ids: string[] | null; everything: boolean } | null>(null);
+  // the bulk plan sheet: Approve on several issues, by their row ids
+  const [plan, setPlan] = useState<{ ids: string[] } | null>(null);
   // Needs review as main counts it (memory-review-count), the same number as the Memory health button and the tree
   const [reviewN, setReviewN] = useState(0);
   // the past fixes and the rules Quorum proposes that wait in Needs review, shown with the Notifications row
@@ -146,6 +147,11 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
       : tab === 'unread' ? lively.filter(unreadOf) : lively;
   const unreadN = lively.filter(unreadOf).length;
   // the newest bulk Approve's banner: two or more items. One item approved on its own shows its progress in its row
+  // an item that failed on its own in the newest batch that ran it keeps its reason in its row
+  const failedWhy = new Map<string, string>();
+  for (const r of [...runs].filter((x) => x.kind === 'batch' && x.endedAt).sort((a, b) => a.queuedAt - b.queuedAt)) {
+    for (const it of r.items ?? []) if (it.kind === 'link') { if (it.status === 'error' && it.error && !it.rolledBack) failedWhy.set(it.key, it.error); else failedWhy.delete(it.key); }
+  }
   const listOf = (b: string) => runs.filter((r) => r.batch === b && !r.undoneAt).flatMap((r) => (r.kind === 'batch' ? batchItems(r) : [r]));
   const lastBatch = [...new Set(runs.filter((r) => r.batch).sort((a, b) => b.queuedAt - a.queuedAt).map((r) => r.batch!))].find((b) => listOf(b).length > 1) ?? null;
   const bulkList = lastBatch ? listOf(lastBatch) : [];
@@ -244,6 +250,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   const row = (i: Issue) => {
     const fixRun = liveRuns.get(i.key);
+    const lastFail = fixRun ? null : failedWhy.get(i.key) ?? null;
     const working = approving.has(i.key) || !!fixRun;
     const waiting = fixRun ? fixRun.status === 'queued' : false;
     return (
@@ -282,7 +289,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
         <div className="conn-sub conn-fold-body nf-details mh-fold">
           {tab === 'archived'
             ? <><IssueParts parts={[['Dismissed', 'Archived without fixing it. The links stay as they are; move it back to review to fix it later.']]} /><ReviewDetails meta={issueMeta(i)} /></>
-            : <>{fixRun && <RunBanner run={{ ...fixRun, showBanner: true }} />}<ReviewDetails recommendation={fixRun ? undefined : i.recommend} problem={i.problem} solution={i.solution} value={i.value} meta={issueMeta(i)} /></>}
+            : <>{fixRun && <RunBanner run={{ ...fixRun, showBanner: true }} />}{lastFail && <IssueParts parts={[['Last fix failed', lastFail]]} />}<ReviewDetails recommendation={fixRun ? undefined : i.recommend} problem={i.problem} solution={i.solution} value={i.value} meta={issueMeta(i)} /></>}
         </div>
         </div>
       </div>
@@ -304,7 +311,6 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
       <div className="lh-head">
         <h2 ref={headRef} tabIndex={-1}>Memory health</h2>
         <span className="mh-head-actions">
-          <button className="act-pill" disabled={busy || !openN} data-tip="Plan a fix for everything in Needs review, then choose what runs" onClick={() => setPlan({ ids: null, everything: true })}>Review everything</button>
           <button className={`icon-btn ${busy ? 'spinning' : ''}`} aria-label="Check again" data-tip="Check again" disabled={busy} onClick={refresh}><IconReset width={16} height={16} /></button>
           <button className="icon-btn" aria-label="Close Memory health" data-tip="Back to graph" onClick={onClose}><IconClose width={16} height={16} /></button>
         </span>
@@ -342,7 +348,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
                   {/* left to right: Archive, Mark read, and Approve as the primary action on the far right */}
                   <button className="icon-btn mh-icon" disabled={busy} aria-label="Archive" data-tip="Archive: set them aside without fixing them" onClick={async () => { if (pickedRuns.length) { await window.quorum.activityArchive(pickedRuns.map((r) => ({ id: runId(r) })), true); for (const r of pickedRuns) await window.quorum.fixDismiss([r.id]).catch(() => 0); } if (sel.length) await decide(sel, 'dismiss'); else { clear(); load(); } }}><IconArchive width={16} height={16} /></button>
                   <button className="act-pill" disabled={busy || !entries.some((e) => picked.has(idOf(e)) && unreadOf(e))} onClick={async () => { await markRead(entries.filter((e) => picked.has(idOf(e)) && unreadOf(e)).map((e) => ('issue' in e ? issueId(e.issue.key) : runId(e.run)))); clear(); }}>Mark read</button>
-                  <button className="act-pill primary" disabled={busy || !sel.length || sel.some(locked)} onClick={() => (sel.length > 1 ? setPlan({ ids: sel.map((i) => issueId(i.key)), everything: false }) : decide(sel, 'approve'))}>Approve</button>
+                  <button className="act-pill primary" disabled={busy || !sel.length || sel.some(locked)} onClick={() => (sel.length > 1 ? setPlan({ ids: sel.map((i) => issueId(i.key)) }) : decide(sel, 'approve'))}>Approve</button>
                 </>}
           </span>
         </div>
@@ -361,7 +367,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
       ))}</div>}
       {findingsShown && <MemoryFindings findings={findings} drafts={drafts} archived={tab === 'archived'} q={q} unread={marks.unread} onArchive={archiveFindings} onApprove={approveFinding} onRead={markRead} />}
       {!entries.length && !findingsShown && !othersShown.length && <div className="nf-empty"><p>{empty}</p></div>}
-      {plan && <BulkPlan ids={plan.ids} everything={plan.everything} onClose={() => setPlan(null)} onApplied={() => { clear(); load(); onChanged(); window.dispatchEvent(new Event(CHANGED)); }} />}
+      {plan && <BulkPlan ids={plan.ids} onClose={() => setPlan(null)} onApplied={() => { clear(); load(); onChanged(); window.dispatchEvent(new Event(CHANGED)); }} />}
     </div>
   );
 }
@@ -457,8 +463,9 @@ function RunRow({ run, unread, picked, onPick }: { run: FixRun; unread: boolean;
   );
 }
 
-// a batch run's items as the banner lists them, each with its own state; a failed batch put every item back
-const batchItems = (r: FixRun): FixRun[] => (r.items ?? []).map((it) => ({ ...r, id: it.id, key: it.key, target: it.line || it.title, status: r.status === 'error' ? 'error' : it.status, steps: it.status === 'running' ? r.steps : [] }));
+// a batch run's items as the banner lists them, each with its own state and reason. An item fails on its own; a failed
+// batch put back every item it had fixed (rolledBack)
+const batchItems = (r: FixRun): FixRun[] => (r.items ?? []).map((it) => ({ ...r, id: it.id, key: it.key, target: it.line || it.title, status: r.status === 'error' ? 'error' : it.status, error: it.error ?? (r.status === 'error' ? r.error : null), rolledBack: !!it.rolledBack, steps: it.status === 'running' ? r.steps : [] }));
 
 // a bulk Approve's progress, full width under the bulk bar: the item being fixed shimmers here and in its row, the bar
 // fills as items finish, and the fold lists every item with its state. Done, it says how many were fixed
@@ -474,11 +481,12 @@ function BatchBanner({ runs, error, onCancel, onDismiss }: { runs: FixRun[]; err
   const cancelled = !ok && items.some((x) => x.run.error?.endsWith('cancelled the batch'));
   const text = live
     ? `Fixing ${finished + 1} of ${items.length}${now ? `: “${now.title}”${now.run.steps.length ? `, ${now.run.steps[now.run.steps.length - 1].label.toLowerCase()}` : ''}` : ''}`
-    : cancelled ? `Cancelled. ${items.length} ${items.length === 1 ? 'item is' : 'items are'} back in Needs review` : `Fixed ${ok} of ${items.length}${bad ? `. ${bad} could not be fixed` : ''}`;
+    : cancelled ? `Cancelled. ${items.length} ${items.length === 1 ? 'item is' : 'items are'} back in Needs review` : batchSummary(items.map((x) => ({ title: x.title, status: x.run.status, error: x.run.error, rolledBack: x.run.rolledBack })));
   return (
     <WorkBanner
       state={live ? 'live' : bad && !ok ? 'error' : 'success'} text={text} startedAt={Math.min(...items.map((x) => x.run.queuedAt))} endedAt={Math.max(...items.map((x) => x.run.endedAt ?? 0))}
-      progress={finished / items.length}
+      // live, the bar fills as items finish; done, it shows the share fixed, so a run that fixed nothing is not full
+      progress={live ? finished / items.length : ok / items.length}
       note={live ? 'This can take a few minutes. You can leave this page; Quorum keeps fixing in the background and each item updates as it finishes.' : error}
       actions={<>
         <button className={`icon-btn conn-fold${open ? ' open' : ''}`} aria-expanded={open} aria-label={open ? 'Hide items' : 'Show items'} onClick={() => setOpen((o) => !o)}><IconChevron width={14} height={14} /></button>
@@ -493,7 +501,7 @@ function BatchBanner({ runs, error, onCancel, onDismiss }: { runs: FixRun[]; err
           <ol className="run-steps mh-batch-list">
             {items.map((x) => {
               const st = x.run.status;
-              return <li key={x.k} className={st === 'running' ? 'now' : st === 'success' || st === 'error' ? 'done' : ''}><span className={st === 'running' ? 'shimmer' : ''} data-tip={x.title}>{x.title}</span><span className="run-time">{st === 'success' ? 'Fixed' : st === 'error' ? 'Could not fix' : st === 'running' ? 'Fixing' : 'Waiting'}</span></li>;
+              return <li key={x.k} className={st === 'running' ? 'now' : st === 'success' || st === 'error' ? 'done' : ''}><span className={st === 'running' ? 'shimmer' : ''} data-tip={x.title}>{x.title}</span><span className="run-time" data-tip={st === 'error' && x.run.error ? x.run.error : undefined}>{st === 'success' ? 'Fixed' : st === 'error' ? (x.run.rolledBack ? 'Put back' : 'Could not fix') : st === 'running' ? 'Fixing' : 'Waiting'}</span></li>;
             })}
           </ol>
         </div>
