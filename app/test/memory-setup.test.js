@@ -353,7 +353,7 @@ describe('with the memory graph built', () => {
     const store = g.store;
     const ids = [];
     store.tx(() => { for (const e of approvedEdges([{ kind: 'finding', ops: [{ op: 'mention', rel: 'old.md', to: 'new.md' }] }], { at: 1 })) ids.push(store.addEdge(e)); });
-    expect(store.edge(ids[0])).toMatchObject({ provenance: 'person', kind: 'mentions' });
+    expect(store.edge(ids[0])).toMatchObject({ provenance: 'person', kind: 'mentions', props: { by: 'review' } });
     const f = { ruleId: 'note.contradiction', notes: ['old.md', 'new.md'], evidence: ['Older: old.md line 3: “x”'] };
     expect(recordContradictions(store, [f], { at: 2 })).toEqual({ added: 1, ended: 0 });
     const sup = resolveContradiction(store, { ...f, ops: [{ op: 'annotate', rel: 'old.md', line: 3 }] }, { at: 3 });

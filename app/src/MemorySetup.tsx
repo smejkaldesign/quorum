@@ -10,7 +10,7 @@ const day = (t: number) => new Date(t).toLocaleDateString('en-US', { month: 'sho
 function found(r: MemorySetupReport) {
   const c = r.counts;
   const e = c.entities;
-  const embed = c.embeddings ? (c.embeddings.built >= c.embeddings.total ? `${plural(c.embeddings.total, 'passage')} embedded for search` : `Embedding ${n(c.embeddings.built)} of ${n(c.embeddings.total)} passages in the background`) : 'Search embeddings are not built yet';
+  const embed = c.embeddings ? (c.embeddings.built >= c.embeddings.total ? `${plural(c.embeddings.total, 'passage')} embedded for search` : `Embedding ${n(c.embeddings.built)} of ${n(c.embeddings.total)} passages in the background`) : 'The search index is not built yet';
   return [
     plural(c.notes, 'note'),
     `${n(c.links.resolved)} of ${plural(c.links.total, 'link')} open a note`,

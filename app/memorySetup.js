@@ -178,8 +178,8 @@ export function approvedEdges(items, { at = Date.now(), idOf = (rel, props) => n
       if (o.op !== 'mention') continue;
       const attended = o.edge === 'attended';
       out.push(attended
-        ? { src: idOf(o.to, o.entity ? { type: o.entity } : {}), dst: idOf(o.rel), kind: 'attended', provenance: 'person', source_rel: o.rel, source_line: null, confidence: 1, valid_from: at }
-        : { src: `note:${o.rel}`, dst: idOf(o.to, o.entity ? { type: o.entity } : {}), kind: 'mentions', provenance: 'person', source_rel: o.rel, source_line: null, confidence: 1, valid_from: at });
+        ? { src: idOf(o.to, o.entity ? { type: o.entity } : {}), dst: idOf(o.rel), kind: 'attended', provenance: 'person', source_rel: o.rel, source_line: null, confidence: 1, valid_from: at, props: { by: 'review' } }
+        : { src: `note:${o.rel}`, dst: idOf(o.to, o.entity ? { type: o.entity } : {}), kind: 'mentions', provenance: 'person', source_rel: o.rel, source_line: null, confidence: 1, valid_from: at, props: { by: 'review' } });
     }
   }
   return out;
@@ -226,7 +226,7 @@ export function resolveContradiction(store, item, { at = Date.now() } = {}) {
   if (!o || !older || !newer) return null;
   let id = null;
   store.tx(() => {
-    id = store.addEdge({ src: `note:${newer}`, dst: `note:${older}`, kind: 'supersedes', provenance: 'person', source_rel: newer, source_line: null, confidence: 1, valid_from: at, recorded_at: at });
+    id = store.addEdge({ src: `note:${newer}`, dst: `note:${older}`, kind: 'supersedes', provenance: 'person', source_rel: newer, source_line: null, confidence: 1, valid_from: at, recorded_at: at, props: { by: 'review' } });
     for (const e of between(store, newer, older, 'contradicts')) store.supersede(e.id, id, at);
     for (const e of bySource(store, older)) if (e.source_line === o.line - 1 && e.id !== id) store.supersede(e.id, id, at);
   });

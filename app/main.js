@@ -2688,9 +2688,13 @@ function setupReportNow() {
     notes, missing: notes.reduce((n, x) => n + vindex.missingIn(x.rel).length, 0),
     findings: findingsNow(), links: linkIssues().map((e) => issueOf(withMarks(e))),
     graph: store ? { stats, freshness: (since) => graphFreshness(store, since) } : null,
-    search: null, keeper: keeper.status(), made: b.made,
+    search: searchCounts(), keeper: keeper.status(), made: b.made,
     outside: outsideInstructions({ root: b.root, vault: b.vault, resolve: (t, f) => vindex.resolve(t, f) }),
   });
+}
+// the search index's passages and how many are embedded, or null while it is off
+function searchCounts() {
+  try { const s = memorySearch.status(); return s?.chunks ? { chunks: s.chunks, embedded: s.embedded ?? 0 } : null; } catch { return null; }
 }
 function setupStatus() {
   const b = brain();
