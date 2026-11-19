@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { draftOf, eolOf, followSave, parseProps, propsProblem, shownValue, storedValue, titleIndex, titleProblem, uniqueKey, writeProps, type Draft, type Prop } from './frontmatter';
+import { draftOf, edited, eolOf, followSave, parseProps, propsProblem, shownValue, storedValue, titleIndex, titleProblem, uniqueKey, writeProps, type Draft, type Prop } from './frontmatter';
 
 // The note's frontmatter as rows of key and value. ⌘↵ or leaving the panel saves, Esc puts back what was saved (and
 // wins over the blur that follows it). The title row is edited in the title field above, so it is left out here and
 // kept; a title save that rewrites it while you edit other rows is merged into your draft. Frontmatter that does not
 // split into rows shows as raw text. error is a save the main process turned down.
 
-// inModal: shown open inside the Properties sheet, which carries its own title
-export function Properties({ value, readOnly, error, onChange, inModal = false }: { value: string; readOnly: boolean; error?: string | null; onChange: (fm: string) => void; inModal?: boolean }) {
+// inModal: shown open inside the Properties sheet, which carries its own title. withTitle: a view with no title field
+// (Knowledge) shows the title row with the others
+export function Properties({ value, readOnly, error, onChange, inModal = false, withTitle = false }: { value: string; readOnly: boolean; error?: string | null; onChange: (fm: string) => void; inModal?: boolean; withTitle?: boolean }) {
   const [draft, setDraft] = useState<Draft>(() => draftOf(value));
   const [opened, setOpen] = useState(false);
   const open = inModal || opened;
@@ -16,14 +17,14 @@ export function Properties({ value, readOnly, error, onChange, inModal = false }
   // when Esc was pressed: the blur right after it must not save the draft Esc just threw away
   const cancelled = useRef(0);
   const eol = eolOf(value);
-  const dirty = draft.rows ? writeProps(draft.rows, eol) !== draft.base : draft.raw !== draft.base;
+  const dirty = edited(draft);
 
   // a new value from a save: an untouched draft follows it; an edited one keeps its edits and takes the new title row
   useEffect(() => { setDraft((d) => followSave(d, value)); }, [value]);
 
-  const hidden = draft.rows ? titleIndex(draft.rows) : -1;
+  const hidden = draft.rows && !withTitle ? titleIndex(draft.rows) : -1;
   const shown = (draft.rows ?? []).map((r, i) => ({ r, i })).filter(({ i }) => i !== hidden);
-  const check = (rows: Prop[]) => propsProblem(rows) ?? shown.map(({ r }) => titleProblem(r.key)).find(Boolean) ?? null;
+  const check = (rows: Prop[]) => propsProblem(rows) ?? (withTitle ? null : shown.map(({ r }) => titleProblem(r.key)).find(Boolean) ?? null);
 
   function commit() {
     if (Date.now() - cancelled.current < 400) return;
@@ -45,7 +46,7 @@ export function Properties({ value, readOnly, error, onChange, inModal = false }
   const set = (i: number, patch: Partial<Prop>) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   const add = () => { const rows = draft.rows ?? []; setFocusRow(rows.length); setRows((rs) => [...rs, { key: uniqueKey(rs), value: '' }]); };
   const parsed = parseProps(value);
-  const count = parsed ? parsed.filter((r) => r.key !== 'title').length : 1;
+  const count = parsed ? parsed.filter((r) => withTitle || r.key !== 'title').length : 1;
   const shownError = problem ?? error ?? null;
 
   return (

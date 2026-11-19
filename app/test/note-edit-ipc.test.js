@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { hashText } from '../handnote.js';
-import { openEdit, saveEdit } from '../vaultEdit.js';
+import { listBookmarks, moveBookmarks, openEdit, openToday, saveEdit, toggleBookmark } from '../vaultEdit.js';
 import { createEditSession, SAVE_AFTER } from '../src/editor/editSession.ts';
 
 const never = () => false;
@@ -88,16 +88,16 @@ describe('vault-note-edit and vault-note-save', () => {
 });
 
 describe('the editor session', () => {
-  const note = (body, hash = `h:${body}`) => ({ hash, readOnly: null, body, frontmatter: '' });
+  const note = (body, hash = `h:${body}`, frontmatter = '') => ({ hash, readOnly: null, body, frontmatter });
   function setup({ save, load, copy = async () => {} } = {}) {
-    const calls = { copied: [], toasts: [], notices: [], errors: [], taken: [], saved: [] };
+    const calls = { copied: [], toasts: [], notices: [], errors: [], taken: [], saved: [], props: [] };
     const api = {
       load: load ?? (async () => note('disk')),
       save: save ?? (async ({ body }) => ({ hash: `h:${body}` })),
       copy: vi.fn(async (t) => { calls.copied.push(t); return copy(t); }),
       toast: (t) => calls.toasts.push(t),
     };
-    const s = createEditSession(api, { take: (n) => calls.taken.push(n.body), notice: (t) => calls.notices.push(t), error: (t) => calls.errors.push(t), saved: (b) => calls.saved.push(b) });
+    const s = createEditSession(api, { take: (n) => calls.taken.push(n.body), notice: (t) => calls.notices.push(t), error: (t) => calls.errors.push(t), saved: (b) => calls.saved.push(b), props: (fm, problem) => calls.props.push([fm, problem]) });
     s.take(note('start'));
     return { s, calls, api };
   }
@@ -181,5 +181,91 @@ describe('the editor session', () => {
     release();
     await Promise.all([first, second]);
     expect(seen).toEqual([['h:start', 'one'], ['h:one', 'two']]);
+  });
+
+  it('sends only what changed: properties alone, at once, without the body', async () => {
+    const save = vi.fn(async () => ({ hash: 'h:2', frontmatter: '---\nb: 2\n---\n' }));
+    const { s, calls } = setup({ save });
+    await s.editProps('---\nb: 2\n---\n');
+    expect(save).toHaveBeenCalledWith({ hash: 'h:start', frontmatter: '---\nb: 2\n---\n' });
+    expect(calls.props).toEqual([['---\nb: 2\n---\n', null]]);
+  });
+
+  it('keeps properties that were turned down in the panel and does not send them again', async () => {
+    const save = vi.fn(async () => ({ hash: 'h:start', frontmatter: '', propsError: 'Those properties are not valid frontmatter, so they were not saved.' }));
+    const { s, calls } = setup({ save });
+    await s.editProps('---\nbroken');
+    expect(calls.props).toEqual([[null, 'Those properties are not valid frontmatter, so they were not saved.']]);
+    await s.save();
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it('copies unsaved properties with the body on a conflict', async () => {
+    const { s, calls } = setup({ save: async () => ({ conflict: true }) });
+    s.state.fm = '---\nb: 2\n---\n';
+    s.state.body = 'mine';
+    await s.save();
+    expect(calls.copied).toEqual(['---\nb: 2\n---\nmine']);
+  });
+});
+
+describe('bookmarks and today on a real vault folder', () => {
+  let vault;
+  const file = (rel) => path.join(vault, rel);
+  beforeEach(() => { vault = mkdtempSync(path.join(tmpdir(), 'q-bm-')); });
+
+  it('stars and unstars a note in .obsidian/bookmarks.json, keeping its heading bookmarks', () => {
+    mkdirSync(file('.obsidian'));
+    writeFileSync(file('.obsidian/bookmarks.json'), JSON.stringify({ items: [{ type: 'file', ctime: 1, path: 'n.md', subpath: '#H' }] }));
+    expect(listBookmarks(vault)).toEqual([]);
+    expect(toggleBookmark(vault, 'n.md', true, 2)).toEqual(['n.md']);
+    expect(toggleBookmark(vault, 'n.md', false)).toEqual([]);
+    expect(JSON.parse(readFileSync(file('.obsidian/bookmarks.json'), 'utf8')).items).toEqual([{ type: 'file', ctime: 1, path: 'n.md', subpath: '#H' }]);
+  });
+
+  it('makes the file when there is none, and never writes over one that is not a bookmarks file', () => {
+    expect(toggleBookmark(vault, 'n.md', true, 1)).toEqual(['n.md']);
+    writeFileSync(file('.obsidian/bookmarks.json'), '{ broken');
+    expect(() => toggleBookmark(vault, 'n.md', false)).toThrow(/left it alone/);
+    expect(readFileSync(file('.obsidian/bookmarks.json'), 'utf8')).toBe('{ broken');
+    expect(moveBookmarks(vault, 'n.md', 'm.md')).toBe(false);
+  });
+
+  it('moves bookmarks with a renamed note and leaves the file alone when none point at it', () => {
+    toggleBookmark(vault, 'a/n.md', true, 1);
+    expect(moveBookmarks(vault, 'a/n.md', 'b/n.md')).toBe(true);
+    expect(listBookmarks(vault)).toEqual(['b/n.md']);
+    const before = readFileSync(file('.obsidian/bookmarks.json'), 'utf8');
+    expect(moveBookmarks(vault, 'other.md', 'x.md')).toBe(false);
+    expect(readFileSync(file('.obsidian/bookmarks.json'), 'utf8')).toBe(before);
+  });
+
+  const day = new Date(2026, 10, 19, 8, 30);
+
+  it("makes today's note in 01-daily from no settings, and in the root when the settings name no folder", () => {
+    expect(openToday(vault, day)).toEqual({ rel: '01-daily/2026-11-19.md', created: true });
+    mkdirSync(file('.obsidian'));
+    writeFileSync(file('.obsidian/daily-notes.json'), JSON.stringify({ folder: '', format: 'Do MMMM YYYY' }));
+    expect(openToday(vault, day)).toEqual({ rel: '19th November 2026.md', created: true });
+  });
+
+  it("fills the template, and never writes over today's note when it already exists", () => {
+    mkdirSync(file('.obsidian'));
+    mkdirSync(file('T'));
+    writeFileSync(file('T/Daily.md'), '# {{title}}\n');
+    writeFileSync(file('.obsidian/daily-notes.json'), JSON.stringify({ folder: 'J', template: 'T/Daily' }));
+    expect(openToday(vault, day)).toEqual({ rel: 'J/2026-11-19.md', created: true });
+    expect(readFileSync(file('J/2026-11-19.md'), 'utf8')).toBe('# 2026-11-19\n');
+    writeFileSync(file('J/2026-11-19.md'), 'my notes');
+    expect(openToday(vault, day)).toEqual({ rel: 'J/2026-11-19.md', created: false });
+    expect(readFileSync(file('J/2026-11-19.md'), 'utf8')).toBe('my notes');
+  });
+
+  it('refuses a daily folder outside the vault and a format it cannot name', () => {
+    mkdirSync(file('.obsidian'));
+    writeFileSync(file('.obsidian/daily-notes.json'), JSON.stringify({ folder: '../out' }));
+    expect(() => openToday(vault, day)).toThrow(/outside the vault/);
+    writeFileSync(file('.obsidian/daily-notes.json'), JSON.stringify({ format: 'YYYY N' }));
+    expect(() => openToday(vault, day)).toThrow(/doesn't support N/);
   });
 });

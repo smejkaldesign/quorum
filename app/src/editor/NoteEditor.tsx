@@ -17,7 +17,8 @@ const RECORD_META = 'quorumRecord';
 // outside replaces only the blocks from the first changed one to the end. Typing [[ opens a picker of vault notes, and / at the
 // start of a block or after a space opens the block commands; the toolbar holds the same commands with their shortcuts.
 // save, when given, writes the document in place of the plain serializer (Knowledge splices it into the text it opened
-// from); onWiki opens a wiki link that is clicked.
+// from); onWiki opens a wiki link that is clicked, and a .md link that is ⌘-clicked. ⌘-click opens a web link in the
+// browser.
 
 type Command = { id: string; label: string; keys: string; run: (e: Editor) => void };
 const COMMANDS: Command[] = [
@@ -193,8 +194,16 @@ export const NoteEditor = forwardRef<NoteEditorHandle, { value: string; onChange
   if (!editor) return null;
   return (
     <div className="note-rich-wrap" onClick={(e) => {
-      const w = onWiki && (e.target as HTMLElement).closest<HTMLElement>('.ProseMirror .md-wiki');
-      if (w) { e.preventDefault(); onWiki((w.dataset.wiki ?? '').replace(/#.*$/, '')); }
+      const t = e.target as HTMLElement;
+      const w = onWiki && t.closest<HTMLElement>('.ProseMirror .md-wiki');
+      if (w) { e.preventDefault(); onWiki((w.dataset.wiki ?? '').replace(/#.*$/, '')); return; }
+      // a markdown link is text to edit; ⌘-click follows it: a web page in the browser, a .md note in Quorum
+      const a = e.metaKey ? t.closest<HTMLAnchorElement>('.ProseMirror a[href]') : null;
+      const href = a?.getAttribute('href') ?? '';
+      if (!a) return;
+      e.preventDefault();
+      if (/^https:\/\//i.test(href)) window.quorum.openExternal(href);
+      else if (onWiki && /\.md(#.*)?$/i.test(href)) { const p = href.replace(/#.*$/, ''); try { onWiki(decodeURIComponent(p)); } catch { onWiki(p); } }
     }} onMouseDown={(e) => {
       // the whole area is the note: a click below the text (or beside it) focuses the end, the toolbar keeps its own clicks
       const t = e.target as HTMLElement;

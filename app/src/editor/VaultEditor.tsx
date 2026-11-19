@@ -4,6 +4,7 @@ import type { VaultEdit } from '../quorum';
 import { NoteEditor, type NoteEditorHandle } from './NoteEditor';
 import { canSplice, splice } from './markdown';
 import { createEditSession } from './editSession';
+import { Properties } from './Properties';
 import { toast } from '../Toasts';
 
 const READ_ONLY = {
@@ -14,13 +15,15 @@ const READ_ONLY = {
 
 // The body of a note open in Knowledge, edited in place. It opens as rich text only when the body writes back byte for
 // byte (canSplice), and as plain text otherwise, so opening a note never reformats it. Saving, and reloading when the
-// file changes on disk, follow editSession.ts. Until the note loads, and for a note main won't let this view edit,
+// file changes on disk, follow editSession.ts. The note's frontmatter shows as Properties rows above the text. Until the note loads, and for a note main won't let this view edit,
 // children show: the read view.
 export function VaultEditor({ rel, onWiki, onSaved, children }: { rel: string; onWiki: (target: string) => void; onSaved: (body: string) => void; children: ReactNode }) {
   const [note, setNote] = useState<{ readOnly: VaultEdit['readOnly']; rich: boolean; n: number } | null>(null);
   const [body, setBody] = useState('');
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [fm, setFm] = useState('');
+  const [propsError, setPropsError] = useState<string | null>(null);
   const rich = useRef<NoteEditorHandle>(null);
   const area = useRef<HTMLTextAreaElement>(null);
   // the parent keys this view by rel, so one session (and the onSaved it was made with) lives as long as the view
@@ -31,12 +34,15 @@ export function VaultEditor({ rel, onWiki, onSaved, children }: { rel: string; o
     copy: (text) => window.quorum.copy(text),
     toast: (text) => toast(text, 'info'),
   }, {
-    take: (n) => { setBody(n.body); setNote((o) => ({ readOnly: n.readOnly, rich: !n.readOnly && canSplice(n.body), n: (o?.n ?? 0) + 1 })); },
+    take: (n) => { setBody(n.body); setFm(n.frontmatter); setPropsError(null); setNote((o) => ({ readOnly: n.readOnly, rich: !n.readOnly && canSplice(n.body), n: (o?.n ?? 0) + 1 })); },
     notice: setNotice,
     error: setError,
     saved: (text) => onSaved(text),
+    // rows that were turned down stay in the panel with the reason
+    props: (shown, problem) => { setPropsError(problem); if (shown !== null) setFm(shown); },
   }));
   const edit = (md: string) => { setBody(md); session.edit(md); };
+  const editProps = (next: string) => { setFm(next); void session.editProps(next); };
 
   useEffect(() => {
     let on = true;
@@ -64,6 +70,7 @@ export function VaultEditor({ rel, onWiki, onSaved, children }: { rel: string; o
     <div className="kb-edit">
       {notice && <p className="set-error" role="alert">{notice}</p>}
       {error && <p className="set-error" role="alert">{error}</p>}
+      <Properties key={note.n} value={fm} readOnly={false} error={propsError} onChange={editProps} withTitle />
       {note.rich ? (
         <NoteEditor key={note.n} ref={rich} value={body} onChange={edit} readOnly={false} save={spliced} onWiki={onWiki}
           placeholder="Start writing. Type / for blocks, [[ to link a note." />
