@@ -20,6 +20,10 @@
 //   { op: 'trashdirs', dirs, ignore, gitignore }  move litter folders to the Trash, add ignore patterns to .gitignore
 //   { op: 'compact', rel, copies }              back up a note, then cut each repeated block to its first and last copy
 //   { op: 'commit', paths, message, branch }    stage and commit notes on the current branch
+//   { op: 'mention', rel, name, to, target }    link the first plain mention of name in rel to the note to
+//   { op: 'merge', rel, drop, alias }           merge drop into rel: its text under a heading, alias added, its links
+//                                               pointed at rel, drop to the Trash
+//   { op: 'split', rel, parts }                 move each part (heading, start, end, to) into a note of its own
 //   { op: 'keep' }                              change nothing: Approve keeps the item as it is and marks it done
 // An item the agent drafted (memoryDraft.js) carries draft; a merge is a restore of the kept note and a trash of the
 // other, a rewrite is a restore.
@@ -37,7 +41,7 @@
 // The steps that remain run in phases so each step's preconditions hold: put back, remove, edit, write, move.
 
 const q = (t) => `“${t}”`;
-const PHASE = { restore: 0, unalias: 0, trash: 1, tag: 2, setkey: 2, alias: 3, relink: 4, unlink: 5, link: 5, addlink: 5, annotate: 5, compact: 2, trashdirs: 1, create: 6, move: 7, commit: 8, keep: 9 };
+const PHASE = { restore: 0, unalias: 0, trash: 1, tag: 2, setkey: 2, alias: 3, relink: 4, unlink: 5, link: 5, addlink: 5, annotate: 5, compact: 2, trashdirs: 1, create: 6, mention: 6.5, merge: 1.5, split: 2, move: 7, commit: 8, keep: 9 };
 const KIND_ORDER = { pastfix: 0, link: 1, finding: 2 };
 const norm = (t) => String(t ?? '').toLowerCase().replace(/\.md$/, '').replace(/\s+/g, ' ').trim();
 
@@ -62,6 +66,9 @@ export function effects(o) {
     case 'annotate': writes.push({ rel: o.rel, region: `line:${o.line}` }); break;
     case 'move': out.removes.push(o.rel); out.creates.push(o.to); break;
     case 'compact': writes.push({ rel: o.rel, region: 'all' }); break;
+    case 'mention': writes.push({ rel: o.rel, region: `mention:${norm(o.name)}` }); out.points = o.to; break;
+    case 'merge': writes.push({ rel: o.rel, region: 'all' }); out.removes.push(o.drop); break;
+    case 'split': writes.push({ rel: o.rel, region: 'all' }); out.creates.push(...(o.parts ?? []).map((p) => p.to)); break;
     default: break;
   }
   return out;
@@ -73,6 +80,7 @@ function composes(a, b) {
   if (links(a) && links(b)) return norm(a.target) !== norm(b.target);
   if (a.op === 'alias' && b.op === 'alias') return norm(a.alias) !== norm(b.alias);
   if (a.op === 'addlink' && b.op === 'addlink') return a.line !== b.line;
+  if (a.op === 'merge' && b.op === 'merge') return a.rel === b.rel && a.drop !== b.drop;
   return false;
 }
 // the same change twice
@@ -99,6 +107,12 @@ const GROUPS = {
   trashdirs: { order: 15.2, label: (n) => `Move the temp folders of ${n} ${n === 1 ? 'vault' : 'vaults'} to the Trash` },
   compact: { order: 15.4, label: (n) => `Remove repeated blocks from ${n} ${n === 1 ? 'note' : 'notes'}` },
   commit: { order: 15.6, label: (n) => `Commit the uncommitted notes of ${n} ${n === 1 ? 'vault' : 'vaults'}` },
+  entity: { order: 15.7, label: (n) => `Write ${n} ${n === 1 ? 'note' : 'notes'} for people and projects the notes mention` },
+  'merge-entity': { order: 15.75, label: (n) => `Merge ${n} ${n === 1 ? 'pair' : 'pairs'} of notes for one person or project` },
+  'merge-copies': { order: 15.8, label: (n) => `Merge ${n} ${n === 1 ? 'set' : 'sets'} of duplicate notes` },
+  mention: { order: 15.85, label: (n) => `Link the attendees of ${n} ${n === 1 ? 'meeting' : 'meetings'}` },
+  'mark-instructions': { order: 15.88, label: (n) => `Mark ${n} out of date ${n === 1 ? 'line' : 'lines'} in instruction files` },
+  split: { order: 15.9, label: (n) => `Split ${n} long ${n === 1 ? 'note' : 'notes'} into sections` },
   keep: { order: 16, label: (n) => `Keep ${n} ${n === 1 ? 'item' : 'items'} as ${n === 1 ? 'it is' : 'they are'}` },
 };
 // the group an item lists under: what its first change does, or move and tag for a move that also tags
@@ -125,6 +139,11 @@ const CHECK = {
   trashdirs: 'Quorum picked these folders by their names and because no note links into them.',
   compact: 'Quorum removes text from each note. A backup copy goes to Quorum’s data folder first.',
   commit: 'Quorum commits on the branch you have checked out.',
+  entity: 'Quorum found each name in your notes and writes a short note for it. Check the name and the folder.',
+  'merge-entity': 'Quorum matched these notes by name alone.',
+  'merge-copies': 'Quorum moves the other copies to the Trash.',
+  split: 'Quorum moves sections out of each note into notes of their own.',
+  'mark-instructions': 'The memory graph holds a newer fact for each line. Read the line first.',
 };
 // items the agent fixes when the plan runs (main.js agentNeed): one model call each, one at a time
 const AGENT = {

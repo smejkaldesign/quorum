@@ -8,6 +8,7 @@
 // Events to main: { event, payload }.
 import { parentPort as threadPort, workerData } from 'node:worker_threads';
 import { createMemoryEngine } from './memoryEngine.js';
+import { openGraphView } from './graphView.js';
 
 const utility = process.parentPort ?? null;
 const port = utility ?? threadPort;
@@ -22,7 +23,18 @@ const ask = (method, payload) => new Promise((resolve, reject) => {
   waiting.set(id, { resolve, reject });
   send({ ask: id, method, payload });
 });
-const engine = createMemoryEngine({ dataDir, ask, emit: (event, payload) => send({ event, payload }), log: (...a) => send({ event: 'log', payload: a.map(String) }) });
+// the memory graph's database, read-only, per vault (graphView.js); the engine asks for it only once main says the
+// graph is built
+const graphs = new Map();
+const graph = (vault) => {
+  if (!vault) return null;
+  if (graphs.get(vault)) return graphs.get(vault);
+  let v;
+  try { v = openGraphView({ dataDir, vault }); } catch { v = null; }
+  if (v) graphs.set(vault, v);
+  return v;
+};
+const engine = createMemoryEngine({ dataDir, ask, emit: (event, payload) => send({ event, payload }), log: (...a) => send({ event: 'log', payload: a.map(String) }), graph });
 
 // one call at a time, in the order main sent them, so a sweep never reads the notes while a sync is half applied. A tick
 // waits on the model, so the queue moves on while it waits: the engine's agent refuses a second tick on its own

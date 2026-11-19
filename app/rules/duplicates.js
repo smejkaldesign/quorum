@@ -3,7 +3,11 @@
 // Bodies under 200 characters after that are left out: recurring near-empty notes are separate notes. Two folders that
 // share five or more duplicate pairs are a deliberate mirror, and so is a folder where half or more of the notes copy a
 // note elsewhere (a staging or seed copy); their pairs are left out.
-import { bodyOf, dirOf, finding, plural, quote, skipped } from './common.js';
+// Approve merges the copies into the one more notes link to: each other copy's name becomes an alias of it, the links
+// to the copy point at it, and the copy goes to the Trash. With the memory graph built, two notes that go by the same
+// name (one's alias is the other's name, or both carry one alias) are listed too: a link by that name reaches only one.
+import { baseOf, bodyOf, dirOf, finding, plural, quote, skipped } from './common.js';
+import { kindOf, namesOf, normName } from './entities.js';
 
 export const rule = { id: 'note.duplicate', version: 1, label: 'Duplicate notes' };
 const MIN_BODY = 200;
@@ -23,7 +27,7 @@ const linesFor = (n) => {
   return lines;
 };
 
-export function run({ notes }) {
+export function run({ notes, graph = null }) {
   const live = notes.filter((n) => !skipped(n));
   if (cache.size > live.length * 2) cache.clear();
   const linesOf = new Map(live.map((n) => [n.rel, linesFor(n)]));
@@ -65,13 +69,55 @@ export function run({ notes }) {
     if (keep.size < 2) continue;
     const list = [...keep].sort();
     const title = notes.find((n) => n.rel === list[0])?.note?.title ?? list[0];
+    const kept = keeperOf(list, notes, graph);
     out.push(finding(rule, {
       key: h, target: h, notes: list,
       title: `${plural(list.length, 'note')} hold the same text as ${quote(title)}`,
       problem: 'The same text sits in more than one note. An edit to one leaves the other out of date, and the agent reads the topic twice.',
-      proposal: 'Keep one copy, point links at it, and delete the others.',
+      proposal: `Keep ${quote(kept)}, point the links to the other ${list.length === 2 ? 'copy' : 'copies'} at it, and move ${list.length === 2 ? 'that copy' : 'them'} to the Trash.`,
       evidence: list.map((r) => `Same text: ${r}`),
-      meta: [['Notes', String(list.length)]],
+      meta: [['Notes', String(list.length)], ['Keep', kept]],
+      fix: mergeFix(kept, list, notes),
+    }));
+  }
+  if (graph) out.push(...aliasDuplicates(live, graph));
+  return out;
+}
+
+// the copy to keep: the one more notes link to, then the shorter path
+function keeperOf(rels, notes, graph) {
+  const inbound = (r) => (graph ? graph.inbound(r).length : notes.find((n) => n.rel === r)?.inbound ?? 0);
+  return [...rels].sort((a, b) => inbound(b) - inbound(a) || a.length - b.length || a.localeCompare(b))[0];
+}
+const mergeFix = (kept, rels, notes) => ({ kind: 'ops', group: 'merge-copies', ops: rels.filter((r) => r !== kept).map((drop) => ({ op: 'merge', rel: kept, drop, alias: notes.find((n) => n.rel === drop)?.note?.title ?? baseOf(drop) })) });
+
+// two notes under one name, from the graph's aliases
+function aliasDuplicates(live, graph) {
+  const owners = new Map();
+  for (const n of live) for (const name of new Set([...namesOf(n), ...graph.aliasesOf(n.rel)].map(normName).filter((x) => x.length >= 3))) (owners.get(name) ?? owners.set(name, new Set()).get(name)).add(n.rel);
+  const out = [];
+  const seen = new Set();
+  for (const [name, set] of owners) {
+    if (set.size !== 2) continue;
+    const list = [...set].sort();
+    const k = list.join('\n');
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const [a, b] = list.map((r) => live.find((n) => n.rel === r));
+    // the same file name in two folders is a path link's job, not a duplicate
+    if (baseOf(a.rel).toLowerCase() === baseOf(b.rel).toLowerCase()) continue;
+    // two people or two projects under one name are the entity alias rule's (rules/entityAliases.js)
+    if (kindOf(a) && kindOf(a) === kindOf(b) && ['person', 'project'].includes(kindOf(a))) continue;
+    const kept = keeperOf(list, live, graph);
+    out.push(finding(rule, {
+      key: `alias:${k}`, target: k, notes: list,
+      title: `${quote(a.note?.title ?? a.rel)} and ${quote(b.note?.title ?? b.rel)} go by one name`,
+      problem: `Both notes answer to ${quote(name)}, so a link or a search by that name reaches only one of them, and facts split between the two.`,
+      proposal: `Merge them into ${quote(kept)}: the other's text goes under a heading, its name becomes an alias, and it goes to the Trash.`,
+      evidence: [`Shared name: ${quote(name)}`, ...list.map((r) => `Note: ${r}`)],
+      facts: [`name:${name}`],
+      meta: [['Keep', kept]],
+      fix: mergeFix(kept, list, live),
     }));
   }
   return out;

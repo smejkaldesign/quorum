@@ -9,6 +9,8 @@
 //   folders { [folder rel]: value } the folders a person marked confidential (kept in Quorum's settings)
 //   contradictions { provider, bar } the agent's claims and verdicts and the rule's measured bar (rules/contradictions.js)
 //   hygiene { litter, git, history } the folder walk, git status and size history of a full sweep (vaultHygiene.js)
+//   owner   the name of the person the vault belongs to (main.js USER_NAME)
+//   graph   the memory graph as the rules read it (rules/entities.js ruleGraph), or null while it is not built
 import * as orphans from './orphans.js';
 import * as duplicates from './duplicates.js';
 import * as nearDuplicates from './nearDuplicates.js';
@@ -19,8 +21,17 @@ import * as secrets from './secrets.js';
 import * as stale from './stale.js';
 import * as contradictions from './contradictions.js';
 import * as hygiene from './hygiene.js';
+import * as missingEntity from './missingEntity.js';
+import * as entityAliases from './entityAliases.js';
+import * as meetingLinks from './meetingLinks.js';
+import * as entityType from './entityType.js';
+import * as unplaced from './unplaced.js';
+import * as summaries from './summaries.js';
+import * as instructions from './instructions.js';
 
-export const RULES = [stale, duplicates, nearDuplicates, contradictions, frontmatter, confidential, secrets, oversized, orphans, hygiene];
+export const RULES = [stale, duplicates, nearDuplicates, contradictions, frontmatter, confidential, secrets, oversized, orphans, hygiene, missingEntity, entityAliases, meetingLinks, entityType, unplaced, summaries, instructions];
+// the rules whose findings are the gaps the Memory setup scan lists (memorySetup.js)
+export const SETUP_RULES = [missingEntity, entityAliases, meetingLinks, entityType, unplaced, summaries, instructions].map((r) => r.rule.id);
 export const RULE_LABELS = Object.fromEntries(RULES.map((r) => [r.rule.id, r.rule.label]));
 
 // runs every rule over the vault. only: the notes that changed; findings that touch none of them are left out, so the

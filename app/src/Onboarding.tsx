@@ -12,6 +12,7 @@ import { planSentence } from './catchupView';
 import { Toggle } from './controls';
 import { detectProvider, KEY_NAMES, KEY_PROVIDERS, SOURCE_NAMES, type KeyProvider } from './modelSource';
 import { SetupForm, answersFrom, draftFrom, draftIsEmpty, emptyDraft, type SetupDraft } from './SetupForm';
+import { MemorySetupCard } from './MemorySetup';
 import mark from '../assets/quorum-mark.png';
 
 type Step = 'welcome' | 'agentos' | 'you' | 'model' | 'account' | 'permissions' | 'connect' | 'check' | 'done';
@@ -182,6 +183,12 @@ function AgentOsStep({ brain, status, onBrain, onBack, onNext, catchup, onCatchu
             <IconFolderOpen width={20} height={20} /><span><strong>Connect existing</strong><em>Your notes stay where they are</em></span>
           </button>
         </div>
+      )}
+      {brain && brain.made !== 'quorum' && (
+        <>
+          <div className="onb-or"><span>Memory setup</span></div>
+          <MemorySetupCard offerKeeper heading={false} />
+        </>
       )}
       {brain && checking !== null && <p className="muted onb-check" role="status">{checking ? 'Quorum is checking your memory. This can take a few minutes and runs in the background.' : 'Quorum checked your memory. Its suggestions are in Memory health.'}</p>}
       {brain && (

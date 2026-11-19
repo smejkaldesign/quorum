@@ -445,4 +445,8 @@ contextBridge.exposeInMainWorld('quorum', {
   flags: () => ipcRenderer.invoke('flags'),
   flagsRefresh: () => ipcRenderer.invoke('flags-refresh'),
   onFlags: (cb) => { const h = (_e, s) => cb(s); ipcRenderer.on('flags', h); return () => ipcRenderer.removeListener('flags', h); },
+  // memory setup (memorySetup.js): the scan's state and report, a run in the background, and its progress
+  memorySetupStatus: () => ipcRenderer.invoke('memory-setup-status'),
+  memorySetupRun: (opts) => ipcRenderer.invoke('memory-setup-run', opts),
+  onMemorySetup: on('memory-setup'),
 });
