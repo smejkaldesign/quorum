@@ -56,15 +56,19 @@ describe('fit', () => {
 describe('lines', () => {
   it('give an edge its provenance, source line, dates and supersession', () => {
     expect(edgeLine({ src: 'person:jane', dst: 'project:atlas', kind: 'works_on', provenance: 'explicit', source_rel: 'people/Jane.md', source_line: 4, valid_from: 1767225600, valid_to: 1772323200000, superseded_by: 9 }))
-      .toBe('person:jane -works_on-> project:atlas  [explicit, people/Jane.md:4, 2026-01-01..2026-03-01, superseded by edge 9]');
+      .toBe('person:jane -works_on-> project:atlas  [explicit, people/Jane.md:5, 2026-01-01..2026-03-01, superseded by edge 9]');
     expect(edgeLine({ src: 'a', dst: 'b', kind: 'mentions', provenance: 'model', confidence: 0.6 })).toBe('a -mentions-> b  [model, confidence 0.60]');
   });
+  it('count lines from 1, as editors do, though the index counts from 0', () => {
+    expect(passageLine({ rel: 'a.md', start_line: 0, end_line: 0, text: 'x' })).toBe('a.md:1  x');
+    expect(edgeLine({ src: 'a', dst: 'b', kind: 'links_to', source_rel: 'a.md', source_line: 0 })).toBe('a -links_to-> b  [a.md:1]');
+  });
   it('give a passage its path, lines and heading, on one line', () => {
-    expect(passageLine({ rel: 'notes/a.md', startLine: 3, endLine: 9, heading: 'Plan > Q1', score: 0.5, text: 'one\n\ntwo' })).toBe('notes/a.md:3-9  # Plan > Q1  (0.500)  one two');
+    expect(passageLine({ rel: 'notes/a.md', startLine: 3, endLine: 9, heading: 'Plan > Q1', score: 0.5, text: 'one\n\ntwo' })).toBe('notes/a.md:4-10  # Plan > Q1  (0.500)  one two');
   });
   it('give a decision its date, source, subject and what replaced it', () => {
     expect(decisionLine({ id: 'decision:a', text: 'Ship in March', rel: 'meetings/m.md', line: 12, date: '2026-02-02T10:00:00Z', about: ['project:atlas'], superseded_by: 'decision:b' }))
-      .toBe('2026-02-02  decision:a  Ship in March  [meetings/m.md:12; about project:atlas; superseded by decision:b]');
+      .toBe('2026-02-02  decision:a  Ship in March  [meetings/m.md:13; about project:atlas; superseded by decision:b]');
   });
   it('read dates in seconds, milliseconds and ISO', () => {
     expect([day(1767225600), day(1767225600000), day('2026-01-01'), day('nope'), day(null)]).toEqual(['2026-01-01', '2026-01-01', '2026-01-01', null, null]);
@@ -98,7 +102,7 @@ describe('formatMemory', () => {
     expect(formatMemory('graph_path', { path: [{ id: 'person:ana-ruiz' }, { id: 'project:atlas' }], edges: [edge] })).toEqual(['1 step from person:ana-ruiz to project:atlas:', edgeLine(edge), expect.stringMatching(/^All 1 edge shown/)]);
     expect(formatMemory('graph_path', { path: null, edges: [] }, { args: { a: 'Ana', b: 'Zed' } })).toEqual(['No path between Ana and Zed.']);
     expect(formatMemory('decisions', { about: { id: 'project:atlas' }, decisions: [{ id: 'decision:meetings/m.md#ab12cd34', text: 'Ship in March', date: 1770000000000, rel: 'meetings/m.md', line: 9, about: [{ id: 'project:atlas', name: 'Atlas' }], decidedIn: 'meeting:meetings/m.md', supersededBy: null }] })[0])
-      .toBe('2026-02-02  decision:meetings/m.md#ab12cd34  Ship in March  [meetings/m.md:9; about project:atlas]');
+      .toBe('2026-02-02  decision:meetings/m.md#ab12cd34  Ship in March  [meetings/m.md:10; about project:atlas]');
     expect(formatMemory('entity', { notFound: 'Zed' })).toEqual(['No node named "Zed". Try search, or graph_query with other words.']);
   });
   it('follows graph-core\'s final shapes: superseding edges as objects, path ambiguity, edges left out', () => {
