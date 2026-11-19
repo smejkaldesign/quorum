@@ -3,7 +3,7 @@
 // lines are already withheld and excluded or denied notes never arrive.
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { DEFAULT_CONVENTIONS, ENTITY_FOLDERS, edgeKey, entityId, extractNote, folderKind, noteKind } from './extract.js';
+import { DEFAULT_CONVENTIONS, ENTITY_FOLDERS, edgeKey, entityId, entityIds, extractNote, folderKind, noteKind, slugKey } from './extract.js';
 import { createQuery } from './query.js';
 import { NOTE_IDENTITY, openStore } from './store.js';
 import { subjectOf, supersessions } from './temporal.js';
@@ -33,19 +33,34 @@ export function createMemoryGraph({ dataDir, vault, vindex, log = () => {}, isEx
   const textOf = (rel) => { if (hidden(rel)) return null; const t = vindex.text?.(rel); return typeof t === 'string' ? t : null; };
 
   // what a node is called after its note moves
-  const idFor = (n, to) => (n.kind === 'note' ? `note:${to}` : n.kind === 'decision' && n.id.includes('#') ? `decision:${to}${n.id.slice(n.id.indexOf('#'))}` : entityId(n.kind, to));
+  const idFor = (n, to) => (n.kind === 'note' ? `note:${to}` : n.kind === 'decision' && n.id.includes('#') ? `decision:${to}${n.id.slice(n.id.indexOf('#'))}` : entityId(n.kind, to, shared));
 
   // ---- entity folder notes (extract.js noteKind) ----
   // A note in a people, projects or companies folder is that entity when its type says so, when it is the folder's hub
   // note, or when another note links it as one: an attended, works_on or member_of edge on its entity node, or an about
   // edge from a meeting or a person. recheck holds the notes whose answer may have changed in this pass
   const recheck = new Set();
+  // notes of one kind with one file name slug (extract.js entityIds): one entity when their folders are related, else
+  // one per folder by path. slugs holds each such note's id over the vault, read again at each pass; a note whose id or
+  // backing changed is read again with its linkers
+  let slugs = new Map();
+  const countSlugs = () => {
+    const keys = new Map();
+    for (const r of vindex.rels()) { const props = vindex.note?.(r)?.props ?? {}; const k = slugKey(r, props, conventions); if (k) (keys.get(k) ?? keys.set(k, []).get(k)).push({ rel: r, props }); }
+    const next = new Map();
+    for (const list of keys.values()) for (const [r, v] of entityIds(list)) next.set(r, v);
+    const same = (a, b) => (a?.id ?? null) === (b?.id ?? null) && (a?.backs ?? null) === (b?.backs ?? null);
+    const flipped = [...new Set([...slugs.keys(), ...next.keys()])].filter((r) => !same(slugs.get(r), next.get(r)));
+    slugs = next;
+    return flipped;
+  };
+  const shared = (kind, rel) => { const v = slugs.get(rel); return v && v.id.startsWith(`${kind}:`) ? v : null; };
   const entityFolder = (rel) => { const k = folderKind(rel, conventions); return ENTITY_FOLDERS.has(k) ? k : null; };
   const LINKING = ['attended', 'works_on', 'member_of', 'about'];
   const linkedAs = (rel) => {
     const k = entityFolder(rel);
     if (!k) return null;
-    const by = store.edgesOf(entityId(k, rel), { dir: 'both', kinds: LINKING }).some((e) => e.source_rel && e.source_rel !== rel && (e.kind !== 'about' || /^(meeting|person):/.test(e.src)));
+    const by = store.edgesOf(entityId(k, rel, shared), { dir: 'both', kinds: LINKING }).some((e) => e.source_rel && e.source_rel !== rel && (e.kind !== 'about' || /^(meeting|person):/.test(e.src)));
     return by ? k : null;
   };
   const kindOf = (rel) => noteKind(rel, vindex.note?.(rel)?.props ?? {}, conventions, linkedAs(rel)).kind;
@@ -57,7 +72,7 @@ export function createMemoryGraph({ dataDir, vault, vindex, log = () => {}, isEx
   // the note's facts replace what it said before: kept edges keep their id and history, new ones are added and checked
   // for supersession, and the rest go
   function reindex(rel, text, hash) {
-    const ex = extractNote({ rel, text, note: vindex.note?.(rel) ?? null, resolve: (t, from) => vindex.resolve(t, from), conventions, isExcluded: hidden, linkedAs, kindOf });
+    const ex = extractNote({ rel, text, note: vindex.note?.(rel) ?? null, resolve: (t, from) => vindex.resolve(t, from), conventions, isExcluded: hidden, linkedAs, kindOf, shared });
     for (const r of ex.refs) recheck.add(r);
     const backed = new Set(ex.nodes.filter((n) => n.rel).map((n) => n.id));
     const touched = new Set();
@@ -152,6 +167,7 @@ export function createMemoryGraph({ dataDir, vault, vindex, log = () => {}, isEx
     // the stored hashes of these paths only: reading every file row per batch made a large build slower the smaller its
     // batches were
     const known = new Map(rels.map((r) => [r, store.fileHash(r)]).filter(([, h]) => h != null));
+    const flipped = countSlugs();
     const texts = new Map();
     const gone = [];
     for (const rel of rels) {
@@ -211,6 +227,12 @@ export function createMemoryGraph({ dataDir, vault, vindex, log = () => {}, isEx
         if (texts.has(rel) && known.get(rel) !== hashes.get(rel)) continue;
         const t = textOf(rel);
         if (t !== null) each(rel, () => reindex(rel, t, sha(t)));
+      }
+      // notes whose id changed with a shared slug, and the notes that link them
+      if (flipped.length) {
+        const again = new Set(flipped);
+        for (const r of flipped) for (const l of linkersOf(r)) again.add(l);
+        for (const r of again) { if (texts.has(r) && known.get(r) !== hashes.get(r)) continue; const t = textOf(r); if (t !== null) each(r, () => reindex(r, t, sha(t))); }
       }
       // a folder note that became an entity or stopped being one is read again, and so are the notes that link it,
       // whose mentions of it change too
