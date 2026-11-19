@@ -85,8 +85,10 @@ export async function loadModels({ dir = MODELS_DIR, threads = 2 } = {}) {
   const ort = require('onnxruntime-node');
   const { Tokenizer } = await import('@huggingface/tokenizers');
   // two threads each, so a sweep never takes every core from the person's other work. The NLI model loads without graph
-  // optimization: constant folding expands its int8 embedding table (128k tokens) to float32, about 170 MB more memory
-  const opts = { intraOpNumThreads: threads, interOpNumThreads: 1, graphOptimizationLevel: 'all' };
+  // optimization: constant folding expands its int8 embedding table (128k tokens) to float32, about 170 MB more memory.
+  // No CPU arena and no memory patterns: each batch has its own shape, and the arena kept the largest one's buffers while
+  // the patterns kept a plan per shape, so memory grew over a long embed pass. Buffers now go back after every run
+  const opts = { intraOpNumThreads: threads, interOpNumThreads: 1, graphOptimizationLevel: 'all', enableCpuMemArena: false, enableMemPattern: false };
   const [embedS, nliS] = await Promise.all([ort.InferenceSession.create(path.join(dir, 'embed', ONNX.embed), opts), ort.InferenceSession.create(path.join(dir, 'nli', ONNX.nli), { ...opts, graphOptimizationLevel: 'disabled' })]);
   const embedT = new Tokenizer(json(dir, 'embed', 'tokenizer.json'), json(dir, 'embed', 'tokenizer_config.json'));
   const nliT = new Tokenizer(json(dir, 'nli', 'tokenizer.json'), json(dir, 'nli', 'tokenizer_config.json'));
@@ -100,16 +102,22 @@ export async function loadModels({ dir = MODELS_DIR, threads = 2 } = {}) {
       const max = Math.min(CHUNK_MAX_TOKENS, Math.max(8, maxTokens));
       const vecs = [];
       for (const group of runGroups(texts.map((t) => capped(embedT.encode(String(t)), max)))) {
-        const out = await embedS.run(batch(ort, group, true));
+        const feeds = batch(ort, group, true);
+        const out = await embedS.run(feeds);
         const h = out.last_hidden_state;
         const [n, , dim] = h.dims;
         const width = h.dims[1];
-        // bge pools with the first token's state, then normalizes
+        const data = h.data;
+        // bge pools with the first token's state, then normalizes; only those rows are kept, the rest of the output goes
         for (let i = 0; i < n; i++) {
-          const v = Float32Array.from(h.data.subarray(i * width * dim, i * width * dim + dim));
-          const norm = Math.hypot(...v) || 1;
-          vecs.push(v.map((x) => x / norm));
+          const v = data.slice(i * width * dim, i * width * dim + dim);
+          let norm = 0;
+          for (let j = 0; j < dim; j++) norm += v[j] * v[j];
+          norm = Math.sqrt(norm) || 1;
+          for (let j = 0; j < dim; j++) v[j] /= norm;
+          vecs.push(v);
         }
+        for (const t of [...Object.values(out), ...Object.values(feeds)]) t.dispose?.();
       }
       return vecs;
     },
