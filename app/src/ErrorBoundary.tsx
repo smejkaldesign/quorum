@@ -4,8 +4,8 @@
 // page (resetKey) clears it. Reload view mounts the view again from scratch. A view that fails again within 5 seconds
 // of that fails on every draw (crash.ts): the page says so and offers Reload Quorum, which reloads the window's page
 // without quitting. Every crash is reported (errorReports.js in the main process, unless Settings turns reports off).
-import { Component, Fragment, type ErrorInfo, type ReactNode } from 'react';
-import { STALE_BUNDLE, crashKind, failsEveryTime, type CrashKind } from './crash';
+import { Component, Fragment, useEffect, useState, type ErrorInfo, type ReactNode } from 'react';
+import { STALE_BUNDLE, crashCopy, crashKind, failsEveryTime, type CrashKind } from './crash';
 
 export { STALE_BUNDLE };
 
@@ -30,7 +30,7 @@ export class ErrorBoundary extends Component<Props, State> {
   render() {
     const { error, reloadedAt, errorAt, attempt } = this.state;
     if (!error) return <Fragment key={attempt}><CrashProbe view={this.props.view} />{this.props.children}</Fragment>;
-    return <CrashPage error={error} kind={crashKind(error.message, reloadedAt, errorAt)} whole={!!this.props.whole} onReload={this.reloadView} />;
+    return <CrashPage error={error} view={this.props.view} kind={crashKind(error.message, reloadedAt, errorAt)} whole={!!this.props.whole} onReload={this.reloadView} />;
   }
 }
 
@@ -53,23 +53,18 @@ export function reloadWindow() {
 }
 
 // a view that failed while drawing, as a page: what happened in plain words, what is safe, what to do
-function CrashPage({ error, kind, whole, onReload }: { error: Error; kind: CrashKind; whole: boolean; onReload: () => void }) {
-  const stale = kind === 'stale';
-  const repeat = kind === 'repeat';
+function CrashPage({ error, view, kind, whole, onReload }: { error: Error; view: string; kind: CrashKind; whole: boolean; onReload: () => void }) {
+  const [reports, setReports] = useState(true);
+  useEffect(() => { window.quorum?.getSettings?.().then((s) => setReports(s?.errorReports !== false)).catch(() => {}); }, []);
+  const c = crashCopy(view, kind, { whole, reports });
   return (
     <div className="panel"><div className="crash" role="alert">
       <CrashArt />
-      <h1>{stale ? 'Quorum updated underneath this view' : repeat ? 'This view fails every time it opens' : "Quorum couldn't draw this view"}</h1>
-      <p>{stale
-        ? "The app's files changed while this window was open, so a part of the view could not load. Reloading picks up the new version."
-        : repeat
-          ? `It failed again right after reloading, so it needs a fix in Quorum. ${whole ? 'Reload Quorum to try once more.' : 'Go to another page, or reload Quorum to try once more.'}`
-          : 'A part of the app failed while it was drawing. Reloading draws it again from the start.'}</p>
-      <p>Your notes, transcripts and settings are not affected. Nothing was lost. Quorum sends a report of this error so it can be fixed, unless error reports are off in Settings, General.</p>
+      <h1>{c.title}</h1>
+      <p>{c.body}</p>
+      <p>Your notes, transcripts and settings are not affected. Nothing was lost.</p>
       <div className="crash-actions">
-        {repeat
-          ? <button className="pill primary crash-reload" onClick={reloadWindow}>Reload Quorum</button>
-          : <button className="pill primary crash-reload" onClick={onReload}>{whole || stale ? 'Reload Quorum' : 'Reload view'}</button>}
+        <button className="pill primary crash-reload" onClick={c.window ? reloadWindow : onReload}>{c.action}</button>
       </div>
       <details className="crash-detail">
         <summary>Technical detail</summary>
