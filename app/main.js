@@ -24,7 +24,7 @@ import { createTokenStore } from './sources/tokens.js';
 import { connectAccount, createAccounts, oauthClients } from './sources/accounts.js';
 import { createConnectorTools } from './connectors/tools/index.js';
 import { actorLabel, createAppActions, currentActor, outsideActor } from './appActions.js';
-import { runMemoryTool } from './cli/memoryTools.mjs';
+import { fromActionHandlers, runMemoryTool } from './cli/memoryTools.mjs';
 import { CONNECTOR_SERVER } from './cli/connectorTools.mjs';
 import { httpUrl, relayFetch, relayUrl } from './relayUrl.js';
 import { createErrorReports } from './errorReports.js';
@@ -2661,9 +2661,12 @@ function openIndex() {
   // enters the index, and a rule change rebuilds it (the guardrails IPC handlers below)
   vindex = createVaultIndex({
     vault: b.vault, isExcludedPath: (rel) => excludedPath(rel) || isPrivatePath(rel) || isSecretPath(rel), isDeniedText: isConfidentialText, isExcludedText: suggester.isExcluded, redact: suggester.redactLines,
-    onChange: (rels) => { toUI('vault-changed', rels); memoryGraph?.update(rels); searchChanged(rels); if (!built) { built = true; setTimeout(sweepTick, 5000); const kept = savesWaiting.take(b.vault); if (kept.length) sweepOnSave(kept); } else sweepOnSave(rels); }, renamed: () => settings.clusterNames?.[b.vault] ?? {},
+    onChange: (rels) => { toUI('vault-changed', rels); if (!built) { built = true; setTimeout(sweepTick, 5000); const kept = savesWaiting.take(b.vault); if (kept.length) sweepOnSave(kept); } else sweepOnSave(rels); }, renamed: () => settings.clusterNames?.[b.vault] ?? {},
     forget: (keys) => { const mine = settings.clusterNames?.[b.vault]; if (!mine) return; for (const k of keys) delete mine[k]; store.settings.save(); }, log: (...a) => log('index', ...a),
-    onPaths: treePaths, onMoves: relinkMoves,
+    onPaths: treePaths, onMoves: (moves) => { memoryGraph?.moved(moves); relinkMoves(moves); },
+    // memory graph: every index change, the watcher's and the ones Quorum's own writes sync
+    // every sync, the watcher's and Quorum's own writes alike: the graph first, then search over the same paths
+    onIndexed: (rels) => { memoryGraph?.update(rels); searchChanged(rels); },
   });
   dropTree();
   openMemoryGraph(b.vault);
@@ -4388,6 +4391,8 @@ function relocate(rel, doMove) {
   const mapping = new Map(moving.map((r) => [r, r === rel ? next : next + r.slice(rel.length)]));
   const allRels = vindex.rels().map((r) => mapping.get(r) ?? r);
   const done = rewriteLinks({ vault, mapping, sources, resolve, allRels, aliasesOf });
+  // memory graph: the notes keep their history and approved links under the new paths
+  memoryGraph?.moved([...mapping].map(([from, to]) => ({ from, to })));
   vindex.sync();
   log('relocated', rel, '->', next, `rewrote ${done.links} links in ${done.files} notes`);
   return { rel: next, ...done };
@@ -5470,7 +5475,7 @@ async function control({ cmd, args = {} }) {
     // all read only. A handler that is not registered yet answers that the index is not ready. Withheld notes and lines
     // are taken out before the answer leaves the app
     case 'memory_tool': return runMemoryTool(args.name, args.args ?? {}, {
-      handler: (h) => { const fn = actionHandlers.get(h); return fn ? (a) => fn(null, a) : null; },
+      handler: fromActionHandlers(actionHandlers),
       withheld: excludedPath, isExcluded: suggester.isExcluded, redact: suggester.redactLines,
     });
     case 'start':
