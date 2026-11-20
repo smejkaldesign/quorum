@@ -152,3 +152,20 @@ export function unlinkTarget({ vault, sources, target }) {
   }
   return { files, links };
 }
+
+// The fix for a line that links several missing notes (memoryHealth.js groupByLine): each dead link on the line goes
+// and its words stay. Nothing is written when the note changed since the issue was found (changed: the notes whose
+// hash moved, fixJournal.js changedSince). keep(rel) records the note before the write, for Undo; sync() reads the
+// vault again and missingIn(rel) answers the links in the note that open nothing. A link still there afterwards fails
+// the fix, so the run puts the note back. Answers the number of links removed
+export function unlinkLine({ vault, group, changed = [], keep = () => {}, sync = () => {}, missingIn = () => [] }) {
+  const { rel, line, targets } = group;
+  if (changed.length) throw new Error(`“${changed[0]}” changed after Quorum found this issue, so Quorum did not write. Review the issue again`);
+  keep(rel);
+  let links = 0;
+  for (const t of targets) links += unlinkTarget({ vault, sources: [rel], target: t }).links;
+  sync();
+  const still = new Set(missingIn(rel).map((l) => String(l.target).toLowerCase()));
+  if (targets.some((t) => still.has(t.toLowerCase()))) throw new Error(`Some of the links on line ${line + 1} of ${rel} are still there, so the fix did not finish`);
+  return links;
+}

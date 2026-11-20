@@ -16,7 +16,7 @@ import { applyUndo, sha, undoRecord } from './fixUndo.js';
 import { changedSince, createFixJournal, createNoteHashes, fixCheck, hashNotes, noteMemo, recoveryReason, rollback, writeCheckedNote } from './fixJournal.js';
 import { cancelError, cancelRuns, endFailed, holdFailed } from './fixFailures.js';
 import { createGateStore, gatePasses, gateTriggers, verdictOf } from './gateRun.js';
-import { addAlias, linkSources, relinkMoved, retargetLinks, rewriteLinks, unlinkTarget, writeAtomic } from './relink.js';
+import { addAlias, linkSources, relinkMoved, retargetLinks, rewriteLinks, unlinkLine, unlinkTarget, writeAtomic } from './relink.js';
 import store from './store/index.js';
 import { registerSources } from './sources/index.js';
 import { DATA_DIR, EDITION, ENV, loadEE, isDevelopment } from './edition.js';
@@ -82,7 +82,7 @@ import { frontBlock, removeFrontmatterKey, withDate } from './frontmatter.js';
 import { createResolver } from './linkparse.js';
 import { isOff, skipped } from './rules/common.js';
 import { folderMarkOf } from './rules/confidential.js';
-import { createMemorySweep, dueSweep, rescanTags, scanTags } from './memorySweep.js';
+import { createMemorySweep, createRerun, dueSweep, rescanTags, scanTags } from './memorySweep.js';
 import { RULE_LABELS, RULES } from './rules/index.js';
 import { approveLitter, commitNotes, prepareCompact } from './vaultHygiene.js';
 import { relatedLine } from './rules/nearDuplicates.js';
@@ -1522,9 +1522,9 @@ ipcMain.handle('set-settings', (_e, next) => {
   // Settings > Memory: how many model calls Check everything now runs at once
   if (Number.isFinite(next.memoryCatchupParallel)) { settings.memoryCatchupParallel = Math.max(1, Math.min(MAX_PARALLEL, Math.round(next.memoryCatchupParallel))); store.settings.save(); }
   // Settings > Memory: the suggestions the vault's own layout does not show (rules/missingEntity.js, rules/unplaced.js).
-  // A change checks the whole vault again, so the items the rules no longer raise leave Needs review
+  // A change checks the whole vault again (optInCheck), so the items the rules no longer raise leave Needs review
   for (const k of ['memoryEntityNotes', 'memoryPlacement']) {
-    if (typeof next[k] === 'boolean' && next[k] !== (settings[k] === true)) { settings[k] = next[k]; store.settings.save(); setTimeout(() => { sweep('full').catch((e) => log('memory sweep', e?.message)); }, 0); }
+    if (typeof next[k] === 'boolean' && next[k] !== (settings[k] === true)) { settings[k] = next[k]; store.settings.save(); optInCheck.ask(); }
   }
   // Settings > Memory: Check everything now was suggested once after the vault connected (Catchup.tsx CatchupNudge)
   if (next.memoryCatchupNudged === true) { settings.memoryCatchupNudged = true; store.settings.save(); }
@@ -2708,7 +2708,11 @@ const sweepOnSave = (rels) => saves.add(rels);
 const savesWaiting = savesKept(path.join(DATA_DIR, 'memory-saves-waiting.json'));
 let savesVault = null;
 const keepSaves = () => { if (savesVault) savesWaiting.keep(savesVault, saves.take()); else saves.clear(); };
+// the whole-vault check a change to the suggestion settings asks for: once, never while sweeps are paused or a meeting
+// is recorded (it waits for the next tick), and with no gate pass or Apply memory fixes on its own after it
+const optInCheck = createRerun({ run: () => { sweep('full', null, { after: false }).catch((e) => log('memory sweep', e?.message)); }, blocked: () => sweepPaused() || recordingNow() || !brain() || !vindex });
 function sweepTick() {
+  optInCheck.tick();
   const b = brain();
   if (!b || !vindex) return;
   const kind = dueSweep(memorySweep.state(b.vault), { paused: sweepPaused(), idleMs: powerMonitor.getSystemIdleTime() * 1000, recording: recordingNow() });
@@ -2925,7 +2929,7 @@ function openIndex() {
   // the guardrails reach search too: a denied folder, a secret-looking file name or a denied frontmatter key never
   // enters the index, and a rule change rebuilds it (the guardrails IPC handlers below)
   vindex = createVaultIndex({
-    vault: b.vault, root: b.root, isExcludedPath: (rel) => excludedPath(rel) || isPrivatePath(rel) || isSecretPath(rel), isDeniedText: isConfidentialText, isExcludedText: suggester.isExcluded, redact: suggester.redactLines,
+    vault: b.vault, root: b.root, onLinks: () => toUI('memory-updates', null), isExcludedPath: (rel) => excludedPath(rel) || isPrivatePath(rel) || isSecretPath(rel), isDeniedText: isConfidentialText, isExcludedText: suggester.isExcluded, redact: suggester.redactLines,
     onChange: (rels) => { toUI('vault-changed', rels); if (!built) { built = true; setTimeout(sweepTick, 5000); const kept = savesWaiting.take(b.vault); if (kept.length) sweepOnSave(kept); } else sweepOnSave(rels); }, renamed: () => settings.clusterNames?.[b.vault] ?? {},
     forget: (keys) => { const mine = settings.clusterNames?.[b.vault]; if (!mine) return; for (const k of keys) delete mine[k]; store.settings.save(); }, log: (...a) => log('index', ...a),
     onPaths: treePaths, onMoves: (moves) => { memoryGraph?.moved(moves); relinkMoves(moves); },
@@ -3073,13 +3077,13 @@ function linkIssues() {
   const ign = ignoreList();
   const items = (vindex?.linkHealth() ?? []).filter((m) => !onDisk(m.target) && !(ign.length && ignored(ign, LINK_RULE, { notes: m.sources, target: m.target })));
   const finder = elsewhereFinder();
-  if (!finder || !vindex) return groupByLine(items, { left: linksLeft() });
+  if (!finder || !vindex) return groupByLine(items, { left: linksLeft(), declined: linksDeclined() });
   // a generated report is never the note a link is pointed at, so it is never a folder's index note either
   const rels = vindex.rels().filter((r) => !isGenerated(r, vindex.note(r)?.props));
   let found = items;
   try { found = withFound(items, finder, rels); } catch (e) { log('memory health elsewhere', e?.message); }
   // the dead links one line holds are one issue (memoryHealth.js groupByLine)
-  return groupByLine(found, { left: linksLeft() });
+  return groupByLine(found, { left: linksLeft(), declined: linksDeclined() });
 }
 // a fix that needs a person to read it first (memoryHealth.js reviewOnly): a bulk Approve skips it
 const reviewOnlyKey = (key) => { const m = linkIssues().find((h) => h.target.toLowerCase() === String(key ?? '').toLowerCase()); return !!m && issueOf(withMarks(m)).reviewOnly; };
@@ -3194,15 +3198,7 @@ async function decideLink(key, verdict, step = async () => {}, keep = () => {}, 
     const { rel, targets } = entry.group;
     await step(`Removing the ${targets.length} dead links on line ${entry.group.line + 1} of ${rel}`);
     if (liveRuns.state().files?.[rel]) throw new Error('Waits until the run writing this note finishes');
-    const moved = hashes ? changedSince(b.vault, hashes) : [];
-    if (moved.length) throw new Error(`“${moved[0]}” changed after Quorum found this issue, so Quorum did not write. Review the issue again`);
-    keep(rel);
-    let links = 0;
-    for (const t of targets) links += unlinkTarget({ vault: b.vault, sources: [rel], target: t }).links;
-    await step('Updating the vault index');
-    vindex.sync();
-    const still = new Set(vindex.missingIn(rel).map((l) => l.target.toLowerCase()));
-    if (targets.some((t) => still.has(t.toLowerCase()))) throw new Error(`Some of the links on line ${entry.group.line + 1} of ${rel} are still there, so the fix did not finish`);
+    const links = unlinkLine({ vault: b.vault, group: entry.group, changed: hashes ? changedSince(b.vault, hashes) : [], keep, sync: () => vindex.sync(), missingIn: (r) => vindex.missingIn(r) });
     log('memory health', 'removed dead links on one line', rel, `${links} links`);
     return `Removed ${links} dead ${links === 1 ? 'link' : 'links'} and kept the words`;
   }
@@ -3681,7 +3677,7 @@ function reviewItems({ ids = null, drafts = true, fresh = false } = {}) {
   }
   for (const f of findingsNow()) {
     if (skip(`${ROW.finding}${f.key}`, f.archived)) continue;
-    const item = findingItem(f);
+    const item = findingItem(f, { propsOf: (rel) => vindex.note(rel)?.props ?? {} });
     out.push({ ...item, hashes: noteHashes(b.vault, [...new Set([...f.notes, ...notesOf(item)])], { fresh }), finding: findingRecord(f) });
   }
   return drafts ? out.map(drafted) : out;

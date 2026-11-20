@@ -29,4 +29,5 @@ export function contextWords(m: MissingLink): number;
 export function issueMeta(issue: Issue, opts?: { date?: (t: number) => string }): [string, string][];
 export const LINE_KEY: string;
 export const MIN_LINE: number;
-export function groupByLine(items: MissingLink[], opts?: { left?: Set<string> }): MissingLink[];
+export function groupByLine(items: MissingLink[], opts?: { left?: Set<string>; declined?: Record<string, string[]> }): MissingLink[];
+export function lineKey(rel: string, targets: string[]): string;

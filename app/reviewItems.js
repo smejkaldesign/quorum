@@ -61,7 +61,8 @@ export function pastFixItem({ run, res, plan }) {
 // link two notes; rules/contradictions.js: add a marker to one line; rules/hygiene.js: trash litter folders, compact a
 // note, commit notes; the Memory setup rules and duplicates and oversized: their ops as they are, kind 'ops'), else the change Approve makes for its rule (reviewApprove.js approveFinding, kept on the finding as
 // approve), else keep as is
-export function findingItem(f) {
+// propsOf(rel): a note's frontmatter, so a merge that would drop a meeting note is held by its type and attendees too
+export function findingItem(f, { propsOf = () => ({}) } = {}) {
   // a finding on the vault as a whole (rules/hygiene.js litter and uncommitted notes) has no note and goes by its title
   const base = { id: `${ROW.finding}${f.key}`, kind: 'finding', key: f.key, target: f.key, title: f.rel ?? f.title, ruleId: f.ruleId, notes: f.notes, autoFix: !!f.autoFix, reviewOnly: false };
   const x = f.fix;
@@ -70,7 +71,7 @@ export function findingItem(f) {
     return { ...base, autoFix: false, group: a.kind === 'keep' ? 'keep' : undefined, keep: a.kind === 'keep', ops: a.ops };
   }
   // a merge never sends a dated meeting note to the Trash (rules/common.js meetingInstance)
-  if (x.kind === 'ops' && x.ops.some((o) => o.op === 'merge' && meetingInstance(o.drop))) return { ...base, autoFix: false, hold: 'It would send a dated meeting note to the Trash. Each meeting in a series keeps its own note.', ops: [] };
+  if (x.kind === 'ops' && x.ops.some((o) => o.op === 'merge' && meetingInstance(o.drop, propsOf(o.drop) ?? {}))) return { ...base, autoFix: false, hold: 'It would send a dated meeting note to the Trash. Each meeting in a series keeps its own note.', ops: [] };
   if (x.kind === 'ops') return { ...base, ...(x.group ? { group: x.group } : {}), ops: x.ops.map((o) => ({ ...o })) };
   const ops = [];
   if (x.kind === 'link') ops.push({ op: 'link', rel: f.rel, to: x.to });

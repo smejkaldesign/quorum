@@ -75,18 +75,22 @@ const pending = (m) => { const no = new Set(m.declined ?? []); return optionsOf(
 
 // One line that links several notes that do not exist (a callout that lists fifteen missing notes) is one issue with
 // one fix, instead of one issue per name. A missing link joins its line's group when every link to it sits on that line
-// and its own fix would be to remove it (no note matches it and nothing says enough to write one); a link with another
-// fix keeps its own issue. left: the keys a person dismissed, which stay on their own. The group goes by LINE_KEY, the
-// note and the line number, and lists its names in group.targets
+// and its own fix, after the fixes a person declined, would be to remove it (no note matches it and nothing says
+// enough to write one); a link with another fix keeps its own issue. left: the keys a person dismissed, which stay on
+// their own; declined: { key: [actions] } (main.js linksDeclined). The group goes by LINE_KEY, the note and a hash of
+// its names, so an edit above the line keeps its key (and a dismissed group stays dismissed); group.line is where it
+// is now
 export const LINE_KEY = 'line:';
 export const MIN_LINE = 2;
-export function groupByLine(items, { left = new Set() } = {}) {
+const hashOf = (t) => { let h = 0x811c9dc5; for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 0x01000193); } return (h >>> 0).toString(16).padStart(8, '0'); };
+export const lineKey = (rel, targets) => `${LINE_KEY}${rel}#${hashOf([...targets].map((t) => t.toLowerCase()).sort().join('\n'))}`;
+export function groupByLine(items, { left = new Set(), declined = {} } = {}) {
   const lines = new Map();
   for (const m of items) {
     const at = m.at ?? [];
     if (m.group || !at.length || left.has(m.target.toLowerCase())) continue;
     if (!at.every((a) => a.rel === at[0].rel && a.line === at[0].line)) continue;
-    if (optionsOf(m)[0] !== 'unlink') continue;
+    if (pending({ ...m, declined: m.declined ?? declined[m.target.toLowerCase()] ?? [] })[0] !== 'unlink') continue;
     const k = `${at[0].rel}\n${at[0].line}`;
     (lines.get(k) ?? lines.set(k, []).get(k)).push(m);
   }
@@ -98,7 +102,7 @@ export function groupByLine(items, { left = new Set() } = {}) {
     list.sort((a, b) => a.target.localeCompare(b.target, undefined, { sensitivity: 'base' }));
     const { rel, line } = list[0].at[0];
     out.push({
-      target: `${LINE_KEY}${rel}#${line + 1}`, group: { rel, line, targets: list.map((m) => m.target) },
+      target: lineKey(rel, list.map((m) => m.target)), group: { rel, line, targets: list.map((m) => m.target) },
       sources: [rel], count: 1, links: list.reduce((n, m) => n + (m.links ?? 1), 0), lastAt: Math.max(0, ...list.map((m) => m.lastAt ?? 0)) || null,
       candidates: [], contexts: (list[0].contexts ?? []).slice(0, 1), confidential: list[0].confidential ?? [], at: list.flatMap((m) => m.at),
     });

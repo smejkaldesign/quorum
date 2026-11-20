@@ -100,3 +100,21 @@ export function createMemorySweep({ file, now = () => Date.now() }) {
   const put = (vault, s) => { load()[vault] = s; };
   return { run, state, put, findings: (vault) => state(vault)?.findings ?? [] };
 }
+
+// A whole-vault check a settings change asks for (the suggestions Settings > Memory turns on or off): one check for any
+// number of asks within delay ms, and none while blocked() (sweeps paused, a meeting recorded); the ask waits, and
+// tick() (the sweep timer) runs it once nothing blocks it. run() is the check; it applies no fixes on its own
+export function createRerun({ run, blocked = () => false, delay = 1000 }) {
+  let asked = false;
+  let timer = null;
+  const tick = () => {
+    clearTimeout(timer);
+    timer = null;
+    if (!asked || blocked()) return false;
+    asked = false;
+    run();
+    return true;
+  };
+  const ask = () => { asked = true; clearTimeout(timer); timer = setTimeout(tick, delay); timer.unref?.(); };
+  return { ask, tick, waiting: () => asked };
+}
