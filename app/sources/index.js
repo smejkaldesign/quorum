@@ -14,7 +14,7 @@ import { createTokenStore } from './tokens.js';
 import { detectRunners, runnersWithSource } from './runners.js';
 import { SCHEDULES, dueFor, runImport } from './agent-import.js';
 import { granolaSearch } from './granola-search.js';
-import { meetingIndex, sameMeeting } from './sameMeeting.js';
+import { meetingIndex, sameMeeting } from '../cli/sameMeeting.mjs';
 import { NO_ACCOUNT } from './granola.js';
 
 const SYNC_EVERY = 30 * 60 * 1000;

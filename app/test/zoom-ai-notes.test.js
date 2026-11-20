@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { addSummarySection, createPlatforms } from '../ee/platforms.js';
 import { encodeUuid, fileNameFor, meetingNumberFromUrl, missingScope, noteTranscriptText, summaryText, zoomNote } from '../ee/zoomAi.js';
-import { meetingIndex, sameMeeting } from '../sources/sameMeeting.js';
+import { meetingIndex, sameMeeting } from '../cli/sameMeeting.mjs';
 import { vaultRemote } from '../sources/transcripts.js';
 import { importPrompt } from '../sources/agent-import.js';
 import { joinAdvice } from '../joinAdvice.js';
