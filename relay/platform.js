@@ -19,7 +19,7 @@ const failJson = (res, err, log, what, extra = {}) => {
 // the browser pages that may call these two routes; any other origin gets no CORS headers and the browser refuses the answer
 export function corsHeaders(origin, allowed = []) {
   if (!origin || !allowed.includes(origin)) return {};
-  return { 'access-control-allow-origin': origin, 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'content-type, authorization', 'access-control-max-age': '600', vary: 'origin' };
+  return { 'access-control-allow-origin': origin, 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'content-type, authorization, x-quorum-passkey', 'access-control-max-age': '600', vary: 'origin' };
 }
 
 // the request as the database wants it: a real email, the optional fields trimmed and bounded, the source one word

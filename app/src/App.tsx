@@ -23,6 +23,7 @@ if (window.quorum.isDev) document.documentElement.dataset.dev = '';
 import { HistoryView } from './HistoryView';
 import { OPEN_EVENT, UpNext } from './UpNext';
 import { nextMenuIndex, updateBadge } from './headerItems';
+import { openReport } from './issueReport';
 import { ErrorBoundary, STALE_BUNDLE } from './ErrorBoundary';
 import { useExclusiveMenu } from './menuBus';
 import type { KbCommand } from './KnowledgeView';
@@ -66,9 +67,9 @@ function UpdateItem({ state }: { state: UpdateState | null }) {
   return null;
 }
 
-// the header menu: the Agent OS and team vault, Settings, Hide (the whole app, as Cmd+H), and Quit last. Arrow keys, Home and End move between
+// the header menu: the Agent OS and team vault, Settings, Report issue (issueReport.ts), Hide (the whole app, as Cmd+H), and Quit last. Arrow keys, Home and End move between
 // items, Escape closes it and puts focus back on the menu button
-function AppMenu({ brain, me, active, onMemory, onSettings, next }: { brain: Brain | null; me: { name: string; photo: string | null }; active: boolean; onMemory: () => void; onSettings: () => void; next: React.RefObject<HTMLButtonElement | null> }) {
+function AppMenu({ brain, me, active, onMemory, onSettings, onReport, next }: { brain: Brain | null; me: { name: string; photo: string | null }; active: boolean; onMemory: () => void; onSettings: () => void; onReport: () => void; next: React.RefObject<HTMLButtonElement | null> }) {
   const [open, setOpen] = useState(false);
   const shut = useCallback(() => setOpen(false), []);
   useExclusiveMenu('app', open, shut);
@@ -113,6 +114,7 @@ function AppMenu({ brain, me, active, onMemory, onSettings, next }: { brain: Bra
           </button>
           <div className="menu-sep" role="separator" />
           <button role="menuitem" onClick={run(onSettings)}>Settings</button>
+          <button role="menuitem" onClick={run(onReport)}>Report issue</button>
           <button role="menuitem" onClick={run(() => window.quorum.hideApp())}>Hide Quorum</button>
           <div className="menu-sep" role="separator" />
           <button role="menuitem" onClick={run(() => window.quorum.quit())}>Quit Quorum</button>
@@ -686,7 +688,7 @@ export function App() {
             <span className="rec-sep" aria-hidden="true" />
           </div>
           <NotificationBell active={view === 'notifications'} onOpen={() => { nav.clear(); setView('notifications'); }} />
-          <AppMenu brain={brain} me={me} active={view === 'settings'} onMemory={() => openSettings('memory')} onSettings={() => openSettings('preferences')} next={closeRef} />
+          <AppMenu brain={brain} me={me} active={view === 'settings'} onMemory={() => openSettings('memory')} onSettings={() => openSettings('preferences')} onReport={() => openReport({ context: { view: viewId } })} next={closeRef} />
           <button ref={closeRef} className="icon-btn close-win" aria-label="Close window" onClick={() => window.quorum.hideWindow()}>
             <IconClose width={17} height={17} />
           </button>
