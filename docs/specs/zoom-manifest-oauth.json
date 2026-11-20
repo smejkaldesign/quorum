@@ -12,9 +12,14 @@
     "scopes": [
       { "scope": "user:read:user", "optional": false },
       { "scope": "meeting:read:meeting", "optional": false },
-      { "scope": "cloud_recording:read:recording", "optional": false }
+      { "scope": "cloud_recording:read:recording", "optional": false },
+      { "scope": "meeting:read:list_summaries", "optional": true },
+      { "scope": "meeting:read:summary", "optional": true },
+      { "scope": "my_notes:read:note", "optional": true },
+      { "scope": "my_notes:read:content", "optional": true },
+      { "scope": "cloud_recording:read:meeting_transcript", "optional": true }
     ],
-    "scope_description": "Quorum reads the signed-in user's own meetings and cloud recordings so it can write meeting notes into that user's notes folder. Nothing is written back to Zoom.",
+    "scope_description": "Quorum reads the signed-in user's own meetings, cloud recordings, AI Companion summaries and My Notes so it can write meeting notes into that user's notes folder. Nothing is written back to Zoom.",
     "enable_private_pkce_client": true,
     "enable_public_pkce_client": true
   }

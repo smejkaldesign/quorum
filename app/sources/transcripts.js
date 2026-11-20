@@ -2,7 +2,7 @@
 // subfolder next to the notes (History lists only a folder's top level) and the note links its own with a
 // `transcript:` frontmatter line. When the source says for good that a meeting has no transcript, the note gets
 // `transcript: none` so the next sync does not ask again.
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { oneLine } from '../frontmatter.js';
 
@@ -26,6 +26,33 @@ export function notesWithout(dir) {
     out.push({ id, file, text });
   }
   return out;
+}
+
+// The host of the first git remote the folder's repository pushes to (github.com), or null when the folder is not in
+// a git repository or the repository has no remote. Only the host is kept: a remote URL can carry a token.
+export function vaultRemote(dir) {
+  if (!dir) return null;
+  let at = path.resolve(dir);
+  for (let i = 0; i < 12; i++) {
+    const git = path.join(at, '.git');
+    if (existsSync(git)) {
+      let config;
+      try {
+        // a worktree or submodule has a .git file that points at the real git directory
+        const gitDir = statSync(git).isDirectory() ? git : path.resolve(at, (/^gitdir:\s*(.+)$/m.exec(readFileSync(git, 'utf8'))?.[1] ?? '').trim());
+        const common = existsSync(path.join(gitDir, 'commondir')) ? path.resolve(gitDir, readFileSync(path.join(gitDir, 'commondir'), 'utf8').trim()) : gitDir;
+        config = readFileSync(path.join(common, 'config'), 'utf8');
+      } catch { return null; }
+      const url = /\[remote "[^"]+"\][^[]*?^\s*url\s*=\s*(\S+)/m.exec(config)?.[1];
+      if (!url) return null;
+      const host = /^[\w+.-]+:\/\/(?:[^@/]*@)?([^/:]+)/.exec(url)?.[1] ?? /^(?:[^@/]+@)?([^/:]+):/.exec(url)?.[1] ?? null;
+      return host ? host.toLowerCase() : 'a remote';
+    }
+    const up = path.dirname(at);
+    if (up === at) return null;
+    at = up;
+  }
+  return null;
 }
 
 export const countTranscripts = (dir) => { try { return readdirSync(path.join(dir, SUBFOLDER)).filter((f) => f.endsWith('.md')).length; } catch { return 0; } };

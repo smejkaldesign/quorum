@@ -40,6 +40,27 @@ The third way in, after a direct connection and a folder: the person's own agent
 
 The run (`sources/agent-import.js`) starts the runner headless with one task: list the source's meetings through its server (since the last run), fetch each one, and call the quorum MCP server's `import_meeting` tool per meeting. Claude Code gets the quorum server through `--mcp-config` for the run and only `mcp__<server>__*` and `mcp__quorum__*` tools; Codex gets it as `-c mcp_servers.quorum.*` overrides on `codex exec --json`; Antigravity has to carry the quorum server in its own config, since `agy` has no per-run MCP flag. `import_meeting` (cli/quorum.mjs) writes `<meetings>/<source>/<date>-<slug>.md` with `source_id`, `source`, `imported_by: agent` and the notes as the body, and answers `skipped: true` for a meeting Quorum already has, so the run is idempotent. The result counts the notes that actually landed in the folder. An optional schedule (hourly or daily) runs the same job from the sources tick while the direct connection is off.
 
+This is the general "file from another app" path (#196): `import_meeting` is already a scheduled source wherever a runner on the Mac has the app's MCP server and the app has a manifest in `sources/catalog.js`. A catalog-free "any app" entry is not added: runner detection matches a source by its MCP host, and a schedule without a known host would run the person's agent, on their tokens, against servers Quorum cannot name. A new app gets a manifest instead. `import_meeting` takes an optional `transcript`, filed under `transcripts/` only when that source's transcript setting is on, and the scheduled run asks the agent for it only then.
+
+## Transcripts
+
+Filing transcripts is off by default for every source (Granola, Zoom, agent imports). The toggle's copy says a transcript is every word said and that a vault which is a git repository pushing to a remote sends it there with the next push; when Quorum finds a remote (`vaultRemote`, host only) it names it. A Zoom connection made before the setting existed keeps filing transcripts, since that is what it already did.
+
+## Zoom AI notes (ee/platforms.js, ee/zoomAi.js)
+
+After a meeting ends Quorum files, under the `zoom` source, the AI Companion summary (meetings the user hosted) and the user's My Notes (any meeting they joined), plus the transcript when filing is on. Meetings are found from cloud recordings, `GET /users/me/meeting_summaries`, the relay's `meeting.summary_completed` and `my_notes.*` events, and Zoom calls on the calendar that ended in the last twelve hours (My Notes are listed per meeting number). Each note says, under "Not imported", what Zoom did not give this account (the host's summary, a scope the Zoom app lacks). A note another source already filed for the same calendar event (`sources/sameMeeting.js`: start within ten minutes and a matching or default title) is skipped. A missing scope (Zoom code 4711) skips that part and is listed on the Connectors page; nothing fails.
+
+| Endpoint | Granular scope |
+|---|---|
+| `GET /users/me/meeting_summaries` | `meeting:read:list_summaries` |
+| `GET /meetings/{uuid}/meeting_summary` | `meeting:read:summary` |
+| `GET /my_notes/notes?meeting_id=` | `my_notes:read:note` |
+| `GET /my_notes/notes/{noteId}/content?include=transcript` | `my_notes:read:content` |
+| `GET /meetings/{uuid}/transcript` | `cloud_recording:read:meeting_transcript` |
+| `GET /users/me/recordings` (existing) | `cloud_recording:read:recording` |
+
+Before Join from Quorum (`joinAdvice.js`): for Zoom, where to turn on My Notes (web portal: profile picture > Settings > Notes > My Notes > Enable My Notes) and Auto-start My Notes (desktop app: profile picture > Settings > Meetings & webinars > When joining meetings and webinars > Auto-start My Notes), since Zoom's API reads neither; for Meet, Teams and in-person meetings, a reminder to start My Notes by hand and ask everyone first. Never shown when the invite matches the never-listen or opt-out lists.
+
 ## Relay connect routes (relay/connect.js)
 
 Platforms refuse loopback redirect URIs and their token exchange needs the client secret, so the relay stands between the app and the platform for Cloud users. Local (BYOK) users register their own platform app and may still use the bounce.
@@ -47,13 +68,13 @@ Platforms refuse loopback redirect URIs and their token exchange needs the clien
 - `GET /v1/connect/<provider>/callback`: the registered redirect URI. Forwards code, state and any error to `http://127.0.0.1:47832/callback` on the user's Mac, where the app's existing loopback listener (sources/oauth.js) is waiting. A state ending in `.p<port>` picks another port; nothing but the loopback can be the destination.
 - `POST /v1/connect/<provider>/token`: `{ grant: 'code', code, codeVerifier, redirectUri }` or `{ grant: 'refresh', refreshToken }`. Signed-in member of a paying workspace. The relay adds the client credentials and returns `{ accessToken, refreshToken, expiresAt, scope }`; the platform's own error body is never echoed.
 - `POST` / `DELETE /v1/connect/<provider>/account`: `{ workspaceId, accountId, externalUserId }` remembers which platform account is the user's (table `connect_accounts`), so webhooks can be routed; DELETE on disconnect.
-- `POST /v1/connect/zoom/webhook`: verifies `x-zm-signature` (v0 HMAC over `v0:<ts>:<body>`, five-minute tolerance), answers `endpoint.url_validation`, stores `recording.completed` and `recording.transcript_completed` in `connect_events` keyed by Zoom account id (a retry of the same recording lands once), ignores other events.
-- `GET /v1/connect/events?workspace=&provider=zoom` and `POST /v1/connect/events/ack { workspaceId, provider, ids }`: the undelivered events for the caller's accounts, acknowledged once the app has fetched the recording.
+- `POST /v1/connect/zoom/webhook`: verifies `x-zm-signature` (v0 HMAC over `v0:<ts>:<body>`, five-minute tolerance), answers `endpoint.url_validation`, stores `recording.completed`, `recording.transcript_completed`, `meeting.summary_completed`, `my_notes.note_completed` and `my_notes.transcript_generated` in `connect_events` keyed by Zoom account id and the recording uuid, meeting uuid or note id (a retry lands once), ignores other events.
+- `GET /v1/connect/events?workspace=&provider=zoom` and `POST /v1/connect/events/ack { workspaceId, provider, ids }`: the undelivered events for the caller's accounts whose host (`payload.object.host_id`) or, for My Notes, operator (`payload.operator_id`) is the Zoom user the relay verified, acknowledged once the app has acted on them.
 
 Relay env: `ZOOM_CLIENT_ID`, `ZOOM_CLIENT_SECRET`, `ZOOM_WEBHOOK_SECRET`. Migration 0014. The app side (task 07595120) does PKCE sign-in through the bounce, calls `GET /users/me` on Zoom to learn the account id and registers it, polls the events feed on its 30-minute tick, downloads recording files and transcripts with the user's token and writes the note.
 
 ## Platform apps (Eric creates)
 
-- Zoom: General app, user-managed. Scopes `cloud_recording:read:recording`, `meeting:read:meeting`, `user:read:user`; webhook `recording.completed`. Unpublished apps serve only the developer's own account.
+- Zoom: General app, user-managed. Scopes `cloud_recording:read:recording`, `meeting:read:meeting`, `user:read:user`, plus for AI notes `meeting:read:list_summaries`, `meeting:read:summary`, `my_notes:read:note`, `my_notes:read:content`, `cloud_recording:read:meeting_transcript`; webhooks `recording.completed`, `meeting.summary_completed`, `my_notes.note_completed`, `my_notes.transcript_generated`. Unpublished apps serve only the developer's own account.
 - Google Meet: same GCP project as Google sign-in. Meet REST API + Drive API; scopes `meetings.space.readonly`, `drive.meet.readonly`. Consent screen needs live Privacy and Terms URLs.
 - Teams: Entra multi-tenant registration; delegated `OnlineMeetings.Read`, `OnlineMeetingTranscript.Read.All` (admin consent per tenant; no personal accounts). Ship last.

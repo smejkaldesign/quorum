@@ -1,14 +1,24 @@
 // Platform connections for Quorum Cloud, Zoom first. Four jobs: bounce the platform's OAuth callback back to the app
 // on the user's Mac (platforms refuse loopback redirect URIs, so the relay is the registered one); exchange and
 // refresh tokens with the client secret, which stays here; remember which platform accounts belong to a user; and
-// take the platform's webhooks (recording.completed) until the user's app fetches and acknowledges them. Recordings
-// never pass through here: the app downloads them from the platform itself.
+// take the platform's webhooks (recording.completed, an AI Companion summary or a My Notes note finished) until the
+// user's app fetches and acknowledges them. Recordings and notes never pass through here: the app downloads them from
+// the platform itself, and an event carries only ids and titles.
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { bearer, RelayError, requireMember, requirePlan, verifyToken } from './lib/auth.js';
 import { readJson } from './summary.js';
 
 export const PROVIDERS = {
-  zoom: { tokenUrl: 'https://zoom.us/oauth/token', meUrl: 'https://api.zoom.us/v2/users/me', events: ['recording.completed', 'recording.transcript_completed'] },
+  zoom: {
+    tokenUrl: 'https://zoom.us/oauth/token',
+    meUrl: 'https://api.zoom.us/v2/users/me',
+    events: ['recording.completed', 'recording.transcript_completed', 'meeting.summary_completed', 'my_notes.note_completed', 'my_notes.transcript_generated'],
+  },
+};
+// the id an event is stored once under: the recording's uuid, the summarized meeting's uuid, or the note's id
+export const eventExternalId = (object = {}) => {
+  const v = object.uuid ?? object.meeting_uuid ?? object.note_id;
+  return v ? String(v) : null;
 };
 export const LOOPBACK_PORT = 47832;
 // the only loopback ports a callback may send the browser to: the one the app listens on for every sign-in
@@ -179,7 +189,7 @@ export async function handleZoomWebhook(req, res, deps) {
     if (!PROVIDERS.zoom.events.includes(body.event)) { log('connect_webhook_ignored', { provider: 'zoom', event: body.event }); return json(res, 200, { ok: true, ignored: true }); }
     const accountId = body.payload?.account_id;
     if (!accountId) throw new RelayError('bad_request', 'The event names no account.', 400);
-    const { error } = await clients.db.from('connect_events').insert({ provider: 'zoom', account_id: String(accountId), event: body.event, external_id: body.payload?.object?.uuid ? String(body.payload.object.uuid) : null, payload: body.payload });
+    const { error } = await clients.db.from('connect_events').insert({ provider: 'zoom', account_id: String(accountId), event: body.event, external_id: eventExternalId(body.payload?.object), payload: body.payload });
     if (error && error.code !== '23505') throw new RelayError('server', 'The event could not be stored.', 500);
     log('connect_webhook', { provider: 'zoom', event: body.event, repeat: error?.code === '23505' });
     json(res, 200, { ok: true });
@@ -188,8 +198,20 @@ export async function handleZoomWebhook(req, res, deps) {
 
 // GET /v1/connect/events?workspace=&provider=zoom: what the platforms sent for this user's accounts and the app has not
 // acknowledged; POST /v1/connect/events/ack { workspaceId, ids } once the app has acted on them. An account id names a
-// whole Zoom organization, so an event belongs to the caller only when its host is the Zoom user the relay verified.
-const HOST = 'payload->object->>host_id';
+// whole Zoom organization, so an event belongs to the caller only when it names the Zoom user the relay verified: as the
+// host of a recording or summary, or as the operator of a My Notes event (those carry no host)
+const OWNER_PATHS = ['payload->object->>host_id', 'payload->>operator_id'];
+async function pendingFor(db, provider, owned) {
+  const byId = new Map();
+  for (const a of owned) {
+    for (const who of OWNER_PATHS) {
+      const { data, error } = await db.from('connect_events').select('id, event, external_id, payload, received_at').eq('provider', provider).eq('account_id', a.account_id).eq(who, a.external_user_id).is('delivered_at', null).order('received_at');
+      if (error) throw new RelayError('server', 'The events could not be read.', 500);
+      for (const e of data ?? []) byId.set(e.id, e);
+    }
+  }
+  return [...byId.values()].sort((x, y) => String(x.received_at).localeCompare(String(y.received_at)));
+}
 export async function handleEvents(req, res, deps) {
   const { clients, log = () => {} } = deps;
   try {
@@ -204,24 +226,19 @@ export async function handleEvents(req, res, deps) {
     if (accounts.error) throw new RelayError('server', 'The connections could not be read.', 500);
     const owned = (accounts.data ?? []).filter((a) => a.account_id && a.external_user_id);
     if (ack) {
-      const wanted = Array.isArray(body.ids) ? body.ids.map(Number).filter(Number.isFinite) : [];
-      if (!wanted.length || !owned.length) return json(res, 200, { ok: true, acked: 0 });
-      for (const a of owned) {
-        const { error } = await clients.db.from('connect_events').update({ delivered_at: new Date().toISOString() }).in('id', wanted).eq('provider', provider).eq('account_id', a.account_id).eq(HOST, a.external_user_id).is('delivered_at', null);
+      const wanted = new Set(Array.isArray(body.ids) ? body.ids.map(Number).filter(Number.isFinite) : []);
+      if (!wanted.size || !owned.length) return json(res, 200, { ok: true, acked: 0 });
+      // only ids this caller could have listed are marked delivered
+      const ids = (await pendingFor(clients.db, provider, owned)).map((e) => e.id).filter((id) => wanted.has(id));
+      if (ids.length) {
+        const { error } = await clients.db.from('connect_events').update({ delivered_at: new Date().toISOString() }).in('id', ids).eq('provider', provider).is('delivered_at', null);
         if (error) throw new RelayError('server', 'The events could not be acknowledged.', 500);
       }
-      log('connect_events_ack', { provider, count: wanted.length });
-      return json(res, 200, { ok: true, acked: wanted.length });
+      log('connect_events_ack', { provider, count: ids.length });
+      return json(res, 200, { ok: true, acked: ids.length });
     }
     if (!owned.length) return json(res, 200, { events: [] });
-    const events = [];
-    for (const a of owned) {
-      const { data, error } = await clients.db.from('connect_events').select('id, event, external_id, payload, received_at').eq('provider', provider).eq('account_id', a.account_id).eq(HOST, a.external_user_id).is('delivered_at', null).order('received_at');
-      if (error) throw new RelayError('server', 'The events could not be read.', 500);
-      events.push(...(data ?? []));
-    }
-    events.sort((x, y) => String(x.received_at).localeCompare(String(y.received_at)));
-    json(res, 200, { events });
+    json(res, 200, { events: await pendingFor(clients.db, provider, owned) });
   } catch (err) { fail(res, err, log, 'connect_events'); }
 }
 

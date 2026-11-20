@@ -66,6 +66,7 @@ import updater from 'electron-updater';
 import { createUpdater, feedFor } from './updater.js';
 import { createGuardrails } from './guardrails.js';
 import { createPlatformCache, eventRef, matchPlatforms } from './meetingPlatforms.js';
+import { joinAdvice } from './joinAdvice.js';
 import { calendarWindow, normalizeDays } from './calendarWindow.js';
 import { ARCHIVE_AFTER, feedPage, feedRows, labelOf, needsReview } from './activityFeed.js';
 import { issueMeta, issueOf } from './memoryHealth.js';
@@ -3003,7 +3004,45 @@ function importWrite(file, prev, next) {
 // from Granola has somewhere to go
 const sourcesApi = registerSources({ ipcMain: connectIpc, settings, saveSettings, toUI, log, meetingsDir: () => meetingsDir() ?? (brain()?.vault ? path.join(brain().vault, '08-meetings') : null), keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), openFresh: openFreshSignIn, afterWrite: (file) => { account.sync.pushMeetingNote(file); keeper.schedule('import'); }, onNoteWrite: importWrite, linkNote: linkPrepNote, version: app.getVersion(), agentRuntime: { runtime: RUNTIME, cli: CLI, env: RUNTIME_ENV } });
 // platform accounts for cloud recordings (Zoom first) go through the relay, so they exist in the hosted edition only
-if (EDITION === 'cloud') { const ee = await loadEE('platforms.js'); ee.registerPlatforms({ ipcMain: connectIpc, account, clients: ee.platformClients({ packaged: packagedMeta, dev: !app.isPackaged }), settings, saveSettings, toUI, log, meetingsDir, keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), afterWrite: (file) => account.sync.pushMeetingNote(file) }); }
+// pastZoomMeetings: Zoom calls on the calendar that ended in the last twelve hours, so My Notes from meetings the user
+// joined but did not host are found without a webhook
+let platformsApi = null;
+if (EDITION === 'cloud') { const ee = await loadEE('platforms.js'); platformsApi = ee.registerPlatforms({ ipcMain: connectIpc, account, clients: ee.platformClients({ packaged: packagedMeta, dev: !app.isPackaged }), settings, saveSettings, toUI, log, meetingsDir, keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), afterWrite: (file) => account.sync.pushMeetingNote(file), pastZoomMeetings: async () => { const { events } = await calendarEvents(1); const t = Date.now(); return events.filter((e) => new Date(e.end) < t && t - new Date(e.end) < 12 * 3600000).map((e) => ({ url: callLink(e).join, title: e.title, start: e.start })).filter((x) => x.url && /zoom\./i.test(x.url)); } }); }
+// Join from Quorum: before a Zoom call the My Notes check, before a Meet, Teams or in-person meeting the reminder to
+// start notes by hand and ask first (joinAdvice.js). Nothing is asked when the invite matches the never-listen or opt-out lists
+async function joinCheck({ url = null, id = null, platform = null }) {
+  const zoom = platformsApi?.list().find((p) => p.id === 'zoom') ?? null;
+  if (!zoom?.connected) return null;
+  let blocked = false;
+  try {
+    const { events } = await calendarEvents(8);
+    const e = events.find((x) => (url && callLink(x).join === url) || (id && x.id === id));
+    // an entry with no call link counts as an in-person meeting only when it invites someone else
+    if (id && (!e || (e.attendees ?? []).length < 2)) return null;
+    if (e) blocked = mentionsOptOut(e.title) || (e.attendees ?? []).some((a) => onNeverList(a.email));
+  } catch (err) { log('join check', err.message); if (id) return null; }
+  return joinAdvice({ platform, zoom, blocked, dismissed: settings.joinReminders ?? {} });
+}
+// a meeting with no call link (in person): the same reminder, shown on the meeting's page
+ipcMain.handle('join-advice', (_e, id) => joinCheck({ id: String(id ?? '') || null }));
+ipcMain.handle('join-meeting', async (_e, url, platform = null) => {
+  const target = String(url ?? '');
+  if (!/^https:\/\//.test(target)) return { error: 'Not a meeting link.' };
+  const advice = await joinCheck({ url: target, platform });
+  if (advice) {
+    const buttons = advice.settingsUrl ? ['Join', 'Open Zoom settings', 'Cancel'] : ['Join', 'Cancel'];
+    const r = await dialog.showMessageBox(win, { type: 'info', message: advice.message, detail: advice.detail, buttons, defaultId: 0, cancelId: buttons.length - 1, checkboxLabel: advice.kind === 'zoom' ? 'Both are on. Do not ask again' : 'Do not remind me again' });
+    if (r.checkboxChecked) {
+      settings.joinReminders = { ...settings.joinReminders, [advice.kind]: true };
+      saveSettings();
+      if (advice.kind === 'zoom') platformsApi?.handlers['platform-set-option']('zoom', { notesConfirmed: true });
+    }
+    if (buttons[r.response] === 'Cancel') return { ok: false };
+    if (buttons[r.response] === 'Open Zoom settings') { shell.openExternal(advice.settingsUrl); return { ok: false }; }
+  }
+  shell.openExternal(target);
+  return { ok: true };
+});
 ipcMain.handle('vault-graph', () => vindex?.graph() ?? null);
 // the person's own name for a graph cluster, kept per vault in settings so it survives a restart and a re-index; an
 // empty name goes back to the generated one. Answers with every note's cluster name after the change (a rename can

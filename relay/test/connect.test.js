@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { describe, it } from 'node:test';
-import { handleAccount, handleCallback, handleConnect, handleEvents, handleToken, handleZoomWebhook, loopbackFor, tokenShape, verifyZoomSignature, zoomValidation } from '../connect.js';
+import { eventExternalId, handleAccount, handleCallback, handleConnect, handleEvents, handleToken, handleZoomWebhook, loopbackFor, tokenShape, verifyZoomSignature, zoomValidation } from '../connect.js';
 import { baseTables, fakeAnon, fakeDb, TOKEN, USER, WS } from './helpers.js';
 
 const SECRET = 'zoom-hook-secret';
@@ -186,6 +186,23 @@ describe('zoom webhook', () => {
     assert.equal(out(res).ignored, true);
     assert.equal(db.inserted.length, 1);
   });
+  it('stores AI Companion summaries and My Notes events once each, by meeting uuid or note id', async () => {
+    const db = fakeDb({ tables: baseTables(), failInsert: (row, inserted) => (inserted.some((r) => r.event === row.event && r.external_id === row.external_id) ? { code: '23505' } : null) });
+    const events = [
+      { event: 'meeting.summary_completed', payload: { account_id: 'acc1', object: { meeting_uuid: 'mu1', meeting_id: 81234567890, host_id: 'zu1' } } },
+      { event: 'my_notes.note_completed', payload: { account_id: 'acc1', operator_id: 'zu1', object: { note_id: 'n1', note_link: 'https://zoom.us/my-notes/n1', meeting_id: '81234567890' } } },
+      { event: 'my_notes.transcript_generated', payload: { account_id: 'acc1', operator_id: 'zu1', object: { note_id: 'n1', note_link: 'https://zoom.us/my-notes/n1' } } },
+      { event: 'my_notes.note_completed', payload: { account_id: 'acc1', operator_id: 'zu1', object: { note_id: 'n1', note_link: 'https://zoom.us/my-notes/n1' } } },
+    ];
+    for (const e of events) {
+      const body = JSON.stringify(e);
+      const res = fakeRes();
+      await handleZoomWebhook(fakeReq({ method: 'POST', url: '/v1/connect/zoom/webhook', headers: signed(body), body }), res, deps({ clients: { anon, db } }));
+      assert.equal(res.status, 200, res.body);
+    }
+    assert.deepEqual(db.inserted.map((r) => [r.event, r.external_id]), [['meeting.summary_completed', 'mu1'], ['my_notes.note_completed', 'n1'], ['my_notes.transcript_generated', 'n1']]);
+    assert.equal(eventExternalId({}), null);
+  });
   it('refuses a bad signature and a relay without the webhook secret', async () => {
     const body = JSON.stringify({ event: 'recording.completed', payload: { account_id: 'acc1', object: { uuid: 'u1' } } });
     const r1 = fakeRes();
@@ -206,22 +223,25 @@ describe('events feed', () => {
       { id: 4, provider: 'zoom', account_id: 'acc1', event: 'recording.completed', external_id: 'u4', payload: { object: { uuid: 'u4', host_id: 'coworker' } }, received_at: '2026-11-09T20:02:00Z', delivered_at: null },
       { id: 2, provider: 'zoom', account_id: 'acc2', event: 'recording.completed', external_id: 'u2', payload: {}, received_at: '2026-11-09T20:01:00Z', delivered_at: null },
       { id: 3, provider: 'zoom', account_id: 'acc1', event: 'recording.completed', external_id: 'u3', payload: {}, received_at: '2026-11-09T19:00:00Z', delivered_at: '2026-11-09T19:30:00Z' },
+      { id: 5, provider: 'zoom', account_id: 'acc1', event: 'my_notes.note_completed', external_id: 'n5', payload: { operator_id: 'zu1', object: { note_id: 'n5' } }, received_at: '2026-11-09T20:03:00Z', delivered_at: null },
+      { id: 6, provider: 'zoom', account_id: 'acc1', event: 'my_notes.note_completed', external_id: 'n6', payload: { operator_id: 'coworker', object: { note_id: 'n6' } }, received_at: '2026-11-09T20:04:00Z', delivered_at: null },
     ],
   });
-  it('lists only undelivered events the caller hosted on their accounts', async () => {
+  it('lists only undelivered events the caller hosted or, for My Notes, made on their accounts', async () => {
     const res = fakeRes();
     await handleEvents(fakeReq({ method: 'GET', url: `/v1/connect/events?workspace=${WS}&provider=zoom`, headers: { authorization: `Bearer ${TOKEN}` } }), res, deps({ clients: { anon, db: fakeDb({ tables: tables() }) } }));
     assert.equal(res.status, 200, res.body);
-    assert.deepEqual(out(res).events.map((e) => e.id), [1]);
+    assert.deepEqual(out(res).events.map((e) => e.id), [1, 5]);
   });
   it('acknowledges events, only the caller\'s own', async () => {
     const db = fakeDb({ tables: tables() });
     const res = fakeRes();
-    await handleEvents(fakeReq({ method: 'POST', url: '/v1/connect/events/ack', headers: { authorization: `Bearer ${TOKEN}` }, body: JSON.stringify({ workspaceId: WS, provider: 'zoom', ids: [1, 2, 4] }) }), res, deps({ clients: { anon, db } }));
+    await handleEvents(fakeReq({ method: 'POST', url: '/v1/connect/events/ack', headers: { authorization: `Bearer ${TOKEN}` }, body: JSON.stringify({ workspaceId: WS, provider: 'zoom', ids: [1, 2, 4, 5, 6] }) }), res, deps({ clients: { anon, db } }));
     assert.equal(res.status, 200, res.body);
+    assert.equal(out(res).acked, 2);
     assert.equal(db.updates.length, 1);
     assert.ok(db.updates[0].patch.delivered_at);
-    assert.deepEqual(db.updates[0].rows.map((r) => r.id), [1]);
+    assert.deepEqual(db.updates[0].rows.map((r) => r.id).sort(), [1, 5]);
   });
   it('routes by path', async () => {
     const res = fakeRes();
