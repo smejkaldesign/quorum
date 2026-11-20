@@ -16,6 +16,11 @@ export function focusOnGenerate(force: boolean, from: 'prep' | 'about') {
   return force ? null : from;
 }
 
+// the button's label: Try again after a failed run, matching the line above it
+export function anywayLabel(data: Pick<MeetingBrief, 'status'> | null | undefined) {
+  return data?.status === 'failed' ? 'Try again' : ANYWAY_LABEL;
+}
+
 // the button shows for a meeting under the threshold (status few, or a failed try) that has no brief yet
 export function anywayOffered(data: Pick<MeetingBrief, 'status' | 'anyway' | 'brief'> | null | undefined) {
   return !!data?.anyway && !data.brief && (data.status === 'few' || data.status === 'failed');

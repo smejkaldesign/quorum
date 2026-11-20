@@ -16,7 +16,7 @@ import { Composer } from './Composer';
 import { Avatar } from './Speaker';
 import { splitChoices } from './MeetingNote';
 import { ChatExit, ChatStrip, useChats, useComposerFocus } from './ChatStack';
-import { ANYWAY_LABEL, CHANGED_TEXT, WritingStatus, anywayOffered, focusOnGenerate, prepEmptyText, regenerateLabel } from './meetingBriefView';
+import { CHANGED_TEXT, WritingStatus, anywayLabel, anywayOffered, focusOnGenerate, prepEmptyText, regenerateLabel } from './meetingBriefView';
 import markProd from '../assets/quorum-mark.png';
 
 // one click each, above the chat input before the first question
@@ -283,7 +283,7 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
     <p className="mp-prep-foot"><button className="up-all" disabled={writing} aria-busy={writing} onClick={() => generate(true, from)}>{regenerateLabel(data, writing)}</button></p>
   </> : null);
   const writingLine = anywayRunning ? <WritingStatus /> : null;
-  const anywayFoot = (from: 'prep' | 'about') => (canAnyway && !anywayRunning ? <p className="mp-prep-foot"><button className="up-all" onClick={() => generate(false, from)}>{ANYWAY_LABEL}</button></p> : null);
+  const anywayFoot = (from: 'prep' | 'about') => (canAnyway && !anywayRunning ? <p className="mp-prep-foot"><button className="up-all" onClick={() => generate(false, from)}>{anywayLabel(data)}</button></p> : null);
   // once the brief arrives, every section types itself in together over about half a second
   const reveal = useReveal(brief ? [brief.prep, brief.what, brief.who, brief.how].join('').length : 0, brief);
   const emptyText = prepEmptyText(data);

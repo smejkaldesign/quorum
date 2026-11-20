@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
-import { ANYWAY_LABEL, CHANGED_TEXT, WRITING_TEXT, WritingStatus, anywayOffered, focusOnGenerate, prepEmptyText, regenerateLabel } from '../src/meetingBriefView.tsx';
+import { ANYWAY_LABEL, CHANGED_TEXT, WRITING_TEXT, WritingStatus, anywayLabel, anywayOffered, focusOnGenerate, prepEmptyText, regenerateLabel } from '../src/meetingBriefView.tsx';
 
 const BRIEF = { prep: '- Ask about the portfolio. (invite)', what: 'An interview.', who: 'Invited: Jane Doe.', how: 'Nothing found.', sources: 'Based on limited history: the invite and 2 related notes.', oneOff: true };
 
@@ -51,5 +51,12 @@ describe('meeting prep: Generate anyways', () => {
     const noModel = { status: 'no-model', anyway: true, brief: null };
     expect(anywayOffered(noModel)).toBe(false);
     expect(prepEmptyText(noModel)).toMatch(/^Choose a model in Settings/);
+  });
+  it('labels the button Try again after a failed run, matching the line above it', () => {
+    const failed = { status: 'failed', anyway: true, brief: null };
+    expect(anywayOffered(failed)).toBe(true);
+    expect(anywayLabel(failed)).toBe('Try again');
+    expect(prepEmptyText(failed)).toBe('Quorum could not write prep notes this time. Try again.');
+    expect(anywayLabel({ status: 'few' })).toBe(ANYWAY_LABEL);
   });
 });
