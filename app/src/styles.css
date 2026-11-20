@@ -1973,9 +1973,9 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .hist-row { margin-right: calc(-1 * var(--row-pad)); padding-right: var(--row-pad); width: calc(100% + 2 * var(--row-pad)); }
 .hist-row .hist-hover { right: var(--row-pad); }
 /* on hover the buttons take the time's place in the row, so the title and subtitle truncate before them and never run
-   under them; the time fades out where it was */
+   under them; the time fades out where it was. Rows without hover buttons keep their layout */
 .hist-row:is(:hover, :focus-within) .hist-hover, .hist-row.menu-open .hist-hover { position: relative; top: auto; bottom: auto; right: auto; flex: none; padding-left: 0; background: none; }
-.hist-row:is(:hover, :focus-within) .hist-time, .hist-row.menu-open .hist-time { position: absolute; top: 0; bottom: 0; right: var(--row-pad); display: flex; align-items: center; }
+.hist-row:has(.hist-hover):is(:hover, :focus-within) .hist-time, .hist-row.menu-open:has(.hist-hover) .hist-time { position: absolute; top: 0; bottom: 0; right: var(--row-pad); display: flex; align-items: center; }
 .up-strip .up-fold-in { padding-right: 4px; margin-right: -4px; }
 /* the time only fades: quickly out on hover, back in once the buttons have slid away; the buttons keep their slide */
 .hist-row .hist-time { transform: none; transition: opacity 120ms ease 250ms; }
