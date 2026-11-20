@@ -10,6 +10,12 @@
 --     workspaces it is the only member of, so the person can start again. It refuses while the account owns a
 --     workspace with other members or a workspace of its own still pays through Stripe, and answers which. With
 --     reinvite, the same email gets a new access request and code on the chosen plan, as the Access page issues them.
+--   * Sync grants outlive the account and the workspace that held them. kb_sync_grants.user_id and workspace_id now
+--     set null instead of cascading, and every path that deletes an auth user (delete_my_account, redefined here
+--     from 0041 with no other change, and platform_reset_user) first ends the user's grants through
+--     kb_sync_grant_end (account_end_grants). An ended grant waits with revoke_pending until the relay's worker revokes
+--     the token with the provider and deletes the row, and with it the Vault secret (0032). Before this, the cascade
+--     deleted the row and its secret but never revoked the token.
 --   * account_gone(uid) tells a signed-out Mac whether the account it last held still exists, so the app can say the
 --     account was deleted instead of only asking for a sign-in. A user id is not guessable, so it reveals nothing.
 -- The platform owner (platform_owners, 0008) is refused both deletes, as in 0039. Storage objects of the removed rows
@@ -33,6 +39,26 @@
 --     workspace_usage_events (billing), platform_owners, platform_passkeys, platform_sessions, access_requests, and
 --     the set-null credits (platform_audit.actor, access_codes, contributions.reviewed_by, knowledge_bases,
 --     kb_folders, kb_files, kb_attachments, workspace_connectors, workspace_integrations, teams created_by)
+
+alter table public.kb_sync_grants alter column user_id drop not null, alter column workspace_id drop not null;
+alter table public.kb_sync_grants drop constraint if exists kb_sync_grants_user_id_fkey;
+alter table public.kb_sync_grants add constraint kb_sync_grants_user_id_fkey foreign key (user_id) references auth.users (id) on delete set null;
+alter table public.kb_sync_grants drop constraint if exists kb_sync_grants_workspace_id_fkey;
+alter table public.kb_sync_grants add constraint kb_sync_grants_workspace_id_fkey foreign key (workspace_id) references public.workspaces (id) on delete set null;
+
+-- ends every live sync grant of a person, and every grant in the given workspaces, the way a disconnect does: a grant
+-- of its own waits for the relay to revoke it, a grant the Mac shares is deleted (kb_sync_revokes, 0032)
+create or replace function public.account_end_grants(uid uuid, workspaces public.ulid[] default '{}') returns integer
+language plpgsql security definer set search_path = public as $$
+declare g public.kb_sync_grants; n integer := 0;
+begin
+  for g in select * from public.kb_sync_grants x where (x.user_id = uid or x.workspace_id = any(workspaces)) and x.ended_at is null loop
+    perform public.kb_sync_grant_end(g.id, 'disconnected', public.kb_sync_revokes(g, 'disconnected'));
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+revoke all on function public.account_end_grants(uuid, public.ulid[]) from public, anon, authenticated;
 
 create or replace function public.account_gone(uid uuid) returns boolean
 language sql stable security definer set search_path = public as $$
@@ -114,7 +140,7 @@ revoke all on function public.account_trash_objects(uuid, public.ulid[]) from pu
 -- Rows are deleted, never marked deleted, so a pull on another Mac renames nothing in a vault there.
 create or replace function public.delete_my_data() returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare uid uuid := auth.uid(); solo public.ulid[]; objects integer; kept integer; g public.kb_sync_grants;
+declare uid uuid := auth.uid(); solo public.ulid[]; objects integer; kept integer;
 begin
   if uid is null then raise exception 'You need to sign in first'; end if;
   if public.account_is_platform_owner(uid) then raise exception 'The account that runs Quorum cannot delete its data from the app'; end if;
@@ -139,9 +165,7 @@ begin
   delete from public.notes n where n.user_id = uid;
   perform set_config('quorum.kb_system', '', true);
 
-  for g in select * from public.kb_sync_grants x where x.user_id = uid and x.ended_at is null loop
-    perform public.kb_sync_grant_end(g.id, 'disconnected', public.kb_sync_revokes(g, 'disconnected'));
-  end loop;
+  perform public.account_end_grants(uid);
   delete from public.connect_accounts c where c.user_id = uid;
   delete from public.member_integrations i where i.user_id = uid;
   delete from public.kb_resync r where r.user_id = uid;
@@ -185,6 +209,7 @@ begin
   names := coalesce((select jsonb_agg(w.name order by w.name) from public.workspaces w where w.id = any(solo)), '[]'::jsonb);
   kept := public.account_hand_over(platform_reset_user.uid);
   objects := public.account_trash_objects(platform_reset_user.uid, solo);
+  perform public.account_end_grants(platform_reset_user.uid, solo);
   perform set_config('quorum.kb_system', 'on', true);
   delete from public.workspaces w where w.id = any(solo);
   perform set_config('quorum.kb_system', '', true);
@@ -200,3 +225,43 @@ begin
 end $$;
 revoke all on function public.platform_reset_user(uuid, boolean, text) from public, anon;
 grant execute on function public.platform_reset_user(uuid, boolean, text) to authenticated, service_role;
+
+-- 0041's delete_my_account, unchanged except that the caller's sync grants end first (account_end_grants), so the
+-- relay revokes their tokens after the account is gone
+create or replace function public.delete_my_account() returns jsonb
+language plpgsql security definer set search_path = public, auth as $$
+declare uid uuid := auth.uid(); objects integer; kept integer;
+begin
+  if uid is null then raise exception 'You need to sign in first'; end if;
+  if public.account_is_platform_owner(uid) then raise exception 'The account that runs Quorum cannot be deleted from the app'; end if;
+  if exists (select 1 from public.account_owned_workspaces(uid)) then raise exception 'You own a workspace. Delete the organization first'; end if;
+
+  create temp table if not exists pg_temp.account_handover (note_id public.ulid primary key, heir uuid not null) on commit drop;
+  delete from pg_temp.account_handover;
+  insert into pg_temp.account_handover (note_id, heir)
+  select n.id, public.account_heir(n.workspace_id, uid) from public.notes n
+  where n.user_id = uid
+    and not (n.kb_id is not null and public.kb_is_personal(n.kb_id))
+    and (n.kb_id is not null
+         or coalesce(n.frontmatter ->> 'visibility', 'private') = 'public'
+         or exists (select 1 from public.contributions c where c.note_id = n.id and c.status in ('pending', 'included')))
+    and public.account_heir(n.workspace_id, uid) is not null;
+  get diagnostics kept = row_count;
+
+  perform set_config('quorum.kb_system', 'on', true);
+  update public.notes n set user_id = h.heir from pg_temp.account_handover h where n.id = h.note_id;
+  update public.links l set user_id = h.heir from pg_temp.account_handover h where l.from_note = h.note_id and l.user_id = uid;
+  update public.attachments a set user_id = h.heir from pg_temp.account_handover h where a.note_id = h.note_id and a.user_id = uid;
+  update public.contributions c set author_id = h.heir from pg_temp.account_handover h where c.note_id = h.note_id and c.author_id = uid;
+  perform set_config('quorum.kb_system', '', true);
+
+  insert into public.kb_files_trash (object_path, workspace_id, kb_id, bucket)
+  select a.object_path, a.workspace_id, null, 'attachments' from public.attachments a where a.user_id = uid and a.bucket = 'attachments'
+  on conflict (object_path) do nothing;
+  get diagnostics objects = row_count;
+  perform public.account_end_grants(uid);
+  delete from auth.users u where u.id = uid;
+  return jsonb_build_object('ok', true, 'kept', kept, 'objects', objects);
+end $$;
+revoke all on function public.delete_my_account() from public, anon;
+grant execute on function public.delete_my_account() to authenticated;

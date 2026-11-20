@@ -3,7 +3,7 @@
 --   docker exec -i supabase_db_quorum psql -U postgres -d postgres -v ON_ERROR_STOP=1 -f - < supabase/tests/delete_my_data.sql
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(43);
+select plan(48);
 
 -- fixtures. d1 owns Solo alone and is a member of Team, which d2 owns with d3 as a member; d4 runs Quorum; d5 owns
 -- Paying alone, which has a live subscription; d6 owns Crowd, which d3 also belongs to
@@ -64,6 +64,13 @@ insert into public.connect_accounts (user_id, provider, account_id, external_use
 insert into public.settings (id, user_id, workspace_id, scope, data) values
   ('01DD00000000000000000000X1', '00000000-0000-4000-8000-0000000000d1', '01DD00000000000000000000WT', 'user', '{}'),
   ('01DD00000000000000000000X2', '00000000-0000-4000-8000-0000000000d2', '01DD00000000000000000000WT', 'workspace', '{}');
+-- grants that hold a token in Vault, so ending one waits for the relay's revoke: d3's in Crowd, and d7's (a member of
+-- Crowd who deletes their own account)
+insert into auth.users (id, email, aud, role) values ('00000000-0000-4000-8000-0000000000d7', 'leaver@example.com', 'authenticated', 'authenticated');
+insert into public.members (id, user_id, workspace_id, role) values ('01DD00000000000000000000M7', '00000000-0000-4000-8000-0000000000d7', '01DD00000000000000000000WC', 'member');
+insert into public.kb_sync_grants (id, workspace_id, user_id, provider, secret_id) values
+  ('01DD00000000000000000000G3', '01DD00000000000000000000WC', '00000000-0000-4000-8000-0000000000d3', 'github', vault.create_secret('token-d3')),
+  ('01DD00000000000000000000G7', '01DD00000000000000000000WC', '00000000-0000-4000-8000-0000000000d7', 'github', vault.create_secret('token-d7'));
 insert into auth.sessions (id, user_id) values ('00000000-0000-4000-8000-00000000a5e1', '00000000-0000-4000-8000-0000000000d1');
 insert into auth.refresh_tokens (token, user_id, session_id) values ('t-d1', '00000000-0000-4000-8000-0000000000d1', '00000000-0000-4000-8000-00000000a5e1');
 
@@ -129,16 +136,30 @@ select ok(public.account_gone('00000000-0000-4000-8000-0000000000d3'), 'the acco
 select ok(exists (select 1 from public.workspaces where id = '01DD00000000000000000000WC'), 'a workspace d3 only belonged to stays');
 select ok(exists (select 1 from public.access_codes where email = 'teammate@example.com' and plan = 'cloud' and revoked_at is null), 'a cloud code waits for the same email');
 select ok(exists (select 1 from public.platform_audit where action = 'reset_user' and detail ->> 'email' = 'teammate@example.com'), 'the reset is in the audit log');
+select ok(exists (select 1 from public.kb_sync_grants g join vault.secrets v on v.id = g.secret_id where g.id = '01DD00000000000000000000G3' and g.revoke_pending and g.ended_at is not null and g.user_id is null),
+  'the reset leaves d3''s grant waiting for the relay to revoke it, with its token still in Vault');
+
+-- 5b. delete_my_account ends the leaver's grants first too
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000d7');
+select is(public.delete_my_account() ->> 'ok', 'true', 'a member deletes their account');
+select pg_temp.as_postgres();
+select ok(exists (select 1 from public.kb_sync_grants g join vault.secrets v on v.id = g.secret_id where g.id = '01DD00000000000000000000G7' and g.revoke_pending and g.user_id is null),
+  'delete_my_account leaves the grant waiting for the relay to revoke it');
+select ok(public.account_gone('00000000-0000-4000-8000-0000000000d7'), 'and the account is gone');
 
 -- 6. Reset user d1: Solo still has its subscription, so it is refused until billing ends; then Solo goes too
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000d4');
 select is(public.platform_reset_user('00000000-0000-4000-8000-0000000000d1') -> 'reason', '"billing"'::jsonb, 'a solo workspace that still pays holds the reset');
 select pg_temp.as_postgres();
 update public.workspaces set billing_status = 'canceled' where id = '01DD00000000000000000000WS';
+insert into public.kb_sync_grants (id, workspace_id, user_id, provider, secret_id) values
+  ('01DD00000000000000000000G1', '01DD00000000000000000000WS', '00000000-0000-4000-8000-0000000000d1', 'google-drive', vault.create_secret('token-d1'));
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000d4');
 select is(public.platform_reset_user('00000000-0000-4000-8000-0000000000d1') -> 'workspaces', jsonb_build_array('Solo'), 'the solo workspace goes with the account');
 select pg_temp.as_postgres();
 select ok(not exists (select 1 from public.workspaces where id = '01DD00000000000000000000WS') and public.account_gone('00000000-0000-4000-8000-0000000000d1'), 'both are gone');
+select ok(exists (select 1 from public.kb_sync_grants g where g.id = '01DD00000000000000000000G1' and g.revoke_pending and g.user_id is null and g.workspace_id is null),
+  'a grant in the deleted solo workspace outlives it, waiting for the revoke');
 
 select * from finish();
 rollback;
