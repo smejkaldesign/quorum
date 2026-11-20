@@ -97,6 +97,35 @@ jobs:
           QUORUM_SUPABASE_URL: https://example.supabase.co
           QUORUM_SUPABASE_ANON_KEY: ci-placeholder
 
+  # the database's row level security, RPCs and triggers (supabase/tests): a local stack with only the database and
+  # auth running, every migration applied, and each test file in its own rolled-back transaction. No secrets: the
+  # stack's keys are the CLI's fixed local ones
+  database:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: Start the database with every migration
+        run: npx --yes supabase@2.105.0 start -x analytics,edge-runtime,imgproxy,inbucket,kong,meta,realtime,rest,storage,studio,vector
+      - name: Database tests
+        run: |
+          set -euo pipefail
+          for t in supabase/tests/*.sql; do
+            name=$(basename "$t")
+            # private_object.sql is a helper the tests that call pg_temp.assert_private load first
+            [ "$name" = private_object.sql ] && continue
+            echo "== $name"
+            if grep -q assert_private "$t"; then
+              { echo 'begin;'; cat supabase/tests/private_object.sql; grep -v '^begin;$' "$t"; } | docker exec -i supabase_db_quorum psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q -f -
+            else
+              docker exec -i supabase_db_quorum psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q -f - < "$t"
+            fi
+          done
+
   gitleaks:
     runs-on: ubuntu-latest
     # pull_request runs list the PR's commits through the API, which the default token cannot do without this

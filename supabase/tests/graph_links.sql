@@ -54,6 +54,9 @@ $$;
 grant execute on function pg_temp.edge(int, text, text, real, jsonb) to authenticated;
 create function pg_temp.h(s text) returns text language sql as $$ select encode(sha256(convert_to(s, 'utf8')), 'hex') $$;
 grant execute on function pg_temp.h(text) to authenticated;
+-- the same edge with some fields replaced
+create function pg_temp.edge_with(k int, patch jsonb) returns jsonb language sql as $$ select pg_temp.edge(k) || patch $$;
+grant execute on function pg_temp.edge_with(int, jsonb) to authenticated;
 create function pg_temp.graph_rows(note text) returns int language sql security definer as $$ select count(*)::int from public.links where from_note = note and kind is not null $$;
 grant execute on function pg_temp.graph_rows(text) to authenticated;
 
@@ -107,45 +110,95 @@ do $$ begin
   assert (select count(*) from public.graph_heads('01GR00000000000000000000WA')) = 2, 'the owner sees both notes';
 end $$;
 
--- 6. a low-confidence model edge needs a person's approval
+-- 6. a model edge never goes, however sure the model pass was; a person-approved edge does
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000e2');
-select pg_temp.expect_error($$ select public.graph_put('01GR000000000000000000N001', pg_temp.h('m'), jsonb_build_array(pg_temp.edge(5, 'works_on', 'model', 0.5))) $$, 'links_model_reviewed');
+select pg_temp.expect_error($$ select public.graph_put('01GR000000000000000000N001', pg_temp.h('m'), jsonb_build_array(pg_temp.edge(5, 'works_on', 'model', 0.95))) $$, 'links_no_model');
+select pg_temp.expect_error($$ select public.graph_put('01GR000000000000000000N001', pg_temp.h('m'), jsonb_build_array(pg_temp.edge(5, 'works_on', 'model', 0.5, '{"approved": true}'::jsonb))) $$, 'links_no_model');
 do $$ begin
   assert pg_temp.graph_rows('01GR000000000000000000N001') = 2, 'a refused set leaves the old one in place';
-  assert public.graph_put('01GR000000000000000000N001', pg_temp.h('m'), jsonb_build_array(pg_temp.edge(5, 'works_on', 'model', 0.5, '{"approved": true}'::jsonb))) = 1, 'an approved one goes';
-  assert public.graph_put('01GR000000000000000000N001', pg_temp.h('m2'), jsonb_build_array(pg_temp.edge(6, 'works_on', 'model', 0.9), pg_temp.edge(7))) = 2, 'and a confident one';
+  assert public.graph_put('01GR000000000000000000N001', pg_temp.h('m2'), jsonb_build_array(pg_temp.edge(6, 'works_on', 'person'), pg_temp.edge(7))) = 2, 'a person-approved edge goes';
 end $$;
-select pg_temp.expect_error($$ select public.graph_put('01GR000000000000000000N001', 'nothex', jsonb_build_array(pg_temp.edge(8))) $$, 'links_graph_shape');
 
--- 7. a new set replaces the old one; an empty set withdraws it
+-- 7. the shape: a node id starts with its kind, names and ids have a length cap, a note has an edge cap
+select pg_temp.expect_error($$ select public.graph_put('01GR000000000000000000N001', 'nothex', jsonb_build_array(pg_temp.edge(8))) $$, 'links_graph_shape');
+select pg_temp.expect_error($$ select public.graph_put('01GR000000000000000000N001', pg_temp.h('f'), jsonb_build_array(pg_temp.edge_with(8, '{"dst": "note:private/plan.md", "dst_kind": "person"}'))) $$, 'links_graph_shape');
+select pg_temp.expect_error($$ select public.graph_put('01GR000000000000000000N001', pg_temp.h('f'), jsonb_build_array(pg_temp.edge_with(8, '{"src_kind": "folder"}'))) $$, 'links_graph_shape');
+select pg_temp.expect_error($$ select public.graph_put('01GR000000000000000000N001', pg_temp.h('f'), jsonb_build_array(pg_temp.edge_with(8, '{"src_kind": "secret", "src": "secret:x"}'))) $$, 'links_graph_shape');
+select pg_temp.expect_error($$ select public.graph_put('01GR000000000000000000N001', pg_temp.h('f'), jsonb_build_array(pg_temp.edge_with(8, jsonb_build_object('dst_name', repeat('a', 301))))) $$, 'links_graph_shape');
+select pg_temp.expect_error($$ select public.graph_put('01GR000000000000000000N001', pg_temp.h('f'), jsonb_build_array(pg_temp.edge_with(8, jsonb_build_object('dst', 'person:' || repeat('a', 600))))) $$, 'links_graph_shape');
+select pg_temp.expect_error($$ select public.graph_put('01GR000000000000000000N001', pg_temp.h('f'), (select jsonb_agg(pg_temp.edge(k)) from generate_series(1, 2001) k)) $$, 'at most 2000');
 do $$ begin
-  assert (select graph_hash from public.graph_heads('01GR00000000000000000000WA') where note_id = '01GR000000000000000000N001') = pg_temp.h('m2'), 'the head moves to the new set';
+  assert public.graph_put('01GR000000000000000000N001', pg_temp.h('max'), jsonb_build_array(pg_temp.edge_with(8, jsonb_build_object('dst_name', repeat('a', 300))))) = 1, 'a name of 300 characters goes';
+end $$;
+
+-- 8. a new set replaces the old one; an empty set withdraws it
+do $$ begin
+  assert public.graph_put('01GR000000000000000000N001', pg_temp.h('m3'), jsonb_build_array(pg_temp.edge(6, 'works_on', 'person'), pg_temp.edge(7))) = 2, 'a new set';
+  assert (select graph_hash from public.graph_heads('01GR00000000000000000000WA') where note_id = '01GR000000000000000000N001') = pg_temp.h('m3'), 'the head moves to the new set';
   assert public.graph_put('01GR000000000000000000N002', pg_temp.h('empty'), '[]'::jsonb) = 0, 'an empty set';
   assert pg_temp.graph_rows('01GR000000000000000000N002') = 0, 'clears the note';
 end $$;
 
--- 8. plain links (no kind) keep working on the author's own notes, knowledge base or not
+-- 9. plain links (no kind) keep working on the author's own notes, knowledge base or not, and the author changes and
+-- removes them; nobody writes on a deleted note, and a member who left writes nothing
 insert into public.links (id, user_id, workspace_id, from_note, anchor) values ('01GR0000000000000000P00001', '00000000-0000-4000-8000-0000000000e2', '01GR00000000000000000000WA', '01GR000000000000000000N003', 'Today');
+update public.links set anchor = 'Today, edited' where id = '01GR0000000000000000P00001';
+do $$ begin assert (select anchor from public.links where id = '01GR0000000000000000P00001') = 'Today, edited', 'the author edits their link'; end $$;
+delete from public.links where id = '01GR0000000000000000P00001';
+do $$ begin assert not exists (select 1 from public.links where id = '01GR0000000000000000P00001'), 'and removes it'; end $$;
+reset role;
+select set_config('request.jwt.claims', '', true);
+insert into public.notes (id, user_id, workspace_id, path, frontmatter, body, kb_id, deleted_at) values
+  ('01GR000000000000000000N006', '00000000-0000-4000-8000-0000000000e2', '01GR00000000000000000000WA', 'old/Gone.md', '{"visibility": "public"}', '# Gone', '01GR00000000000000000000KH', now()),
+  ('01GR000000000000000000N007', '00000000-0000-4000-8000-0000000000e4', '01GR00000000000000000000WA', 'member/Notes.md', '{"visibility": "public"}', '# Notes', '01GR00000000000000000000KH', null);
+update public.members set deleted_at = now() where id = '01GR00000000000000000000M4';
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000e2');
+select pg_temp.expect_error($$ select public.graph_put('01GR000000000000000000N006', pg_temp.h('x'), jsonb_build_array(pg_temp.edge(11))) $$, 'not yours');
+select pg_temp.expect_error($$ insert into public.links (id, user_id, workspace_id, from_note, anchor) values ('01GR0000000000000000P00002', '00000000-0000-4000-8000-0000000000e2', '01GR00000000000000000000WA', '01GR000000000000000000N006', 'x') $$, 'row-level security');
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000e4');
+select pg_temp.expect_error($$ select public.graph_put('01GR000000000000000000N007', pg_temp.h('x'), jsonb_build_array(pg_temp.edge(12))) $$, 'row-level security');
+do $$ begin assert not exists (select 1 from public.graph_heads('01GR00000000000000000000WA')), 'a member who left reads no heads'; end $$;
 
--- 9. a note that leaves its knowledge base takes its graph rows along: made private by its author, deleted by its
--- author, or moved out of the KB by the workspace owner
-update public.notes set frontmatter = '{}' where id = '01GR000000000000000000N001';
+-- 10. a note that leaves its knowledge base takes its graph rows along: moved to another knowledge base by the
+-- workspace owner (the rows name notes the new audience may not open), made private by its author, deleted by its
+-- author. The rows of a note whose edges name it go too
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000e2');
+do $$ begin assert public.graph_put('01GR000000000000000000N002', pg_temp.h('again'), jsonb_build_array(pg_temp.edge(10))) = 1, 'Leadership again'; end $$;
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000e1');
+select public.kb_note_assign('01GR000000000000000000N002', '01GR00000000000000000000KH', null);
 do $$ begin
-  assert (select kb_id from public.notes where id = '01GR000000000000000000N001') is null, 'a private note leaves the KB';
-  assert pg_temp.graph_rows('01GR000000000000000000N001') = 0, 'and its rows go';
+  assert (select kb_id from public.notes where id = '01GR000000000000000000N002') = '01GR00000000000000000000KH', 'the owner moved the note to the Handbook';
+  assert pg_temp.graph_rows('01GR000000000000000000N002') = 0, 'and its rows went with the move';
+end $$;
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000e2');
+do $$ begin
+  assert public.graph_put('01GR000000000000000000N001', pg_temp.h('to-plan'), jsonb_build_array(pg_temp.edge(13), pg_temp.edge_with(14, '{"dst": "note:leads/Plan.md", "dst_kind": "note", "dst_name": "Plan", "ends": {"src": {"rel": "projects/Heron.md"}, "dst": {"rel": "leads/Plan.md"}}}'))) = 2, 'Heron links to Plan';
+  assert public.graph_put('01GR000000000000000000N002', pg_temp.h('plan'), jsonb_build_array(pg_temp.edge_with(15, '{"src": "note:leads/Plan.md", "src_name": "Plan", "ends": {"src": {"rel": "leads/Plan.md"}}}'))) = 1, 'Plan has its own';
+end $$;
+update public.notes set frontmatter = '{}' where id = '01GR000000000000000000N002';
+do $$ begin
+  assert (select kb_id from public.notes where id = '01GR000000000000000000N002') is null, 'a private note leaves the KB';
+  assert pg_temp.graph_rows('01GR000000000000000000N002') = 0, 'its rows go';
+  assert pg_temp.graph_rows('01GR000000000000000000N001') = 0, 'and so do the rows of the note that named it';
 end $$;
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000e3');
 do $$ begin assert public.graph_put('01GR000000000000000000N004', pg_temp.h('k'), jsonb_build_array(pg_temp.edge(9))) = 1, 'the reader publishes their own note'; end $$;
 update public.notes set deleted_at = now() where id = '01GR000000000000000000N004';
 do $$ begin assert pg_temp.graph_rows('01GR000000000000000000N004') = 0, 'a deleted note takes its rows'; end $$;
+
+-- 11. rows handed to another owner (an account hand-over) go: the heir's Mac cannot publish them again
 select pg_temp.as_user('00000000-0000-4000-8000-0000000000e2');
-do $$ begin assert public.graph_put('01GR000000000000000000N002', pg_temp.h('again'), jsonb_build_array(pg_temp.edge(10))) = 1, 'Leadership again'; end $$;
+do $$ begin assert public.graph_put('01GR000000000000000000N001', pg_temp.h('h'), jsonb_build_array(pg_temp.edge(16), pg_temp.edge(17))) = 2, 'Heron again'; end $$;
+insert into public.links (id, user_id, workspace_id, from_note, anchor) values ('01GR0000000000000000P00003', '00000000-0000-4000-8000-0000000000e2', '01GR00000000000000000000WA', '01GR000000000000000000N001', 'Heron');
 reset role;
 select set_config('request.jwt.claims', '', true);
-update public.notes set kb_id = null where id = '01GR000000000000000000N002';
-do $$ begin assert pg_temp.graph_rows('01GR000000000000000000N002') = 0, 'moved out of the KB by someone else, the rows still go'; end $$;
+update public.links set user_id = '00000000-0000-4000-8000-0000000000e1' where from_note = '01GR000000000000000000N001';
+do $$ begin
+  assert pg_temp.graph_rows('01GR000000000000000000N001') = 0, 'graph rows go with the hand-over';
+  assert (select user_id from public.links where id = '01GR0000000000000000P00003') = '00000000-0000-4000-8000-0000000000e1', 'a plain link is handed over as before';
+end $$;
 
--- 10. signed out, the functions are not there
+-- 12. signed out, the functions are not there
 set local role anon;
 select pg_temp.expect_error($$ select public.graph_put('01GR000000000000000000N001', pg_temp.h('x'), '[]'::jsonb) $$, 'permission denied');
 select pg_temp.expect_error($$ select * from public.graph_heads('01GR00000000000000000000WA') $$, 'permission denied');

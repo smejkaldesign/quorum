@@ -177,7 +177,12 @@ export function createAccount({ settings, saveSettings, log = () => {}, brain = 
   const signedOut = () => { Object.assign(state, { signedIn: false, email: null, userId: null, workspace: null, workspaces: [], invites: [], domainMatches: [] }); graphSync.clear(); };
   const chooseWorkspace = (id) => {
     state.workspace = state.workspaces.find((w) => w.id === id) ?? state.workspaces[0] ?? null;
-    if (settings.workspaceId !== (state.workspace?.id ?? null)) { settings.workspaceId = state.workspace?.id ?? null; saveSettings?.(); }
+    if (settings.workspaceId !== (state.workspace?.id ?? null)) {
+      // another workspace: the last one's team edges leave the graph now, before the next run reads the new one
+      if (settings.workspaceId) graphSync.clear();
+      settings.workspaceId = state.workspace?.id ?? null;
+      saveSettings?.();
+    }
   };
 
   // the memberships with their workspace rows; team_enabled came with migration 0019, so a project without it is asked

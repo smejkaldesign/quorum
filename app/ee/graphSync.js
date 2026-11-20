@@ -7,7 +7,8 @@
 // private folder, a confidential note, an opted-out customer or a note sync withholds never publishes; a note that
 // becomes one withdraws its edges. An edge end that is another note is published only when that note sits in the same
 // knowledge base, so a reader never learns the title or path of a note they cannot open. A model edge goes only when it
-// is confident or a person approved it (the server refuses the rest too). A fact a private note superseded stays here.
+// is never published: what the model pass reads from prose stays on this Mac until a person approves it, which writes a
+// person edge (the server refuses model rows too). A fact a private note superseded stays here.
 //
 // What comes in: teammates' edges, with their provenance and source line, under the source path team:<path> and a team
 // mark in props (knowledge base, note, author, edge key). Entities (people, projects, companies, tags) are shared by id,
@@ -25,13 +26,15 @@ import path from 'node:path';
 import { EDGE_KINDS, NODE_KINDS, NOTE_IDENTITY, PROVENANCE } from '../graph/store.js';
 import { ulid } from './sync.js';
 
-// a model edge below this confidence waits for a person's approval in Review (migration 0049 refuses it too)
-export const MODEL_PUBLISH_MIN = 0.8;
 const PAGE = 1000;
 // note ids per links read, and graph_put calls per run; the rest go on the next run
 const NOTE_BATCH = 50;
 const PUTS_PER_RUN = 100;
 const MAX_EDGES = 2000;
+// the server's caps (0049 links_graph_shape): a name, an id, and an edge's props and ends together
+const MAX_NAME = 300;
+const MAX_ID = 600;
+const MAX_EXTRA = 6000;
 // runs closer together than this become one trailing run: every pull asks for one, and a burst of edits pulls often
 const MIN_GAP = 15000;
 const META = 'team_graph';
@@ -49,11 +52,16 @@ export const safePath = (p) => {
   const rel = String(p ?? '').split('\\').join('/');
   return rel.endsWith('.md') && !rel.startsWith('/') && !rel.split('/').some((s) => s === '' || s === '.' || s === '..') ? rel : null;
 };
-export const publishable = (e) => e.provenance !== 'model' || e.props?.approved === true || (Number(e.confidence) >= MODEL_PUBLISH_MIN);
+// written (explicit), convention (rule) and person-approved (person) edges reach teammates; model edges never do
+export const publishable = (e) => e.provenance === 'explicit' || e.provenance === 'rule' || e.provenance === 'person';
+class Cancelled extends Error {}
 const compact = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null && v !== undefined && !(typeof v === 'object' && !Object.keys(v).length)));
 
 export function createGraphSync({ account, graph = () => null, vault = () => null, isExcluded = () => false, isExcludedText = () => false, log = () => {}, minGap = MIN_GAP, now = Date.now }) {
   let running = null;
+  // bumped by clear(); a run started before it stops at its next write
+  let gen = 0;
+  let pendingClear = false;
   let timer = null;
   let lastAt = 0;
   let last = { published: 0, withdrawn: 0, imported: 0, removed: 0, waiting: 0, error: null, at: null };
@@ -84,9 +92,10 @@ export function createGraphSync({ account, graph = () => null, vault = () => nul
 
   // one end of an edge as teammates may see it, or null when it must stay on this Mac
   function end(store, id, kb, eligible) {
+    if (String(id).length > MAX_ID) return null;
     const n = store.node(id);
     const kind = n?.kind ?? String(id).split(':')[0];
-    const name = String(n?.name ?? id);
+    const name = String(n?.name ?? id).slice(0, MAX_NAME);
     if (isExcludedText(name) || isExcludedText(String(id))) return null;
     if (n?.rel && isExcluded(n.rel)) return null;
     const same = !!n?.rel && eligible.get(n.rel)?.kb === kb;
@@ -99,7 +108,7 @@ export function createGraphSync({ account, graph = () => null, vault = () => nul
 
   const rowOf = (x, n, extra = {}) => compact({
     kind: x.e.kind, provenance: x.e.provenance, src: x.src.id, src_kind: x.src.kind, src_name: x.src.name, dst: x.dst.id, dst_kind: x.dst.kind, dst_name: x.dst.name,
-    source_line: x.e.source_line ?? null, confidence: x.e.confidence ?? null, valid_from: iso(x.e.valid_from), valid_to: iso(x.e.valid_to), edge_key: x.key, note_hash: n.hash,
+    source_line: x.e.source_line ?? null, confidence: x.e.confidence ?? null, valid_from: iso(x.e.valid_from), valid_to: x.current ? null : iso(x.e.valid_to), edge_key: x.key, note_hash: n.hash,
     props: x.e.props && Object.keys(x.e.props).length ? x.e.props : null,
     ends: compact({ src: compact({ rel: x.src.rel, props: x.src.props }), dst: compact({ rel: x.dst.rel, props: x.dst.props }) }),
     ...extra,
@@ -137,6 +146,8 @@ export function createGraphSync({ account, graph = () => null, vault = () => nul
         if (!pair && !publishable(e)) continue;
         const src = end(t.store, e.src, n.kb, eligible), dst = end(t.store, e.dst, n.kb, eligible);
         if (!src || !dst) continue;
+        // an edge too large for the server's cap stays here, so one edge never stops the note's set from going
+        if (JSON.stringify(e.props ?? {}).length + JSON.stringify([src.rel, src.props, dst.rel, dst.props]).length > MAX_EXTRA) { log('graph sync', `${rel}: an edge too large to publish`); continue; }
         if (pair) { list.push({ e, src, dst, pair }); continue; }
         const key = sha256(JSON.stringify([rel, e.src, e.dst, e.kind, e.provenance, e.source_line ?? null, e.confidence ?? null, e.valid_from ?? null, e.props ?? {}]));
         keyOf.set(e.id, key);
@@ -146,13 +157,16 @@ export function createGraphSync({ account, graph = () => null, vault = () => nul
     }
     // a fact replaced by one that stays here (a private note's) is history this Mac keeps to itself. When what replaced
     // it is in a note that waits for its push, the note waits too, so its set does not change twice
+    // A teammate's newer fact replaces a local one only on this Mac: to the team the local fact is still current
     const pending = (id) => waiting.has(t.store.edge(id)?.source_rel);
+    const fromTeam = (id) => !!t.store.edge(id)?.source_rel?.startsWith('team:');
+    for (const list of plan.values()) for (const x of list) if (!x.pair && x.e.superseded_by != null && fromTeam(x.e.superseded_by)) x.current = true;
     for (let again = true; again;) {
       again = false;
       for (const [rel, list] of plan) {
         for (const x of list) {
           if (x.pair) { if (pending(x.e.props.old) || pending(x.e.props.new)) waiting.add(rel); continue; }
-          if (!keyOf.has(x.e.id) || x.e.superseded_by == null || keyOf.has(x.e.superseded_by)) continue;
+          if (x.current || !keyOf.has(x.e.id) || x.e.superseded_by == null || keyOf.has(x.e.superseded_by)) continue;
           if (pending(x.e.superseded_by)) { if (!waiting.has(rel)) { waiting.add(rel); again = true; } continue; }
           keyOf.delete(x.e.id);
           again = true;
@@ -162,10 +176,12 @@ export function createGraphSync({ account, graph = () => null, vault = () => nul
     counts.waiting += waiting.size;
 
     let puts = 0;
+    // a refused put counts toward the cap too, so one note the server keeps refusing never holds up the rest
     const put = async (noteId, graphHash, rows) => {
+      t.check();
+      puts++;
       const { error } = await t.client.rpc('graph_put', { note_id: noteId, graph_hash: graphHash, edges: rows.map((r) => ({ id: ulid(), ...r })) });
       if (error) throw new Error(`graph put: ${error.message}`);
-      puts++;
     };
     for (const [rel, n] of eligible) {
       if (waiting.has(rel)) continue;
@@ -178,7 +194,7 @@ export function createGraphSync({ account, graph = () => null, vault = () => nul
           const key = sha256(JSON.stringify([rel, 'supersedes', x.e.src, x.e.dst, oldKey, newKey]));
           rows.set(key, rowOf({ ...x, key, e: { ...x.e, props: { by: 'supersession', old_key: oldKey, new_key: newKey } } }, n));
         } else if (keyOf.has(x.e.id)) {
-          rows.set(x.key, rowOf(x, n, x.e.superseded_by != null ? { superseded_by_key: keyOf.get(x.e.superseded_by) } : {}));
+          rows.set(x.key, rowOf(x, n, x.e.superseded_by != null && !x.current ? { superseded_by_key: keyOf.get(x.e.superseded_by) } : {}));
         }
       }
       let list = [...rows.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([, r]) => r);
@@ -186,20 +202,21 @@ export function createGraphSync({ account, graph = () => null, vault = () => nul
       const graphHash = list.length ? sha256(JSON.stringify(list)) : EMPTY_SET;
       const head = own.get(n.id);
       if (head ? head.graph_hash === graphHash : !list.length) continue;
-      try { await put(n.id, graphHash, list); counts.published++; } catch (err) { log('graph sync', rel, err.message); counts.failed++; }
+      try { await put(n.id, graphHash, list); counts.published++; } catch (err) { if (err instanceof Cancelled) throw err; log('graph sync', rel, err.message); counts.failed++; }
     }
     for (const id of withdraw) {
       if (!own.has(id) || puts >= PUTS_PER_RUN) continue;
-      try { await put(id, EMPTY_SET, []); counts.withdrawn++; } catch (err) { log('graph sync', 'withdraw', err.message); counts.failed++; }
+      try { await put(id, EMPTY_SET, []); counts.withdrawn++; } catch (err) { if (err instanceof Cancelled) throw err; log('graph sync', 'withdraw', err.message); counts.failed++; }
     }
   }
 
   // ---- pull
 
   // a teammate's node in this graph: entities by their own id, a note, meeting or decision under team ids with its
-  // team path as its source
+  // team path as its source. An id must start with its kind, so a row cannot pass a note of this vault off as a person
+  // and attach to it; a local node of another kind under the same id is refused too
   function nodeIn(store, id, kind, name, e) {
-    if (typeof id !== 'string' || !NODE_KINDS.includes(kind)) return null;
+    if (typeof id !== 'string' || id.length > MAX_ID || !NODE_KINDS.includes(kind) || !id.startsWith(`${kind}:`)) return null;
     const label = String(name ?? id).slice(0, 300);
     if (isExcludedText(label) || isExcludedText(id)) return null;
     if (NOTE_IDENTITY.has(kind)) {
@@ -210,7 +227,9 @@ export function createGraphSync({ account, graph = () => null, vault = () => nul
       store.setAliases(tid, [label]);
       return tid;
     }
-    if (!store.node(id)) { store.upsertNode({ id, kind, name: label }); store.setAliases(id, [label]); }
+    const local = store.node(id);
+    if (local && local.kind !== kind) return null;
+    if (!local) { store.upsertNode({ id, kind, name: label }); store.setAliases(id, [label]); }
     return id;
   }
 
@@ -259,6 +278,7 @@ export function createGraphSync({ account, graph = () => null, vault = () => nul
   async function pull(t, heads, counts) {
     const theirs = heads.filter((h) => h.author !== t.me && safePath(h.path));
     let cache = readCache(t.store);
+    t.check();
     if (cache.ws !== t.ws) { counts.removed += forgetAll(t.store, cache); cache = { ws: t.ws, notes: {} }; writeCache(t.store, cache); }
     const live = new Map(theirs.map((h) => [h.note_id, h]));
     const liveRels = new Set(theirs.map((h) => teamRel(h.path)));
@@ -273,6 +293,7 @@ export function createGraphSync({ account, graph = () => null, vault = () => nul
     for (let i = 0; i < changed.length; i += NOTE_BATCH) {
       const batch = changed.slice(i, i + NOTE_BATCH);
       const rows = await all(() => t.client.from('links').select(COLUMNS).eq('workspace_id', t.ws).in('from_note', batch.map((h) => h.note_id)).not('kind', 'is', null).is('deleted_at', null).order('id'), 'team edges');
+      t.check();
       const by = new Map();
       for (const r of rows) (by.get(r.from_note) ?? by.set(r.from_note, []).get(r.from_note)).push(r);
       for (const h of batch) {
@@ -292,19 +313,30 @@ export function createGraphSync({ account, graph = () => null, vault = () => nul
       // the notes read so far stay recorded when a later batch fails
       writeCache(t.store, cache);
     }
+    t.check();
     resolve(t.store);
   }
 
+  // clear() and a changed account end a run that is under way: it writes nothing more to the graph and sends nothing
   async function once() {
     const t = target();
     if (!t) return { skipped: true };
+    const mine = gen;
+    t.check = () => {
+      const s = account.state();
+      if (mine !== gen || !s.sync || !s.signedIn || s.workspace?.id !== t.ws || s.userId !== t.me) throw new Cancelled();
+    };
     const counts = { published: 0, withdrawn: 0, imported: 0, removed: 0, waiting: 0, skipped: 0, failed: 0 };
     let error = null;
     try {
       const heads = await all(() => t.client.rpc('graph_heads', { workspace_id: t.ws }).order('note_id'), 'graph heads');
       await pull(t, heads, counts);
       await publish(t, heads, counts);
-    } catch (err) { error = err?.message ?? String(err); log('graph sync', error); }
+    } catch (err) {
+      if (err instanceof Cancelled) return { cancelled: true };
+      error = err?.message ?? String(err);
+      log('graph sync', error);
+    }
     last = { ...counts, error, at: new Date(now()).toISOString() };
     if (counts.published || counts.withdrawn || counts.imported || counts.removed) log('graph sync', `published ${counts.published}, withdrew ${counts.withdrawn}, read ${counts.imported}, removed ${counts.removed} team notes`);
     return last;
@@ -312,6 +344,7 @@ export function createGraphSync({ account, graph = () => null, vault = () => nul
 
   // one run at a time; a call during a run, or soon after one, becomes a single trailing run
   function run() {
+    if (pendingClear && graph()?.store) clear();
     if (running) return running;
     const wait = lastAt + minGap - now();
     if (wait > 0) {
@@ -324,9 +357,12 @@ export function createGraphSync({ account, graph = () => null, vault = () => nul
   }
 
   // signed out, sync off, or another workspace: the team's edges leave this graph
+  // A run under way stops before its next write; with no graph open, the clear waits for the graph
   function clear() {
+    gen++;
     const g = graph();
-    if (!g?.store) return 0;
+    if (!g?.store) { pendingClear = true; return 0; }
+    pendingClear = false;
     try {
       const cache = readCache(g.store);
       const n = forgetAll(g.store, cache);

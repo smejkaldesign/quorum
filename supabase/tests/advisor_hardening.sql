@@ -29,13 +29,14 @@ begin
     if not has_function_privilege('authenticated', f, 'execute') then raise exception '% should stay executable by authenticated', f; end if;
   end loop;
 
-  foreach f in array array['public.access_code_needed(text)', 'public.access_code_claim(text, text)', 'public.public_flags()'] loop
+  -- account_gone (0047) tells a signed-out Mac whether the account it last held still exists
+  foreach f in array array['public.access_code_needed(text)', 'public.access_code_claim(text, text)', 'public.public_flags()', 'public.account_gone(uuid)'] loop
     if not has_function_privilege('anon', f, 'execute') then raise exception '% is called before sign-in and must stay executable by anon', f; end if;
   end loop;
 
-  -- no security definer function in public is left executable by anon apart from the three pre-sign-in ones
+  -- no security definer function in public is left executable by anon apart from the four pre-sign-in ones
   if exists (select 1 from pg_proc p where p.pronamespace = 'public'::regnamespace and p.prosecdef
-               and has_function_privilege('anon', p.oid, 'execute') and p.proname not in ('access_code_needed', 'access_code_claim', 'public_flags')) then
+               and has_function_privilege('anon', p.oid, 'execute') and p.proname not in ('access_code_needed', 'access_code_claim', 'public_flags', 'account_gone')) then
     raise exception 'a security definer function other than the pre-sign-in ones is executable by anon';
   end if;
 

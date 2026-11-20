@@ -12,7 +12,7 @@ const home = mkdtempSync(path.join(tmpdir(), 'quorum-gsync-home-'));
 process.env.HOME = home;
 const { createVaultIndex } = await import('../vindex.js');
 const { createMemoryGraph } = await import('../graph/index.js');
-const { createGraphSync, MODEL_PUBLISH_MIN, publishable, safePath, teamId } = await import('../ee/graphSync.js');
+const { createGraphSync, publishable, safePath, teamId } = await import('../ee/graphSync.js');
 
 const sha = (t) => createHash('sha256').update(t).digest('hex');
 const WS = '01GR00000000000000000000WA';
@@ -86,7 +86,8 @@ function fakeServer() {
         const note = noteOf(args.note_id);
         if (!note || note.user_id !== user || !live(note)) return refused('That note is not yours');
         if (args.edges.length && !note.kb_id) return refused('new row violates row-level security policy for table "links"');
-        if (args.edges.some((e) => !publishable(e))) return refused('violates check constraint "links_model_reviewed"');
+        if (args.edges.some((e) => e.provenance === 'model')) return refused('violates check constraint "links_no_model"');
+        if (args.edges.some((e) => e.src.split(':')[0] !== e.src_kind || e.dst.split(':')[0] !== e.dst_kind || e.src.length > 600 || e.dst.length > 600 || (e.src_name ?? '').length > 300 || (e.dst_name ?? '').length > 300)) return refused('violates check constraint "links_graph_shape"');
         links = links.filter((l) => !(l.from_note === note.id && l.user_id === user));
         for (const e of args.edges) links.push({ ...e, user_id: user, workspace_id: WS, from_note: note.id, graph_hash: args.graph_hash, deleted_at: null });
         return { then: (ok) => Promise.resolve({ data: args.edges.length, error: null }).then(ok) };
@@ -233,17 +234,17 @@ describe('Cloud graph sync', () => {
     expect(bob.g.store.node('person:ada-lovelace')).toBeTruthy();
   });
 
-  it('withdraws a note that becomes confidential, and never publishes a model edge no one reviewed', async () => {
+  it('withdraws a note that becomes confidential, and never publishes a model edge however sure', async () => {
     const { server, alice } = await team();
     const kickRow = server.notes.find((x) => x.path === KICK);
     const store = alice.g.store;
-    // the model pass's edges (wave 2): one unsure, one a person approved
-    store.addEdge({ src: `meeting:${KICK}`, dst: 'project:heron', kind: 'about', provenance: 'model', source_rel: KICK, confidence: MODEL_PUBLISH_MIN / 2 });
-    store.addEdge({ src: `meeting:${KICK}`, dst: 'person:ada-lovelace', kind: 'works_on', provenance: 'model', source_rel: KICK, confidence: 0.3, props: { approved: true } });
-    await alice.gs.run();
-    const model = server.links.filter((l) => l.provenance === 'model');
-    expect(model).toHaveLength(1);
-    expect(model[0].props).toEqual({ approved: true });
+    // the model pass's edges (wave 2) stay here at any confidence; what a person approved in Review is a person edge
+    store.addEdge({ src: `meeting:${KICK}`, dst: 'project:heron', kind: 'about', provenance: 'model', source_rel: KICK, confidence: 0.99, props: { by: 'model' } });
+    store.addEdge({ src: `meeting:${KICK}`, dst: 'person:ada-lovelace', kind: 'works_on', provenance: 'person', source_rel: KICK, props: { by: 'review' } });
+    const r0 = await alice.gs.run();
+    expect(r0.failed).toBe(0);
+    expect(server.links.some((l) => l.provenance === 'model')).toBe(false);
+    expect(server.links.filter((l) => l.provenance === 'person').map((l) => l.kind)).toEqual(['works_on']);
     // marked confidential on this Mac: sync stops pushing it, and its edges come back off the server
     alice.edit(KICK, KICKOFF().replace('visibility: public', 'visibility: public\nconfidential: personal'));
     const r = await alice.gs.run();
@@ -319,12 +320,102 @@ describe('Cloud graph sync', () => {
     expect(heads()).toBe(2);
   });
 
+  it('refuses a row whose id does not start with its kind, and never attaches a teammate edge to a local note', async () => {
+    const { server, alice, bob, kick } = await team();
+    await alice.gs.run();
+    const base = server.links.find((l) => l.from_note === kick.id);
+    const forged = (k, patch) => ({ ...base, ...patch, edge_key: k.repeat(64).slice(0, 64), ends: { src: base.ends?.src, dst: patch.ends?.dst } });
+    // a stale or hand-made row the server's check would refuse today: a note of Bob's vault passed off as a person, and a
+    // person passed off as a note
+    server.links.push(forged('a', { kind: 'mentions', dst: 'note:people/Ada Lovelace.md', dst_kind: 'person', dst_name: 'Ada' }));
+    server.links.push(forged('b', { kind: 'mentions', dst: 'person:ada-lovelace', dst_kind: 'note', dst_name: 'Ada', ends: { dst: { rel: 'people/Ada Lovelace.md' } } }));
+    const r = await bob.gs.run();
+    expect(r.error).toBeNull();
+    expect(r.skipped).toBe(2);
+    const local = bob.g.store.edgesOf('note:people/Ada Lovelace.md', { current: false });
+    expect(local.some((e) => e.source_rel.startsWith('team:'))).toBe(false);
+    expect(bob.g.store.node('note:people/Ada Lovelace.md').kind).toBe('note');
+    expect(bob.g.store.node('note:team:people/Ada Lovelace.md')).toBeNull();
+  });
+
+  it('clamps long names and keeps an oversized edge back without holding up the note', async () => {
+    const { server, alice, kick } = await team();
+    const store = alice.g.store;
+    store.upsertNode({ id: 'person:long', kind: 'person', name: 'L'.repeat(400) });
+    store.addEdge({ src: `note:${KICK}`, dst: 'person:long', kind: 'mentions', provenance: 'explicit', source_rel: KICK });
+    store.addEdge({ src: `note:${KICK}`, dst: 'person:ada-lovelace', kind: 'mentions', provenance: 'explicit', source_rel: KICK, props: { blob: 'y'.repeat(7000) } });
+    store.upsertNode({ id: `person:${'z'.repeat(700)}`, kind: 'person', name: 'Z' });
+    store.addEdge({ src: `note:${KICK}`, dst: `person:${'z'.repeat(700)}`, kind: 'mentions', provenance: 'explicit', source_rel: KICK });
+    const r = await alice.gs.run();
+    expect(r.failed).toBe(0);
+    const rows = server.links.filter((l) => l.from_note === kick.id);
+    expect(rows.find((l) => l.dst === 'person:long').dst_name).toHaveLength(300);
+    expect(rows.some((l) => l.props?.blob)).toBe(false);
+    expect(rows.some((l) => l.dst.length > 600)).toBe(false);
+    expect(rows.some((l) => l.kind === 'decision_about')).toBe(true);
+  });
+
+  it('keeps publishing a local fact a teammate\'s newer fact replaced on this Mac only', async () => {
+    const { server, alice, bob } = await team();
+    await alice.gs.run();
+    await bob.gs.run();
+    const bobNote = bob.share('people/Ada Lovelace.md');
+    await bob.gs.run();
+    const head = () => server.links.find((l) => l.from_note === bobNote.id).graph_hash;
+    const before = head();
+    const mine = bob.g.store.edgesFromSource('people/Ada Lovelace.md')[0];
+    const theirs = bob.team()[0];
+    bob.g.store.supersede(mine.id, theirs.id, Date.now());
+    const r = await bob.gs.run();
+    expect(r.published).toBe(0);
+    expect(head()).toBe(before);
+    const row = server.links.find((l) => l.from_note === bobNote.id && l.src === mine.src && l.dst === mine.dst && l.kind === mine.kind);
+    expect(row.valid_to ?? null).toBeNull();
+    expect(row.superseded_by_key ?? null).toBeNull();
+  });
+
+  it('stops a run under way on sign-out or sync off: nothing more is written or sent', async () => {
+    const { server, alice, bob } = await team();
+    await alice.gs.run();
+    const puts = () => server.calls.filter((c) => c.rpc === 'graph_put').length;
+    const p0 = puts();
+    // Bob signs out while his first read is in flight
+    const reading = bob.gs.run();
+    bob.state.signedIn = false;
+    bob.gs.clear();
+    expect(await reading).toEqual({ cancelled: true });
+    expect(bob.team()).toHaveLength(0);
+    expect(JSON.parse(bob.g.store.meta('team_graph')).notes).toEqual({});
+    // Alice turns sync off while a run is in flight with an edit to send
+    alice.edit(REV, REVIEW('Decision: Hosting: Fly\n'));
+    alice.share(REV);
+    const sending = alice.gs.run();
+    alice.state.sync = false;
+    expect(await sending).toEqual({ cancelled: true });
+    expect(puts()).toBe(p0);
+  });
+
+  it('clears the team\'s edges once the graph opens when the clear came while it was closed', async () => {
+    const { alice, bob } = await team();
+    await alice.gs.run();
+    let open = false;
+    const gs = createGraphSync({ account: { state: () => bob.state, client: () => null }, graph: () => (open ? bob.g : null), vault: () => bob.vault, minGap: 0 });
+    await bob.gs.run();
+    expect(bob.team().length).toBeGreaterThan(0);
+    expect(gs.clear()).toBe(0);
+    open = true;
+    bob.state.signedIn = false;
+    expect(await gs.run()).toEqual({ skipped: true });
+    expect(bob.team()).toHaveLength(0);
+  });
+
   it('accepts only vault-relative markdown paths', () => {
     expect(safePath('a/b.md')).toBe('a/b.md');
     for (const p of ['../x.md', '/abs.md', 'a//b.md', 'a/./b.md', 'x.txt', null]) expect(safePath(p)).toBeNull();
     expect(teamId('note:projects/Heron.md')).toBe('note:team:projects/Heron.md');
-    expect(publishable({ provenance: 'model', confidence: 0.79 })).toBe(false);
-    expect(publishable({ provenance: 'model', confidence: 0.8 })).toBe(true);
+    expect(publishable({ provenance: 'model', confidence: 0.99 })).toBe(false);
+    expect(publishable({ provenance: 'model', props: { approved: true } })).toBe(false);
+    expect(publishable({ provenance: 'person' })).toBe(true);
     expect(publishable({ provenance: 'rule', confidence: 0.1 })).toBe(true);
   });
 });
