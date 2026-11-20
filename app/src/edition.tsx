@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from 'react';
 import { POLICY_CHANGED, policyOf, type ConnectorPolicy } from '../connectors/approval';
 import { createReporter } from './connectorReport';
+import { LocalDataZone } from './DeleteData';
 
 // The renderer's edition, fixed at build time by Vite's define (vite.config.ts). Cloud-only UI lives in ee/src and is
 // reached only through the dynamic imports below. Because __QUORUM_EDITION__ is a string literal in the bundle, the
@@ -71,12 +72,13 @@ function CloudPage({ Page, local }: { Page: ReturnType<typeof lazy> | null; loca
   return <Suspense fallback={null}><Page /></Suspense>;
 }
 
-// Settings › Preferences, Danger zone: deleting the hosted account (migration 0039). The Local edition has no hosted
-// account, and a cloud build shows it only once signed in
+// Settings › Preferences, Danger zone: Delete my data in both editions, and in a signed-in cloud build deleting the
+// hosted account too (migrations 0039, 0047). Without a signed-in account the zone holds Delete my data alone
 export function DeleteAccountArea() {
   const hosted = useHostedAccounts();
-  if (!CloudDeleteAccount || !hosted) return null;
-  return <Suspense fallback={null}><CloudDeleteAccount /></Suspense>;
+  if (!CloudDeleteAccount || hosted === false) return <LocalDataZone />;
+  if (hosted === null) return null;
+  return <Suspense fallback={null}><CloudDeleteAccount fallback={<LocalDataZone />} /></Suspense>;
 }
 // Settings › Admin › General: deleting the workspace, for its owner only
 export function DeleteOrgArea() {

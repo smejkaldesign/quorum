@@ -71,6 +71,8 @@ export function registerOnboarding({ ipcMain, settings, saveSettings, inspectBra
     }
     const b = connect(inspectBrain(target));
     settings.brainMade = 'quorum';
+    // every folder Quorum built a brain in stays listed after a disconnect, so Delete my data never removes one (dataReset.js)
+    settings.brainsMade = [...new Set([...(Array.isArray(settings.brainsMade) ? settings.brainsMade : []), path.resolve(target)])];
     saveSettings();
     return { ...b, made: 'quorum' };
   });

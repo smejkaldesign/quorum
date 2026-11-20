@@ -31,7 +31,8 @@ import { httpUrl, relayFetch, relayUrl } from './relayUrl.js';
 import { createErrorReports } from './errorReports.js';
 import { createIssueReports, createLogTail, encodeCapture } from './issueReports.js';
 import { createViews } from './views.js';
-import { registerOnboarding } from './onboarding.js';
+import { defaultVaultDir, registerOnboarding } from './onboarding.js';
+import { KEPT_BY_DEFAULT, checkReset, deleteMyData, forgetKeychain, protectedPaths, resetData } from './dataReset.js';
 import { gateOn, registerBeta } from './beta.js';
 import { registerFlags } from './flags.js';
 import { CALL_ACTIVE, DICTATION_OFF, keepActions, notetakerGates, recordDecision, screenReadsAllowed, sessionGates, startDecision, termsPlan } from './notetaker.js';
@@ -5240,6 +5241,47 @@ ipcMain.handle('connect-brain', async () => {
 ipcMain.handle('reveal-brain', () => { if (settings.brainRoot) shell.openPath(settings.brainRoot); });
 // forgetting the Agent OS leaves every file where it is; Quorum stops reading it, and a meetings folder found inside it is no longer found
 ipcMain.handle('disconnect-brain', () => { Object.assign(settings, { brainRoot: null, vaultPath: null, brainMade: null }); store.settings.save(); log('disconnected Agent OS'); suggester.reset(); openIndex(); brainChanged(); return null; });
+// Delete my data (Settings, Preferences, Danger zone; dataReset.js). Signed in to Cloud, the typed value is the email
+// and the hosted data goes (ee/account.js, migration 0047; the account that runs Quorum keeps its hosted data and only
+// signs out); otherwise it is the phrase. deleteMyData keeps the order: every local refusal and a live recording first,
+// then the hosted delete, then the Keychain items, the helper (waited on until it exits) and the data folder. Every
+// vault folder Quorum knows stays, and Quorum starts again into onboarding. The relaunch skips will-quit, so nothing
+// writes the old settings or state back after the delete.
+const DELETE_PHRASE = 'delete my data';
+const knownVaults = () => protectedPaths({ settings, env: process.env, defaultVault: defaultVaultDir() });
+// asks the helper to quit and resolves once it exited, or after three seconds with the process killed
+const helperGone = () => new Promise((resolve) => {
+  if (!helper || helper.exitCode !== null || helper.signalCode !== null) return resolve();
+  const t = setTimeout(() => { try { helper.kill('SIGKILL'); } catch {} resolve(); }, 3000);
+  helper.once('exit', () => { clearTimeout(t); resolve(); });
+  helperSend({ cmd: 'quit' });
+});
+ipcMain.handle('data-reset-info', () => {
+  const hosted = EDITION === 'cloud' && account.state?.().signedIn === true;
+  return { vault: settings.vaultPath || settings.brainRoot || null, keepsModels: KEPT_BY_DEFAULT.includes('models'), hosted, email: hosted ? account.state().email : null, phrase: DELETE_PHRASE };
+});
+ipcMain.handle('data-delete', async (_e, typed) => {
+  const hosted = EDITION === 'cloud' && account.state?.().signedIn === true;
+  if (!hosted && String(typed ?? '').trim().toLowerCase() !== DELETE_PHRASE) return { error: `Type ${DELETE_PHRASE} to confirm.` };
+  const protect = knownVaults();
+  let keys = [];
+  const r = await deleteMyData({
+    check: () => checkReset({ dataDir: DATA_DIR, home: homedir(), protect }),
+    busy: () => (recordingNow() ? 'Stop the recording first, then delete your data.' : null),
+    hosted: hosted ? () => account.handlers['account-data-delete'](typed) : null,
+    beforeWipe: async () => {
+      try { await session.defaultSession.clearStorageData(); } catch (err) { log('delete my data', 'storage', err?.message ?? err); }
+      keys = await forgetKeychain({ appName: app.getName(), secretsFile: path.join(DATA_DIR, 'secrets.json'), security: (args) => new Promise((resolve) => execFile('/usr/bin/security', args, (err) => resolve(err ? null : ''))) });
+      await helperGone();
+    },
+    wipe: () => resetData({ dataDir: DATA_DIR, home: homedir(), protect }),
+  });
+  if (r.error) return { error: r.error };
+  console.log(`delete my data: ${r.removed.length} removed, ${r.kept.length} kept, ${keys.length} Keychain items`);
+  app.relaunch();
+  app.exit(0);
+  return { ok: true };
+});
 ipcMain.handle('clear-meetings-dir', () => { settings.meetingsDir = null; saveSettings(); brainChanged(); return true; });
 // Settings, Export your notes: the person picks where the zip goes; progress reaches the page as 'export-progress'
 let exporting = false;

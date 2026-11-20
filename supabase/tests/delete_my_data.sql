@@ -1,0 +1,178 @@
+-- Delete my data and the admin app's Reset user (migration 0047): what goes, what stays, who may. A pgTAP file, so
+-- `supabase test db` runs it; plain psql runs it too, inside one transaction that is rolled back:
+--   docker exec -i supabase_db_quorum psql -U postgres -d postgres -v ON_ERROR_STOP=1 -f - < supabase/tests/delete_my_data.sql
+begin;
+create extension if not exists pgtap with schema extensions;
+select plan(51);
+
+-- fixtures. d1 owns Solo alone and is a member of Team, which d2 owns with d3 as a member; d4 runs Quorum; d5 owns
+-- Paying alone, which has a live subscription; d6 owns Crowd, which d3 also belongs to
+create or replace function public.auth_user_gate() returns trigger language plpgsql as $$ begin return new; end $$;
+-- the passkey session is the admin app's header; this file stands in for it
+create or replace function public.platform_passkey_ok() returns boolean language sql as $$ select true $$;
+insert into auth.users (id, email, aud, role) values
+  ('00000000-0000-4000-8000-0000000000d1', 'solo@example.com', 'authenticated', 'authenticated'),
+  ('00000000-0000-4000-8000-0000000000d2', 'teamowner@example.com', 'authenticated', 'authenticated'),
+  ('00000000-0000-4000-8000-0000000000d3', 'teammate@example.com', 'authenticated', 'authenticated'),
+  ('00000000-0000-4000-8000-0000000000d4', 'operator@example.com', 'authenticated', 'authenticated'),
+  ('00000000-0000-4000-8000-0000000000d5', 'payer@example.com', 'authenticated', 'authenticated'),
+  ('00000000-0000-4000-8000-0000000000d6', 'crowd@example.com', 'authenticated', 'authenticated');
+insert into public.platform_owners (user_id) values ('00000000-0000-4000-8000-0000000000d4');
+insert into public.workspaces (id, user_id, name, plan) values
+  ('01DD00000000000000000000WS', '00000000-0000-4000-8000-0000000000d1', 'Solo', 'cloud'),
+  ('01DD00000000000000000000WT', '00000000-0000-4000-8000-0000000000d2', 'Team', 'free'),
+  ('01DD00000000000000000000WP', '00000000-0000-4000-8000-0000000000d5', 'Paying', 'paid'),
+  ('01DD00000000000000000000WC', '00000000-0000-4000-8000-0000000000d6', 'Crowd', 'free');
+update public.workspaces set stripe_subscription_id = 'sub_' || id, billing_status = 'active' where id in ('01DD00000000000000000000WS', '01DD00000000000000000000WP');
+insert into public.members (id, user_id, workspace_id, role) values
+  ('01DD00000000000000000000M1', '00000000-0000-4000-8000-0000000000d1', '01DD00000000000000000000WT', 'member'),
+  ('01DD00000000000000000000M3', '00000000-0000-4000-8000-0000000000d3', '01DD00000000000000000000WT', 'member'),
+  ('01DD00000000000000000000M4', '00000000-0000-4000-8000-0000000000d3', '01DD00000000000000000000WC', 'member')
+  on conflict do nothing;
+-- d1's notes: S1 in Solo; T1 private and T2 shared in Team. d3's own note T3 in Team must stay
+insert into public.notes (id, user_id, workspace_id, path, frontmatter) values
+  ('01DD00000000000000000000S1', '00000000-0000-4000-8000-0000000000d1', '01DD00000000000000000000WS', 'solo.md', '{}'),
+  ('01DD00000000000000000000T1', '00000000-0000-4000-8000-0000000000d1', '01DD00000000000000000000WT', 'private.md', '{}'),
+  ('01DD00000000000000000000T2', '00000000-0000-4000-8000-0000000000d1', '01DD00000000000000000000WT', 'shared.md', '{"visibility": "public"}'),
+  ('01DD00000000000000000000T3', '00000000-0000-4000-8000-0000000000d3', '01DD00000000000000000000WT', 'theirs.md', '{}');
+insert into public.knowledge_bases (id, workspace_id, name) values ('01DD00000000000000000000KS', '01DD00000000000000000000WS', 'Solo handbook');
+insert into public.knowledge_bases (id, workspace_id, name, personal_user_id) values ('01DD00000000000000000000KP', '01DD00000000000000000000WT', 'Mine', '00000000-0000-4000-8000-0000000000d1');
+insert into public.chats (id, user_id, workspace_id) values
+  ('01DD00000000000000000000C1', '00000000-0000-4000-8000-0000000000d1', '01DD00000000000000000000WT'),
+  ('01DD00000000000000000000C3', '00000000-0000-4000-8000-0000000000d3', '01DD00000000000000000000WT');
+insert into public.meetings (id, user_id, workspace_id, title) values
+  ('01DD00000000000000000000E1', '00000000-0000-4000-8000-0000000000d1', '01DD00000000000000000000WT', 'Standup'),
+  ('01DD00000000000000000000E2', '00000000-0000-4000-8000-0000000000d1', '01DD00000000000000000000WS', 'Planning');
+insert into public.attachments (id, user_id, workspace_id, object_path, name, note_id) values
+  ('01DD00000000000000000000A1', '00000000-0000-4000-8000-0000000000d1', '01DD00000000000000000000WT', '01DD00000000000000000000WT/a1/mine.png', 'mine.png', '01DD00000000000000000000T1'),
+  ('01DD00000000000000000000A2', '00000000-0000-4000-8000-0000000000d1', '01DD00000000000000000000WT', '01DD00000000000000000000WT/a2/shared.png', 'shared.png', '01DD00000000000000000000T2');
+-- rows of d1 that teammates read or that hang on their rows: a public meeting on the shared note T2 with its
+-- transcript, an attachment and a link on d3's note T3, and a transcript segment in d3's meeting
+insert into public.meetings (id, user_id, workspace_id, title, visibility, note_id) values
+  ('01DD00000000000000000000E3', '00000000-0000-4000-8000-0000000000d1', '01DD00000000000000000000WT', 'Review', 'public', '01DD00000000000000000000T2'),
+  ('01DD00000000000000000000E4', '00000000-0000-4000-8000-0000000000d3', '01DD00000000000000000000WT', 'Their call', 'private', null);
+insert into public.transcript_segments (id, user_id, workspace_id, meeting_id, channel, t, text) values
+  ('01DD00000000000000000000G1', '00000000-0000-4000-8000-0000000000d1', '01DD00000000000000000000WT', '01DD00000000000000000000E3', 'me', 0, 'shared words'),
+  ('01DD00000000000000000000G2', '00000000-0000-4000-8000-0000000000d1', '01DD00000000000000000000WT', '01DD00000000000000000000E4', 'me', 0, 'words in their call');
+insert into public.attachments (id, user_id, workspace_id, object_path, name, note_id) values
+  ('01DD00000000000000000000A3', '00000000-0000-4000-8000-0000000000d1', '01DD00000000000000000000WT', '01DD00000000000000000000WT/a3/on-theirs.png', 'on-theirs.png', '01DD00000000000000000000T3');
+insert into public.links (id, user_id, workspace_id, from_note, anchor) values
+  ('01DD00000000000000000000Q1', '00000000-0000-4000-8000-0000000000d1', '01DD00000000000000000000WT', '01DD00000000000000000000T3', 'x');
+-- d1's connections, own settings and sessions
+insert into public.kb_sync_grants (id, workspace_id, user_id, provider) values ('01DD00000000000000000000GR', '01DD00000000000000000000WT', '00000000-0000-4000-8000-0000000000d1', 'github');
+insert into public.connect_accounts (user_id, provider, account_id, external_user_id) values ('00000000-0000-4000-8000-0000000000d1', 'zoom', 'acct', 'zu');
+insert into public.settings (id, user_id, workspace_id, scope, data) values
+  ('01DD00000000000000000000X1', '00000000-0000-4000-8000-0000000000d1', '01DD00000000000000000000WT', 'user', '{}'),
+  ('01DD00000000000000000000X2', '00000000-0000-4000-8000-0000000000d2', '01DD00000000000000000000WT', 'workspace', '{}');
+-- grants that hold a token in Vault, so ending one waits for the relay's revoke: d3's in Crowd, and d7's (a member of
+-- Crowd who deletes their own account)
+insert into auth.users (id, email, aud, role) values ('00000000-0000-4000-8000-0000000000d7', 'leaver@example.com', 'authenticated', 'authenticated');
+insert into public.members (id, user_id, workspace_id, role) values ('01DD00000000000000000000M7', '00000000-0000-4000-8000-0000000000d7', '01DD00000000000000000000WC', 'member');
+insert into public.kb_sync_grants (id, workspace_id, user_id, provider, secret_id) values
+  ('01DD00000000000000000000G3', '01DD00000000000000000000WC', '00000000-0000-4000-8000-0000000000d3', 'github', vault.create_secret('token-d3')),
+  ('01DD00000000000000000000G7', '01DD00000000000000000000WC', '00000000-0000-4000-8000-0000000000d7', 'github', vault.create_secret('token-d7'));
+insert into auth.sessions (id, user_id) values ('00000000-0000-4000-8000-00000000a5e1', '00000000-0000-4000-8000-0000000000d1');
+insert into auth.refresh_tokens (token, user_id, session_id) values ('t-d1', '00000000-0000-4000-8000-0000000000d1', '00000000-0000-4000-8000-00000000a5e1');
+
+create function pg_temp.as_user(u uuid) returns void language sql as $$
+  select set_config('request.jwt.claims', json_build_object('sub', u::text, 'role', 'authenticated')::text, true), set_config('role', 'authenticated', true);
+$$;
+create function pg_temp.as_postgres() returns void language sql as $$
+  select set_config('role', 'postgres', true), set_config('request.jwt.claims', '', true);
+$$;
+
+-- 1. who may call what
+select ok(not has_function_privilege('anon', 'public.delete_my_data()', 'execute'), 'anon cannot delete data');
+select ok(not has_function_privilege('anon', 'public.platform_reset_user(uuid, boolean, text)', 'execute'), 'anon cannot reset an account');
+select ok(has_function_privilege('anon', 'public.account_gone(uuid)', 'execute'), 'a signed-out Mac can ask whether its account is gone');
+select ok(not has_function_privilege('authenticated', 'public.account_hand_over(uuid)', 'execute'), 'the helpers stay internal');
+select ok(not public.account_gone('00000000-0000-4000-8000-0000000000d1'), 'an account that exists is not gone');
+
+-- 2. the platform owner is refused
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000d4');
+select throws_ok('select public.delete_my_data()', 'P0001', 'The account that runs Quorum cannot delete its data from the app', 'the platform owner is refused');
+
+-- 3. d1 deletes their data
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000d1');
+select is((public.delete_my_data() ->> 'workspaces')::int, 1, 'one workspace had d1 alone');
+select pg_temp.as_postgres();
+select ok(exists (select 1 from auth.users where id = '00000000-0000-4000-8000-0000000000d1'), 'the account stays');
+select ok(exists (select 1 from public.workspaces where id = '01DD00000000000000000000WS' and plan = 'cloud' and stripe_subscription_id is not null), 'the solo workspace stays with its plan and billing');
+select ok(exists (select 1 from public.members where workspace_id = '01DD00000000000000000000WT' and user_id = '00000000-0000-4000-8000-0000000000d1'), 'the membership in Team stays');
+select ok(not exists (select 1 from public.notes where workspace_id = '01DD00000000000000000000WS'), 'the solo workspace has no notes left');
+select ok(not exists (select 1 from public.knowledge_bases where id = '01DD00000000000000000000KS'), 'the solo workspace knowledge base is gone');
+select ok(not exists (select 1 from public.meetings where user_id = '00000000-0000-4000-8000-0000000000d1'), 'every meeting of d1 is gone');
+select ok(not exists (select 1 from public.chats where user_id = '00000000-0000-4000-8000-0000000000d1'), 'every chat of d1 is gone');
+select ok(not exists (select 1 from public.notes where id = '01DD00000000000000000000T1'), 'the private note is gone');
+select is((select user_id from public.notes where id = '01DD00000000000000000000T2'), '00000000-0000-4000-8000-0000000000d2'::uuid, 'the shared note went to the owner');
+select is((select user_id from public.attachments where id = '01DD00000000000000000000A2'), '00000000-0000-4000-8000-0000000000d2'::uuid, 'its attachment went with it');
+select ok(not exists (select 1 from public.knowledge_bases where id = '01DD00000000000000000000KP'), 'the personal KB is gone');
+select ok(exists (select 1 from public.notes where id = '01DD00000000000000000000T3') and exists (select 1 from public.chats where id = '01DD00000000000000000000C3'), 'another member keeps every row');
+select ok(exists (select 1 from public.kb_files_trash where object_path = '01DD00000000000000000000WT/a1/mine.png' and bucket = 'attachments'), 'the private attachment object is in the trash');
+select ok(not exists (select 1 from public.kb_files_trash where object_path = '01DD00000000000000000000WT/a2/shared.png'), 'the handed-over attachment object is not');
+select is((select user_id from public.meetings where id = '01DD00000000000000000000E3'), '00000000-0000-4000-8000-0000000000d2'::uuid, 'the public meeting on the shared note went to its new owner');
+select is((select user_id from public.transcript_segments where id = '01DD00000000000000000000G1'), '00000000-0000-4000-8000-0000000000d2'::uuid, 'and its transcript with it');
+select is((select user_id from public.transcript_segments where id = '01DD00000000000000000000G2'), '00000000-0000-4000-8000-0000000000d3'::uuid, 'a segment in a teammate''s meeting goes to that teammate');
+select is((select user_id from public.attachments where id = '01DD00000000000000000000A3'), '00000000-0000-4000-8000-0000000000d3'::uuid, 'an attachment on a teammate''s note goes to them');
+select ok(not exists (select 1 from public.kb_files_trash where object_path = '01DD00000000000000000000WT/a3/on-theirs.png'), 'and its object is not trashed');
+select is((select user_id from public.links where id = '01DD00000000000000000000Q1'), '00000000-0000-4000-8000-0000000000d3'::uuid, 'a link on a teammate''s note goes to them');
+select ok(not exists (select 1 from public.kb_sync_grants where user_id = '00000000-0000-4000-8000-0000000000d1' and ended_at is null), 'the sync grants are ended');
+select ok(not exists (select 1 from public.connect_accounts where user_id = '00000000-0000-4000-8000-0000000000d1'), 'the connected accounts are gone');
+select ok(not exists (select 1 from public.settings where id = '01DD00000000000000000000X1') and exists (select 1 from public.settings where id = '01DD00000000000000000000X2'), 'own settings go, workspace settings stay');
+select ok(not exists (select 1 from auth.sessions where user_id = '00000000-0000-4000-8000-0000000000d1') and not exists (select 1 from auth.refresh_tokens where token = 't-d1'), 'every session of the account is ended');
+
+-- 4. Reset user, as the platform owner: refusals name the workspaces
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000d4');
+select is(public.platform_reset_user('00000000-0000-4000-8000-0000000000d2'), jsonb_build_object('ok', false, 'reason', 'shared', 'workspaces', jsonb_build_array('Team')), 'an owner of a shared workspace is refused with its name');
+select is(public.platform_reset_user('00000000-0000-4000-8000-0000000000d5'), jsonb_build_object('ok', false, 'reason', 'billing', 'workspaces', jsonb_build_array('Paying')), 'a paying solo workspace is refused with its name');
+select throws_ok($$select public.platform_reset_user('00000000-0000-4000-8000-0000000000d4')$$, 'P0001', 'The account that runs Quorum cannot be reset', 'the platform owner cannot be reset');
+select throws_ok($$select public.platform_reset_user('00000000-0000-4000-8000-0000000000d3', true, 'gold')$$, 'P0001', 'A code grants the free or the cloud plan', 'an unknown plan is refused');
+
+-- 5. Reset user d3: a member of two workspaces, owner of none; the reinvite issues a cloud code
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000d4');
+select ok((public.platform_reset_user('00000000-0000-4000-8000-0000000000d3', true, 'cloud') -> 'invite' ->> 'code') is not null, 'the reset answers with the new code');
+select pg_temp.as_postgres();
+select ok(public.account_gone('00000000-0000-4000-8000-0000000000d3'), 'the account is gone');
+select ok(exists (select 1 from public.workspaces where id = '01DD00000000000000000000WC'), 'a workspace d3 only belonged to stays');
+select ok(exists (select 1 from public.access_codes where email = 'teammate@example.com' and plan = 'cloud' and revoked_at is null), 'a cloud code waits for the same email');
+select ok(exists (select 1 from public.platform_audit where action = 'reset_user' and detail ->> 'email' = 'teammate@example.com'), 'the reset is in the audit log');
+select ok(exists (select 1 from public.kb_sync_grants g join vault.secrets v on v.id = g.secret_id where g.id = '01DD00000000000000000000G3' and g.revoke_pending and g.ended_at is not null and g.user_id is null),
+  'the reset leaves d3''s grant waiting for the relay to revoke it, with its token still in Vault');
+
+-- 5b. delete_my_account ends the leaver's grants first too
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000d7');
+select is(public.delete_my_account() ->> 'ok', 'true', 'a member deletes their account');
+select pg_temp.as_postgres();
+select ok(exists (select 1 from public.kb_sync_grants g join vault.secrets v on v.id = g.secret_id where g.id = '01DD00000000000000000000G7' and g.revoke_pending and g.user_id is null),
+  'delete_my_account leaves the grant waiting for the relay to revoke it');
+select ok(public.account_gone('00000000-0000-4000-8000-0000000000d7'), 'and the account is gone');
+
+-- 6. Reset user d1: Solo still has its subscription, so it is refused until billing ends; then Solo goes too
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000d4');
+select is(public.platform_reset_user('00000000-0000-4000-8000-0000000000d1') -> 'reason', '"billing"'::jsonb, 'a solo workspace that still pays holds the reset');
+select pg_temp.as_postgres();
+update public.workspaces set billing_status = 'canceled' where id = '01DD00000000000000000000WS';
+insert into public.kb_sync_grants (id, workspace_id, user_id, provider, secret_id) values
+  ('01DD00000000000000000000G1', '01DD00000000000000000000WS', '00000000-0000-4000-8000-0000000000d1', 'google-drive', vault.create_secret('token-d1'));
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000d4');
+select is(public.platform_reset_user('00000000-0000-4000-8000-0000000000d1') -> 'workspaces', jsonb_build_array('Solo'), 'the solo workspace goes with the account');
+select pg_temp.as_postgres();
+select ok(not exists (select 1 from public.workspaces where id = '01DD00000000000000000000WS') and public.account_gone('00000000-0000-4000-8000-0000000000d1'), 'both are gone');
+select ok(exists (select 1 from public.kb_sync_grants g where g.id = '01DD00000000000000000000G1' and g.revoke_pending and g.user_id is null and g.workspace_id is null),
+  'a grant in the deleted solo workspace outlives it, waiting for the revoke');
+
+-- 7. delete_workspace ends the workspace's grants first, so the relay still revokes them
+select pg_temp.as_postgres();
+insert into auth.users (id, email, aud, role) values ('00000000-0000-4000-8000-0000000000d8', 'closer@example.com', 'authenticated', 'authenticated');
+insert into public.workspaces (id, user_id, name) values ('01DD00000000000000000000WG', '00000000-0000-4000-8000-0000000000d8', 'Gone');
+insert into public.kb_sync_grants (id, workspace_id, user_id, provider, secret_id) values
+  ('01DD00000000000000000000G8', '01DD00000000000000000000WG', '00000000-0000-4000-8000-0000000000d8', 'github', vault.create_secret('token-d8'));
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000d8');
+select is(public.delete_workspace('01DD00000000000000000000WG') ->> 'ok', 'true', 'the owner deletes the workspace');
+select pg_temp.as_postgres();
+select ok(not exists (select 1 from public.workspaces where id = '01DD00000000000000000000WG'), 'the workspace is gone');
+select ok(exists (select 1 from public.kb_sync_grants g join vault.secrets v on v.id = g.secret_id where g.id = '01DD00000000000000000000G8' and g.revoke_pending and g.ended_at is not null and g.workspace_id is null and g.user_id = '00000000-0000-4000-8000-0000000000d8'),
+  'its grant outlives it, waiting for the relay to revoke it with the token still in Vault');
+
+select * from finish();
+rollback;
