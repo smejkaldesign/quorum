@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { brainPlace } from './brainPlace';
 import type { AccountState, Brain, MeetingSourceInfo, OnboardingChecks, OnboardingStatus } from './quorum';
 import { ConnectHint } from './ConnectHint';
 import { McpPaths, useMcpOverlap } from './McpPaths';
@@ -178,7 +179,7 @@ function AgentOsStep({ brain, status, onBrain, onBack, onNext, catchup, onCatchu
       {brain ? (
         <div className="onb-choice on">
           <IconCheck width={18} height={18} className="ok" />
-          <div><strong>{brain.name}</strong><em>{brain.vault && brain.vault !== brain.root ? `Agent root ${home(brain.root)} · Notes ${home(brain.vault)}` : home(brain.root)}{guardCount ? ` · ${guardCount} ${guardCount === 1 ? 'guardrail' : 'guardrails'} found, review them in Settings, Guardrails` : ''}</em></div>
+          <div><strong>{brain.name}</strong><em title={brainPlace(brain, home).full}>{brainPlace(brain, home).text}{guardCount ? ` · ${guardCount} ${guardCount === 1 ? 'guardrail' : 'guardrails'} found, review them in Settings, Guardrails` : ''}</em></div>
           <button className="pill" onClick={connect}>Change</button>
         </div>
       ) : (

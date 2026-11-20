@@ -1,11 +1,11 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { FOCUSABLE, trapTarget } from './focusTrap';
 
-export function Row({ icon, title, desc, children, busy }: { icon: ReactNode; title: ReactNode; desc: ReactNode; children?: ReactNode; busy?: boolean }) {
+export function Row({ icon, title, desc, hint, children, busy }: { icon: ReactNode; title: ReactNode; desc: ReactNode; hint?: string; children?: ReactNode; busy?: boolean }) {
   return (
     <div className="set-row" aria-busy={busy || undefined}>
       <span className="set-icon">{icon}</span>
-      <div className="set-text"><strong>{title}</strong><span>{desc}</span></div>
+      <div className="set-text"><strong>{title}</strong><span title={hint}>{desc}</span></div>
       {children && <div className="set-ctrl">{children}</div>}
     </div>
   );
