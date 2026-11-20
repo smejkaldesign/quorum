@@ -10,7 +10,9 @@
 // Prices are API-rate equivalents in US dollars per million tokens, for the models the aliases named when this was
 // written (Claude Haiku 5.5 and Claude Sonnet 5.5). On a Claude Code sign-in the calls count against the plan's usage
 // limits; nothing is billed per token. Update the table when the aliases move to a new model.
-export const MEMORY_MODELS = { claims: 'sonnet', judge: 'sonnet', draft: 'sonnet' };
+// relations: the model pass (memoryModelPass.js), which reads prose for entities, relations and decisions. It runs on
+// the claims model: the same kind of reading, where Sonnet held up and Haiku did not
+export const MEMORY_MODELS = { claims: 'sonnet', judge: 'sonnet', draft: 'sonnet', relations: 'sonnet' };
 // 'json': one JSON object of claims; 'compact': one line per claim (contradictionClaims.js parseCompact)
 export const CLAIM_ANSWER = 'json';
 export const PRICES = {

@@ -77,7 +77,8 @@ export function createMemoryGraph({ dataDir, vault, vindex, log = () => {}, isEx
     const backed = new Set(ex.nodes.filter((n) => n.rel).map((n) => n.id));
     const touched = new Set();
     for (const p of store.nodesByRel(rel)) {
-      if (backed.has(p.id)) continue;
+      // a decision the model pass read from the note is its to keep or drop (memoryModelPass.js)
+      if (backed.has(p.id) || p.props?.by === 'model') continue;
       if (NOTE_IDENTITY.has(p.kind)) for (const t of store.dropNode(p.id)) touched.add(t);
       else { store.unback(p.id); touched.add(p.id); }
     }

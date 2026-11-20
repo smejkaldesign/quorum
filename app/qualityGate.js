@@ -75,6 +75,8 @@ export const PRIORS = {
   'finding:note.unplaced': { p: 0.7, n: 1, source: 'unmeasured' },
   'finding:note.summary-stale': { p: 0.9, n: 1, source: 'unmeasured' },
   'finding:note.instructions': { p: 0.7, n: 1, source: 'unmeasured' },
+  // a connection the model pass read under its bar (rules/modelEdges.js): unmeasured, so it starts under Check these first
+  'finding:note.model-edge': { p: 0.7, n: 1, source: 'unmeasured' },
 };
 const DEFAULT_PRIOR = { p: SHOW_AT, n: 1, source: 'unmeasured' };
 export const priorOf = (kind) => PRIORS[kind] ?? DEFAULT_PRIOR;

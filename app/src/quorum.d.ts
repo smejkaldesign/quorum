@@ -143,7 +143,17 @@ export type MemorySetupReport = {
   freshness: { days: number; confirmed: number | null; basis: 'facts' | 'notes'; contradictions: number; staleSummaries: number };
   outside: { file: string; chars: number; budget: number; over: boolean; dead: string[] }[];
   keeper: { on: boolean; made: boolean } | null;
-  model: { available: boolean };
+  model: { available: boolean; on?: boolean; read?: number; edges?: number; waiting?: number };
+};
+// the model pass (memoryModelPass.js): its estimate from the vault, its state and what it holds in the graph
+export type ModelPassCost = { kind: 'none' | 'free' | 'usd' | 'subscription' | 'provider'; usd: number | null; label: string };
+export type ModelPassEstimate = { notes: number; chars: number; cut: number; small: number; withheld: number; calls: number; inputTokens: number; outputTokens: number; tokens: number; seconds: number; runs: number; cap: number; cost: ModelPassCost };
+export type ModelPassStatus = {
+  on: boolean; cap: number; provider: string | null; running: boolean;
+  phase: 'idle' | 'running' | 'paused' | 'cancelled' | 'capped' | 'done' | 'failed' | 'off' | 'stopped';
+  done: number; total: number; tokens: number; edges: number; proposals: number; error: string | null; startedAt: number | null; endedAt: number | null;
+  counts: { read: number; edges: number; waiting: number; approved: number; declined: number } | null;
+  estimate?: ModelPassEstimate | null;
 };
 export type MemorySetupState = {
   running: boolean;
@@ -732,6 +742,11 @@ declare global {
       memorySetupRun(opts?: { keeper?: boolean }): Promise<MemorySetupStatus | null>;
       // the keeper choice from the setup card; offer: true (finishing onboarding) records it only when none was made
       memorySetupKeeper(opts: { on: boolean; offer?: boolean }): Promise<MemorySetupStatus | null>;
+      memoryModelStatus(): Promise<ModelPassStatus>;
+      memoryModelSet(opts: { on?: boolean; cap?: number }): Promise<ModelPassStatus>;
+      memoryModelRun(): Promise<ModelPassStatus>;
+      memoryModelCancel(): Promise<ModelPassStatus>;
+      onMemoryModel(cb: (s: ModelPassStatus) => void): () => void;
       onMemorySetup(cb: (s: MemorySetupState) => void): Unsub;
       screenContextStatus(): Promise<ScreenContextStatus>;
       screenContextSet(on: boolean): Promise<ScreenContextStatus>;

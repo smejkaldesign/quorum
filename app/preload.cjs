@@ -470,4 +470,10 @@ contextBridge.exposeInMainWorld('quorum', {
   memorySetupRun: (opts) => ipcRenderer.invoke('memory-setup-run', opts),
   memorySetupKeeper: (opts) => ipcRenderer.invoke('memory-setup-keeper', opts),
   onMemorySetup: on('memory-setup'),
+  // the model pass (memoryModelPass.js): its status with the estimate, on and off with its token cap, a run, Cancel
+  memoryModelStatus: () => ipcRenderer.invoke('memory-model-status'),
+  memoryModelSet: (opts) => ipcRenderer.invoke('memory-model-set', opts),
+  memoryModelRun: () => ipcRenderer.invoke('memory-model-run'),
+  memoryModelCancel: () => ipcRenderer.invoke('memory-model-cancel'),
+  onMemoryModel: on('memory-model'),
 });

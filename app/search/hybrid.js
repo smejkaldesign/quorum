@@ -15,6 +15,12 @@ export const WEIGHTS = Object.freeze({ fts: 1, vec: 1, graph: 0, graphNamed: 3, 
 const KIND_WORDS = { meeting: 'meeting', meetings: 'meeting', decision: 'decision', decisions: 'decision', project: 'project', projects: 'project', person: 'person' };
 // edge kinds by how strongly they tie two notes for search
 const EDGE_WEIGHT = { links_to: 1, embeds: 1, attended: 0.9, works_on: 0.9, member_of: 0.7, decided_in: 1, decision_about: 1, about: 0.8, mentions: 0.6, supersedes: 0.8, tagged: 0.2, in_folder: 0 };
+// a connection the model pass read from prose counts for less than one a note states, and by its confidence
+const PROV_WEIGHT = { explicit: 1, person: 1, rule: 1, model: 0.6 };
+const tie = (e) => (EDGE_WEIGHT[e.kind] ?? 0.3) * (PROV_WEIGHT[e.provenance] ?? 1) * (e.provenance === 'model' ? e.confidence ?? 1 : 1);
+// the weakest provenance on a path: a path through a model edge counts as model
+const RANK = { explicit: 3, person: 3, rule: 2, model: 1 };
+const weaker = (a, b) => ((RANK[a] ?? 3) <= (RANK[b] ?? 3) ? a : b);
 const ITEM_OVERHEAD = 12;
 const DAY = 86400000;
 
@@ -112,10 +118,19 @@ export function createHybridSearch({ db, embedder = null, graph = () => null, ve
   // a project) passes half its weight on to the notes around it
   function graphScores(g, text, hitRels) {
     const score = new Map();
+    // rel -> the provenances of the connections that lifted it (explicit, rule, person, model; a path counts as its
+    // weakest edge); a seed's own note counts itself with no connection
+    const via = new Map();
     // each seed adds its strongest tie to a note once, so two notes linked both ways do not count double
     let mine = new Map();
-    const add = (rel, s) => { if (rel && s > (mine.get(rel) ?? 0)) mine.set(rel, s); };
-    const flush = () => { for (const [rel, s] of mine) score.set(rel, (score.get(rel) ?? 0) + s); mine = new Map(); };
+    const add = (rel, s, prov = null) => { if (rel && s > (mine.get(rel)?.s ?? 0)) mine.set(rel, { s, prov }); };
+    const flush = () => {
+      for (const [rel, x] of mine) {
+        score.set(rel, (score.get(rel) ?? 0) + x.s);
+        if (x.prov) (via.get(rel) ?? via.set(rel, new Set()).get(rel)).add(x.prov);
+      }
+      mine = new Map();
+    };
     const seeds = new Map();
     // the query words inside a name the graph knows, which are no kind hint (the "project" in Project Heron)
     const inName = new Set();
@@ -140,20 +155,20 @@ export function createHybridSearch({ db, embedder = null, graph = () => null, ve
     for (const [id, s] of seeds) {
       add(s.rel, s.w);
       for (const e of around(id)) {
-        const ew = EDGE_WEIGHT[e.kind] ?? 0.3;
+        const ew = tie(e);
         if (!ew) continue;
         const nb = other(e, id);
         const r = relOf(nb);
-        if (r) { add(r, s.w * ew); continue; }
+        if (r) { add(r, s.w * ew, e.provenance); continue; }
         for (const e2 of around(nb).slice(0, 200)) {
-          const ew2 = EDGE_WEIGHT[e2.kind] ?? 0.3;
+          const ew2 = tie(e2);
           const r2 = relOf(other(e2, nb));
-          if (ew2 && r2 && r2 !== s.rel) add(r2, s.w * ew * ew2 * 0.5);
+          if (ew2 && r2 && r2 !== s.rel) add(r2, s.w * ew * ew2 * 0.5, weaker(e.provenance, e2.provenance));
         }
       }
       flush();
     }
-    return { score, named, nameWords: new Set([...inName].map((j) => w[j])) };
+    return { score, via, named, nameWords: new Set([...inName].map((j) => w[j])) };
   }
 
   // a note whose facts a newer one replaced: another note supersedes it, or every decision made in it (decided_in)
@@ -205,7 +220,7 @@ export function createHybridSearch({ db, embedder = null, graph = () => null, ve
       for (const id of [...fts, ...vec]) { const r = getChunk(id).rel; if (!best.has(r)) best.set(r, id); }
       const hitRels = [...best.keys()].slice(0, 5);
       const gr = graphScores(g, qs, hitRels);
-      const { score, named } = gr;
+      const { score, via, named } = gr;
       nameWords = gr.nameWords;
       namedNode = named;
       const gs = [...score].sort((a, b) => b[1] - a[1]).slice(0, w.pool);
@@ -217,6 +232,8 @@ export function createHybridSearch({ db, embedder = null, graph = () => null, ve
         const id = best.get(rel) ?? q.firstOf.get(rel)?.id;
         if (id == null || !ok(getChunk(id))) continue;
         put(id, 'graph', rank++, gw);
+        // which kinds of connection lifted it, so an agent can tell a boost from a stated link from one the model read
+        parts.get(id).graphVia = via.has(rel) ? [...via.get(rel)].sort() : null;
       }
     }
     const t = now();
