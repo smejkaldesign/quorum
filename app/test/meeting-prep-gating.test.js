@@ -13,6 +13,10 @@ describe('meeting prep: Generate anyways', () => {
     // a failed try offers it again
     expect(anywayOffered({ status: 'failed', anyway: true, brief: null })).toBe(true);
   });
+  it('never shows with the meeting-prep-anyway flag off', () => {
+    expect(anywayOffered({ status: 'few', anyway: false, brief: null })).toBe(false);
+    expect(prepEmptyText({ status: 'few', anyway: false, min: 3 })).not.toContain(ANYWAY_LABEL);
+  });
   it('never shows at 3 or more past meetings, where the series brief answers without anyway', () => {
     for (const status of ['ready', 'stale', 'no-model', 'failed']) expect(anywayOffered({ status, brief: null })).toBe(false);
     expect(anywayOffered({ status: 'ready', brief: { ...BRIEF, oneOff: undefined } })).toBe(false);

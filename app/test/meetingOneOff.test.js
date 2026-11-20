@@ -153,10 +153,10 @@ describe('createOneOff', () => {
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
   const BRIEF = { prep: '- Ask about the portfolio. (invite)', what: 'An interview.', who: 'Invited: Jane Doe.', how: NOTHING, sources: 'Based on limited history: the invite only.', oneOff: true };
   const T = Date.parse('2026-11-19T12:00:00Z');
-  function setup({ ev = event(), min = 3, build = async () => ({ status: 'ready', brief: BRIEF }), never = () => false, model = true } = {}) {
+  function setup({ ev = event(), on = true, min = 3, build = async () => ({ status: 'ready', brief: BRIEF }), never = () => false, model = true } = {}) {
     file = path.join(dir, `briefs-${++n}.json`);
     const cache = createBriefCache(file);
-    const d = { min: () => min, cache, event: async (id) => (id === ev?.id ? ev : null), isMe: (a) => a.self === true, onNeverList: never, isExcluded: () => false, modelReady: () => model, build: vi.fn(build), links: () => ({}), now: () => T };
+    const d = { on: () => on, min: () => min, cache, event: async (id) => (id === ev?.id ? ev : null), isMe: (a) => a.self === true, onNeverList: never, isExcluded: () => false, modelReady: () => model, build: vi.fn(build), links: () => ({}), now: () => T };
     return { d, cache, run: createOneOff(d) };
   }
   const q = (over = {}) => ({ title: 'Interview: Jane Doe', id: 'e1', ...over });
@@ -169,6 +169,12 @@ describe('createOneOff', () => {
     expect(d.build).not.toHaveBeenCalled();
     // without an event id there is nothing to write it for, so nothing is offered
     expect(await run({ title: 'Interview: Jane Doe' }, [], [])).toMatchObject({ status: 'few', anyway: false });
+  });
+  it('offers nothing and calls no model with the flag off, even on Generate anyways', async () => {
+    const off = setup({ on: false });
+    expect(await off.run(q({ anyway: true, generate: true }), [], [])).toMatchObject({ status: 'few', anyway: false, brief: null });
+    expect(await off.run(q({ anyway: true, generate: true, force: true }), [], [])).toMatchObject({ status: 'few', anyway: false });
+    expect(off.d.build).not.toHaveBeenCalled();
   });
   it('says there is nothing to build from and keeps nothing', async () => {
     const s = setup({ build: async () => ({ status: 'empty' }) });

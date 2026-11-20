@@ -140,7 +140,7 @@ export const KEEP_MS = 7 * 86400000;
 // with the invite (inviteStamp), so a changed title, time, invitee list or description writes it again. Every answer
 // first checks the event against the opt-out lists: an opted-out event shows no brief, and its kept one is deleted.
 // A failed Regenerate keeps showing the last brief, with failed: true.
-// d: { min(), cache, event(id), isMe(a), mentionsOptOut, onNeverList, isExcluded, modelReady(),
+// d: { on(), min(), cache, event(id), isMe(a), mentionsOptOut, onNeverList, isExcluded, modelReady(),
 // build(event, invitees, past) -> oneOffBrief result, links(prep), now(), log(...) }
 export function createOneOff(d) {
   const now = () => (d.now ? d.now() : Date.now());
@@ -148,8 +148,8 @@ export function createOneOff(d) {
   return async function oneOffFor(q, past, list) {
     const min = d.min();
     const id = String(q?.id ?? '');
-    const few = { past: list, brief: null, status: 'few', min, anyway: !!id };
-    if (!id) return few;
+    const few = { past: list, brief: null, status: 'few', min, anyway: !!id && d.on() };
+    if (!few.anyway) return few;
     const key = `event:${id}`;
     d.cache.prune((k, v) => !k.startsWith('event:') || !v.end || new Date(v.end).getTime() > now() - KEEP_MS);
     const e = await d.event(id);

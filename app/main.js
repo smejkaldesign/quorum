@@ -2435,6 +2435,8 @@ function noteMeetingApps(fm, abs) {
 // brief for that event from its invite and the vault (meetingOneOff.js), kept on the event until { force: true }
 const briefCache = createBriefCache(path.join(DATA_DIR, 'meeting-briefs.json'));
 const briefMin = () => (flagsApi?.get('meeting-prep') === true ? prepConf().minPast : SERIES_MIN);
+// Generate anyways has its own flag (on by default), so the platform owner can put it away on every install
+const anywayOn = () => flagsApi?.get('meeting-prep-anyway') === true;
 ipcMain.handle('meeting-brief', async (_e, q) => {
   const title = String(q?.title ?? '');
   if (!title || suggester.isExcluded(title)) return { past: [], related: [], brief: null, status: 'few' };
@@ -2479,6 +2481,7 @@ async function oneOffRels(title, invitees) {
   return [...rels];
 }
 const oneOffFor = createOneOff({
+  on: anywayOn,
   min: briefMin,
   cache: briefCache,
   event: rawEvent,
