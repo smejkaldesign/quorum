@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useState, useSyncExternalStore } from 'react';
 import { CONNECTORS } from '../connectors/library';
+import { isCalendarAddress, whoText } from '../meetingWho.js';
 
 // The meeting apps a calendar event or a note can name, by the connector that carries the logo
 export type Platform = 'zoom' | 'meet' | 'teams';
@@ -64,12 +65,13 @@ export function AppLink({ url, onOpen, name, logo, children }: { url?: string | 
   );
 }
 
-// who was in a meeting, in the row's few words: the calendar's organizer and how many others were invited, else the
-// people the notetaker heard, else Self
-export function peopleText(event: { organizer?: string; count?: number } | null | undefined, people: string[] = []) {
-  if (event?.organizer) return `${event.organizer}${(event.count ?? 0) > 1 ? `, +${(event.count ?? 0) - 1} more` : ''}`;
-  if (!people.length) return 'Self';
-  return `${people[0]}${people.length > 1 ? `, +${people.length - 1} more` : ''}`;
+// who was in a meeting, in the row's few words: the person the calendar event names (meetingWho.js) and how many others
+// were invited, else the people the notetaker heard, else Self. A group or resource calendar's address is never shown
+export function peopleText(event: { organizer?: string; others?: number; count?: number } | null | undefined, people: string[] = []) {
+  const count = event?.count ?? 0;
+  if (event?.organizer && !isCalendarAddress(event.organizer)) return whoText(event.organizer, event.others ?? Math.max(0, count - 1));
+  if (people.length) return whoText(people[0], people.length - 1);
+  return count > 1 ? `${count} people` : 'Self';
 }
 
 // A meeting's details on Home and in Up next: who (opening the calendar event when there is one), the meeting app (its

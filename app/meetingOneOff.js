@@ -1,10 +1,11 @@
-// Generate anyway (issue 191): prep notes and About this meeting for a meeting that has fewer past meetings than the
-// threshold (Settings > Calendar > Meeting prep, minPast), such as an interview or a first call. Pure Node: main.js
+// Generate anyways: prep notes and About this meeting, on request, for a meeting that has fewer past meetings than the
+// threshold (3, or Settings > Calendar > Meeting prep, minPast), such as an interview or a first call. Pure Node: main.js
 // supplies the raw event, the vault snapshot, the meeting index, the notes the memory graph and search found, the
 // opt-out checks and the model call; the tests call it with plain data. The invite is source 0 and what the vault says
 // is gathered by gatherPrep (meetingPrep.js) as numbered sources. The model writes the bullets and the three About
 // lines, and each must cite a source that reached the prompt; anything that cites none is dropped, and an empty part
-// reads "Nothing found." The brief says what it was built from, since there is no series behind it.
+// reads "Nothing found." The brief says it is based on limited history and what it was built from.
+import { SERIES_MIN } from './meetingBrief.js';
 import { asData, displayName, gatherPrep, inviteStamp, inviteesOf, isPrepRel, optedOut, plainText, stripCredentialsInText, wikiLink } from './meetingPrep.js';
 
 export const NOTHING = 'Nothing found.';
@@ -77,14 +78,14 @@ export function parseOneOff(text, ids) {
 }
 
 const counted = (n, one, many) => `${n} ${n === 1 ? one : many}`;
-// "Built from the invite and 4 vault notes. No past meetings in this series."
+// "Based on limited history: the invite, 1 earlier meeting and 2 related notes."
 export function sourcesLine({ notes = 0, related = 0, series = 0 }) {
   const parts = ['the invite'];
-  if (notes) parts.push(counted(notes, 'vault note', 'vault notes'));
+  if (series) parts.push(counted(series, 'earlier meeting', 'earlier meetings'));
   if (related) parts.push(counted(related, 'related meeting', 'related meetings'));
-  if (series) parts.push(counted(series, 'past meeting in this series', 'past meetings in this series'));
-  const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
-  return `Built from ${list}.${series ? '' : ' No past meetings in this series.'}`;
+  if (notes) parts.push(counted(notes, 'related note', 'related notes'));
+  const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : `${parts[0]} only`;
+  return `Based on limited history: ${list}.`;
 }
 
 // The brief in the shape the meeting page shows (meetingBrief.js): prep as markdown bullets with each source linked
@@ -110,7 +111,7 @@ export function renderOneOff({ parsed, gathered, used, invitees, series = [], me
 // One brief, start to finish. event is the raw calendar event; past is the series' own past meetings (fewer than the
 // threshold); notes is the vault snapshot ({ rel, title, text, cut }); meetings is the meeting index ({ rel, title,
 // date, people }); topicRels are the notes the memory graph and search found for the invitees and the title.
-// Returns { status: 'opted-out' | 'failed' | 'ready', brief }
+// Returns { status: 'opted-out' | 'empty' | 'failed' | 'ready', brief }
 // an event with anyone on the never-listen list, or an opt-out customer in its invitees, title or description
 export function oneOffOptedOut(event, invitees, { mentionsOptOut = () => false, onNeverList, isExcluded } = {}) {
   return mentionsOptOut(event?.title) || mentionsOptOut(event?.notes) || optedOut(invitees, { onNeverList, isExcluded }).length > 0;
@@ -123,6 +124,8 @@ export async function oneOffBrief({ event, past = [], notes = [], meetings = [],
   const usable = notes.filter((n) => !n.cut && !isPrepRel(n.rel) && !/^---\n[\s\S]*?^type:\s*meeting-prep\b/m.test(n.text ?? ''))
     .map((n) => ({ rel: n.rel, title: n.title ?? null, text: n.text }));
   const gathered = gatherPrep({ event, invitees, notes: usable, meetings, topicRels, now, maxTopic: 8 });
+  // nothing to build from: no earlier meetings, nobody else invited, no description and nothing in the vault
+  if (!past.length && !invitees.length && !String(event?.notes ?? '').trim() && !gathered.sources.length) return { status: 'empty' };
   const { prompt, used } = oneOffPrompt({ event, invitees, gathered, instructions, owner, about });
   const reply = redact(String(await runModel(redact(prompt), ONE_OFF_SYSTEM) ?? ''));
   const parsed = parseOneOff(reply, used);
@@ -130,11 +133,19 @@ export async function oneOffBrief({ event, past = [], notes = [], meetings = [],
   return { status: 'ready', brief: renderOneOff({ parsed, gathered, used, invitees, series: past.map((m) => m.rel), meetingRels: meetings.map((m) => m.rel) }) };
 }
 
+// The threshold and whether Generate anyways is offered, from the meeting-prep and meeting-prep-anyway flags and
+// Settings > Calendar > Meeting prep (conf). The switch shows only while the meeting-prep flag is on; there, prep switched
+// off keeps the threshold at SERIES_MIN, hides Generate anyways and stops every one-off model call
+export function oneOffGate({ prepFlag = false, anywayFlag = false, conf = { enabled: false, minPast: SERIES_MIN } } = {}) {
+  const prepOn = prepFlag && conf.enabled;
+  return { min: prepOn ? conf.minPast : SERIES_MIN, on: anywayFlag && (!prepFlag || conf.enabled) };
+}
+
 // briefs for events that ended more than this long ago are dropped from the cache
 export const KEEP_MS = 7 * 86400000;
 
-// The meeting page's one-off path in the main process (main.js meeting-brief): the kept brief for an event, written
-// again when its invite changes, and Generate anyway / Regenerate. The cache entry is keyed by the event id and stamped
+// The meeting page's one-off path in the main process (main.js meeting-brief): the kept brief for an event, marked
+// changed when its invite changes, and Generate anyways / Regenerate / Update. Nothing is written until the person asks. The cache entry is keyed by the event id and stamped
 // with the invite (inviteStamp), so a changed title, time, invitee list or description writes it again. Every answer
 // first checks the event against the opt-out lists: an opted-out event shows no brief, and its kept one is deleted.
 // A failed Regenerate keeps showing the last brief, with failed: true.
@@ -145,9 +156,9 @@ export function createOneOff(d) {
   const running = new Map();
   return async function oneOffFor(q, past, list) {
     const min = d.min();
-    const few = { past: list, brief: null, status: 'few', min, anyway: d.on() };
     const id = String(q?.id ?? '');
-    if (!d.on() || !id) return few;
+    const few = { past: list, brief: null, status: 'few', min, anyway: !!id && d.on() };
+    if (!few.anyway) return few;
     const key = `event:${id}`;
     d.cache.prune((k, v) => !k.startsWith('event:') || !v.end || new Date(v.end).getTime() > now() - KEEP_MS);
     const e = await d.event(id);
@@ -158,7 +169,11 @@ export function createOneOff(d) {
     const prior = d.cache.entry(key);
     const shown = (brief, extra = {}) => ({ past: list, brief, status: 'ready', min, anyway: true, links: d.links(brief.prep), ...extra });
     if (prior?.brief && prior.stamp === stamp && !q?.force) return shown(prior.brief);
-    // with the threshold at 0 every meeting gets one without asking; a kept brief whose invite changed is written again
+    // a kept brief whose invite changed shows as out of date and is written again only when the person asks
+    if (prior?.brief && !q?.force && !q?.anyway) return shown(prior.brief, { changed: true });
+    // with no model source the page says so in place of the button, before anyone clicks it
+    if (!prior?.brief && !d.modelReady()) return { ...few, status: 'no-model' };
+    // with the threshold at 0 (Meeting prep switched on) every meeting gets one without asking
     if (!q?.anyway && min > 0 && !prior?.brief) return few;
     // the last brief stays on the page while it is written again, and when that fails
     const held = (status) => (prior?.brief ? shown(prior.brief, { failed: true, status: 'ready' }) : { ...few, status });
@@ -169,6 +184,7 @@ export function createOneOff(d) {
       try {
         const r = await d.build(e, invitees, past);
         if (r.status === 'opted-out') { d.cache.delete(key); return { ...few, status: 'opted-out' }; }
+        if (r.status === 'empty') return held('empty');
         if (r.status !== 'ready') return held('failed');
         d.cache.set(key, stamp, r.brief, { end: e.end ?? e.start ?? null });
         return shown(r.brief);

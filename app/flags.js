@@ -19,6 +19,7 @@ export const DEFAULTS = Object.freeze({
   'guardrails-custom': false,
   'personal-api': false,
   'meeting-prep': false,
+  'meeting-prep-anyway': true,
 });
 // the parent each flag needs, as 0021 seeds it; the relay's answer adds or replaces entries. A flag whose parent is
 // off reads as off, whatever its own switch says

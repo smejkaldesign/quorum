@@ -112,10 +112,10 @@ import { createTreeCache } from './treeCache.js';
 import { open as openAsync, stat as statAsync } from 'node:fs/promises';
 import { titleOf } from './notificationSummary.js';
 import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
-import { BRIEF_SYSTEM, SERIES_MIN, briefPrompt, createBriefCache, parseBrief, relatedOf, seriesKey, seriesOf } from './meetingBrief.js';
+import { BRIEF_SYSTEM, briefPrompt, createBriefCache, parseBrief, relatedOf, seriesKey, seriesOf } from './meetingBrief.js';
 import { prepSettings } from './meetingPrep.js';
 import { createPrepCache, createPrepRunner, prepLinks, prepNoteFor, withPrepLink } from './meetingPrepRun.js';
-import { createOneOff, oneOffBrief } from './meetingOneOff.js';
+import { createOneOff, oneOffBrief, oneOffGate } from './meetingOneOff.js';
 import { collectExport, exportFileName, writeZip } from './exportNotes.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -1857,7 +1857,7 @@ async function matchMeetingApps() {
     const back = Math.max(1, Math.ceil((now - first) / 86400000) + 1);
     const r = await calAsk({ cmd: 'calEvents', days: 14, back });
     if (r.status !== 'granted') return;
-    if (platformCache.merge(matchPlatforms(notes, r.events ?? [], callLink)) > 0) toUI('history-changed');
+    if (platformCache.merge(matchPlatforms(notes, r.events ?? [], callLink, prepIsMe)) > 0) toUI('history-changed');
   } catch (e) { log?.('meeting apps', e?.message); } finally { platformRun.busy = false; }
 }
 
@@ -2431,11 +2431,13 @@ function noteMeetingApps(fm, abs) {
 // The meeting page (MeetingPage.tsx): a recurring meeting's past notes, and its prep notes and description once it
 // has met the threshold (SERIES_MIN, or Settings > Calendar > Meeting prep while the meeting-prep flag is on). The first
 // call answers from what is kept; { generate: true } writes a new brief with the person's own model when the series has
-// gained a note since. Below the threshold, with the flag on, { id, anyway: true, generate: true } writes a one-off
+// gained a note since. Below the threshold, { id, anyway: true, generate: true } (Generate anyways) writes a one-off
 // brief for that event from its invite and the vault (meetingOneOff.js), kept on the event until { force: true }
 const briefCache = createBriefCache(path.join(DATA_DIR, 'meeting-briefs.json'));
-const oneOffOn = () => flagsApi?.get('meeting-prep') === true;
-const briefMin = () => (oneOffOn() ? prepConf().minPast : SERIES_MIN);
+// Generate anyways has its own flag (on by default), so the platform owner can put it away on every install
+const oneOffGateNow = () => oneOffGate({ prepFlag: flagsApi?.get('meeting-prep') === true, anywayFlag: flagsApi?.get('meeting-prep-anyway') === true, conf: prepConf() });
+const briefMin = () => oneOffGateNow().min;
+const anywayOn = () => oneOffGateNow().on;
 ipcMain.handle('meeting-brief', async (_e, q) => {
   const title = String(q?.title ?? '');
   if (!title || suggester.isExcluded(title)) return { past: [], related: [], brief: null, status: 'few' };
@@ -2480,7 +2482,7 @@ async function oneOffRels(title, invitees) {
   return [...rels];
 }
 const oneOffFor = createOneOff({
-  on: oneOffOn,
+  on: anywayOn,
   min: briefMin,
   cache: briefCache,
   event: rawEvent,
@@ -5221,7 +5223,8 @@ ipcMain.handle('calendar', async () => {
     // an event Quorum can do nothing with (no call, or a call on a platform that is off) only shows when asked for
     // Up next lists calls only; everything else is in the list below it
     if (hiddenIds.has(e.id) || !(platform && providerOn(platform))) { hidden += 1; return []; }
-    return [{ id: e.id, title: e.title, start: e.start, end: e.end, item: e.item, link: e.link ?? null, recurring: e.recurring, platform, join, calendar: e.source ?? null, organizer: eventRef(e).organizer, count: eventRef(e).count }];
+    const ref = eventRef(e, prepIsMe);
+    return [{ id: e.id, title: e.title, start: e.start, end: e.end, item: e.item, link: e.link ?? null, recurring: e.recurring, platform, join, calendar: e.source ?? null, organizer: ref.organizer, others: ref.others, count: ref.count }];
   });
   return { connected: true, status, events, days: c.days, showAll: false, hidden };
 });
