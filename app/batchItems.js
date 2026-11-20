@@ -66,7 +66,7 @@ export function batchItems({ items, undo, mark, release, journal, trash, sync = 
 }
 
 // a batch that rolled back whole: an item it had fixed (or was running) is marked rolled back, and one that failed on
-// its own keeps its reason
+// its own keeps its reason. The item running when the batch failed is marked cause: its step is the one that failed
 export function rollBackItems(items) {
-  for (const it of items ?? []) { if (it.status === 'success' || it.status === 'running') it.rolledBack = true; it.status = 'error'; }
+  for (const it of items ?? []) { if (it.status === 'running') it.cause = true; if (it.status === 'success' || it.status === 'running') it.rolledBack = true; it.status = 'error'; }
 }

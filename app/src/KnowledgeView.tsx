@@ -16,7 +16,7 @@ import { reportMemoryNote } from './navHistory';
 import { toast } from './Toasts';
 import type { FixRun } from './quorum';
 import { IssueDrawer, LinkHealth, acceptIssue, dismissIssue, leftOf, migrateLeft, toastWhenFixed, waitFix } from './LinkHealth';
-import { outcomeOf } from './fixToast';
+import { holdsLink, outcomeOf } from './fixToast';
 import { Markdown } from './Markdown';
 import { VaultEditor } from './editor/VaultEditor';
 import { LinkPreview } from './editor/LinkPreview';
@@ -325,13 +325,13 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
       if (approve) {
         setFixShown({ issue: item.issue, at: cursor, total: issueReview.length, run: null });
         setIssueOpen(true);
-        const off = window.quorum.onFixRun((r) => { if (r.key === item.issue.key) setFixShown((f) => (f && f.issue.key === r.key ? { ...f, run: r } : f)); });
+        const off = window.quorum.onFixRun((r) => { if (holdsLink(r, item.issue.key)) setFixShown((f) => (f && holdsLink(r, f.issue.key) ? { ...f, run: r } : f)); });
         const done = waitFix(item.issue.key);
         try {
           flash(await acceptIssue(item.issue));
           toastWhenFixed([{ key: item.issue.key, target: item.issue.target, done }]);
           const run = await done;
-          setFixShown((f) => (f && f.issue.key === run.key ? { ...f, run } : f));
+          setFixShown((f) => (f && holdsLink(run, f.issue.key) ? { ...f, run } : f));
           const out = outcomeOf(run, item.issue.key);
           flash(out.ok ? run.outcome ?? 'Fixed' : out.error ?? 'Could not fix it');
         } catch (e) { done.off(); setFixShown(null); throw e; } finally { off(); }

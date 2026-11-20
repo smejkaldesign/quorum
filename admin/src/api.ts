@@ -3,6 +3,7 @@
 import { createClient, type Session, type SupabaseClient } from '@supabase/supabase-js';
 import { token } from './session';
 import { type ResetOutcome, shapeReset } from './reset';
+import { type ReportCounts, type ReportDetail, type ReportRow, type ReportStatus, shapeReportCounts, shapeReportDetail, shapeReportRow } from './reports';
 import { type ErrorCounts, type ErrorDetail, type ErrorGroup, type ErrorSort, type ErrorStatus, shapeErrorCounts, shapeErrorDetail, shapeErrorGroup } from './errors';
 import { type AccessRequest, type AuditRow, type CodePlan, type Flag, type Install, type Member, type Overview, type PlanDraft, type Usage, type User, type Workspace, periodStart, plain, requestWithCode, shapeAudit, shapeFlag, shapeInstall, shapeMember, shapeOverview, shapeRequest, shapeUser, shapeUsage, shapeWorkspace } from './shape';
 
@@ -91,6 +92,27 @@ export const api = {
   errorGroup: (fingerprint: string): Promise<Result<ErrorDetail>> => rpc('admin_error_group', { fingerprint }, shapeErrorDetail, 'The error group could not be read.'),
   setErrorStatus: (fingerprint: string, draft: { status: ErrorStatus; fixedIn: string | null; note: string | null }): Promise<Result<ErrorGroup>> =>
     rpc('admin_error_set_status', { fingerprint, status: draft.status, fixed_in: draft.fixedIn, note: draft.note }, (d) => shapeErrorGroup((d ?? {}) as Record<string, unknown>), 'The status could not be saved.'),
+  // issue reports people sent from the app (migration 0046): the list a page at a time, the count per status, one report
+  // in full, the owner's triage, and the screenshots as 5-minute links the relay signs after the owner check
+  reports: (status: ReportStatus | null, pageSize = 100, pageOffset = 0): Promise<Result<ReportRow[]>> =>
+    rpc('admin_issue_reports', { status_filter: status, page_size: pageSize, page_offset: pageOffset }, (d) => rows(d).map(shapeReportRow)),
+  reportCounts: (): Promise<Result<ReportCounts>> => rpc('admin_issue_report_counts', undefined, shapeReportCounts),
+  report: (id: string): Promise<Result<ReportDetail>> => rpc('admin_issue_report', { report_id: id }, shapeReportDetail, 'The report could not be read.'),
+  setReportStatus: (id: string, draft: { status: ReportStatus; note: string | null }): Promise<Result<ReportDetail>> =>
+    rpc('admin_issue_report_set_status', { report_id: id, status: draft.status, note: draft.note }, shapeReportDetail, 'The status could not be saved.'),
+  reportShots: async (id: string): Promise<Result<{ path: string; url: string }[]>> => {
+    try {
+      const session = await auth.session();
+      if (!session) return { ok: false, error: 'You are signed out. Sign in again.' };
+      const headers: Record<string, string> = { 'content-type': 'application/json', authorization: `Bearer ${session.access_token}` };
+      const t = token.get();
+      if (t) headers['x-quorum-passkey'] = t;
+      const res = await fetch(`${RELAY_URL}/v1/platform/report-screenshots`, { method: 'POST', headers, body: JSON.stringify({ id }) });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) return { ok: false, error: String(body.error ?? 'The screenshots could not be read.') };
+      return ok((Array.isArray(body.urls) ? body.urls : []).filter((u: { url?: unknown }) => typeof u?.url === 'string'));
+    } catch (err) { return no(err, 'The relay could not be reached.'); }
+  },
   audit: async (limit = 100): Promise<Result<AuditRow[]>> => {
     try {
       const { data, error } = await supabase().from('platform_audit').select('id, actor, action, target_workspace, detail, created_at').order('created_at', { ascending: false }).limit(limit);

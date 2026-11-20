@@ -428,6 +428,8 @@ contextBridge.exposeInMainWorld('quorum', {
   envStatus: () => ipcRenderer.invoke('env-status'),
   envSetProduction: (on) => ipcRenderer.invoke('env-set-production', on),
   reportError: (r) => ipcRenderer.invoke('report-error', r),
+  reportIssuePrepare: (ctx) => ipcRenderer.invoke('report-issue-prepare', ctx),
+  reportIssueSend: (draft) => ipcRenderer.invoke('report-issue-send', draft),
   reloadWindow: () => ipcRenderer.invoke('reload-window'),
   // onboarding (first run): status, create a fresh Agent OS folder, permissions
   onboardingStatus: () => ipcRenderer.invoke('onboarding-status'),

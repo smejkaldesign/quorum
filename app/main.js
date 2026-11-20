@@ -13,7 +13,8 @@ import { SKIP as TREE_SKIP, createFolder, createNote, duplicateItem, moveItem, r
 import { createVaultIndex } from './vindex.js';
 import { createMemoryGraph } from './graph/index.js';
 import { applyUndo, sha, undoRecord } from './fixUndo.js';
-import { changedSince, createFixJournal, createNoteHashes, fixCheck, hashNotes, noteMemo, recoveryReason, rollback } from './fixJournal.js';
+import { changedSince, createFixJournal, createNoteHashes, fixCheck, hashNotes, noteMemo, recoveryReason, rollback, writeCheckedNote } from './fixJournal.js';
+import { cancelError, cancelRuns, endFailed, holdFailed } from './fixFailures.js';
 import { createGateStore, gatePasses, gateTriggers, verdictOf } from './gateRun.js';
 import { addAlias, linkSources, relinkMoved, retargetLinks, rewriteLinks, unlinkTarget, writeAtomic } from './relink.js';
 import store from './store/index.js';
@@ -28,6 +29,7 @@ import { fromActionHandlers, runMemoryTool, withholdAnswer } from './cli/memoryT
 import { CONNECTOR_SERVER } from './cli/connectorTools.mjs';
 import { httpUrl, relayFetch, relayUrl } from './relayUrl.js';
 import { createErrorReports } from './errorReports.js';
+import { createIssueReports, createLogTail, encodeCapture } from './issueReports.js';
 import { createViews } from './views.js';
 import { defaultVaultDir, registerOnboarding } from './onboarding.js';
 import { KEPT_BY_DEFAULT, checkReset, deleteMyData, forgetKeychain, protectedPaths, resetData } from './dataReset.js';
@@ -107,7 +109,8 @@ import { titleOf } from './notificationSummary.js';
 import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
 import { BRIEF_SYSTEM, SERIES_MIN, briefPrompt, createBriefCache, parseBrief, relatedOf, seriesKey, seriesOf } from './meetingBrief.js';
 import { prepSettings } from './meetingPrep.js';
-import { createPrepCache, createPrepRunner } from './meetingPrepRun.js';
+import { createPrepCache, createPrepRunner, prepLinks, prepNoteFor, withPrepLink } from './meetingPrepRun.js';
+import { createOneOff, oneOffBrief } from './meetingOneOff.js';
 import { collectExport, exportFileName, writeZip } from './exportNotes.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -374,13 +377,14 @@ const asset = (name) => path.join(here, 'assets', name);
 // a meeting can have several capture segments (STOP, GO, STOP...); STOP deletes all of them
 const meeting = { armed: false, capturing: false, id: null, dirs: [], dir: null, transcript: [], title: '', participants: 0, people: new Set(), terms: [], startedAt: null, endedAt: null, notes: null, summary: emptyState(), summaryAt: 0, privateNotes: '', invitees: [], saved: null };
 
-const log = (...a) => console.log('[quorum]', ...a);
+// the newest log lines stay in memory too, so Report issue can offer the ones for the action that failed (issueReports.js)
+const logTail = createLogTail();
+const log = (...a) => { console.log('[quorum]', ...a); logTail.push(a); };
 // the handlers AI tools call over the control socket (appActions.js): the same functions the app's buttons call
 const actionHandlers = new Map();
 const handleAction = (name, fn) => { const run = feedNotify(name, fn); actionHandlers.set(name, feedTouched(name, run)); ipcMain.handle(name, run); };
 // a fix an AI tool approved keeps its name, so Memory health and Notifications show who approved it
 // the error a cancelled batch ends with; the window finds it by its ending
-const cancelText = (run) => `${run.cancelBy ?? 'You'} cancelled the batch`;
 const byOf = (actor) => (actor && actor !== 'you' && actor !== 'auto' ? { actor, by: actorLabel(actor) } : {});
 // the notetaker flags (notetaker.js). The gates are worked out once from the resolved flags and kept until the flags
 // change (registerFlags' emit below), so a change from the admin app applies without a restart. Until registerFlags
@@ -2424,9 +2428,13 @@ function noteMeetingApps(fm, abs) {
 }
 
 // The meeting page (MeetingPage.tsx): a recurring meeting's past notes, and its prep notes and description once it
-// has met SERIES_MIN times. The first call answers from what is kept; { generate: true } writes a new brief with the
-// person's own model when the series has gained a note since.
+// has met the threshold (SERIES_MIN, or Settings > Calendar > Meeting prep while the meeting-prep flag is on). The first
+// call answers from what is kept; { generate: true } writes a new brief with the person's own model when the series has
+// gained a note since. Below the threshold, with the flag on, { id, anyway: true, generate: true } writes a one-off
+// brief for that event from its invite and the vault (meetingOneOff.js), kept on the event until { force: true }
 const briefCache = createBriefCache(path.join(DATA_DIR, 'meeting-briefs.json'));
+const oneOffOn = () => flagsApi?.get('meeting-prep') === true;
+const briefMin = () => (oneOffOn() ? prepConf().minPast : SERIES_MIN);
 ipcMain.handle('meeting-brief', async (_e, q) => {
   const title = String(q?.title ?? '');
   if (!title || suggester.isExcluded(title)) return { past: [], related: [], brief: null, status: 'few' };
@@ -2436,11 +2444,10 @@ ipcMain.handle('meeting-brief', async (_e, q) => {
   // meetings connected by the people who come to this one: from its past notes, and its organizer when named
   const org = String(q?.organizer ?? '').trim();
   const related = relatedOf(all, { limit: 15, title, people: [...new Set([...past.slice(0, 6).flatMap((m) => m.people ?? []), ...(org && !org.includes('@') && !isSelf(org) ? [org] : [])])] });
-  const res = await meetingBriefFor(q, title, past, list);
+  const res = past.length < Math.max(1, briefMin()) ? await oneOffFor(q, past, list) : await meetingBriefFor(q, title, past, list);
   return { ...res, related };
 });
 async function meetingBriefFor(q, title, past, list) {
-  if (past.length < SERIES_MIN) return { past: list, brief: null, status: 'few' };
   const key = seriesKey(title), stamp = `${past[0].file}|${past.length}`;
   const kept = briefCache.get(key, stamp);
   if (kept) return { past: list, brief: kept, status: 'ready' };
@@ -2454,6 +2461,49 @@ async function meetingBriefFor(q, title, past, list) {
     return { past: list, brief, status: 'ready' };
   } catch (e) { log('meeting brief', e?.message); return { past: list, brief: null, status: 'failed' }; }
 }
+// the notes the memory graph and memory search find for a one-off meeting: what the graph links to each invitee, then a
+// search on the title. Before the graph is built or the search index is ready, the vault index's own title search
+async function oneOffRels(title, invitees) {
+  const rels = new Set();
+  if (graphReady()) {
+    for (const p of invitees.slice(0, 8)) {
+      try {
+        const r = memoryGraph.entity(p.name || p.email, { budget: 1500 });
+        for (const x of [r?.node, ...(r?.notes ?? []), ...(r?.meetings ?? [])]) if (x?.rel) rels.add(x.rel);
+      } catch (err) { log('meeting brief graph', err?.message); }
+    }
+  }
+  let hits = null;
+  try { hits = await memorySearch.search({ q: title, k: 8, budget: 4000 }); } catch (err) { log('meeting brief search', err?.message); }
+  for (const h of hits?.results?.length ? hits.results : vindex?.search(title, 8) ?? []) if (h?.rel) rels.add(h.rel);
+  return [...rels];
+}
+const oneOffFor = createOneOff({
+  on: oneOffOn,
+  min: briefMin,
+  cache: briefCache,
+  event: rawEvent,
+  isMe: prepIsMe,
+  mentionsOptOut,
+  onNeverList,
+  isExcluded: (t) => suggester.isExcluded(t),
+  modelReady: () => modelSource() !== 'none',
+  build: async (e, invitees, past) => {
+    const b = brain();
+    return oneOffBrief({
+      event: e, past,
+      notes: vindex ? vindex.snapshot().map((n) => ({ rel: n.rel, title: n.note?.title ?? null, text: n.text, cut: n.cut })) : [],
+      meetings: meetingIndex().map((m) => ({ rel: m.rel, title: m.title, date: m.date, people: m.people })),
+      topicRels: vindex ? await oneOffRels(String(e.title ?? ''), invitees) : [],
+      isMe: prepIsMe, mentionsOptOut, onNeverList, isExcluded: (t) => suggester.isExcluded(t), redact: (t) => suggester.redactLines(t),
+      runModel: (prompt, system) => runClaude(prompt, system, settings.model, { role: 'summary' }),
+      instructions: (() => { try { return b?.markers?.agentOS ? readFileSync(path.join(b.root, b.markers.agentOS), 'utf8') : ''; } catch { return ''; } })(),
+      owner: OWNER, about: aboutMe(),
+    });
+  },
+  links: (prep) => (brain()?.vault ? prepLinks(brain().vault, prep) : {}),
+  log,
+});
 
 // Meeting prep (meetingPrep.js, meetingPrepRun.js): the note an upcoming event opens to, built from the vault and
 // written by the person's own model source, saved into the vault next to the daily note. Behind the meeting-prep flag
@@ -2465,6 +2515,7 @@ function prepIsMe(a) {
   const mine = [userCache?.email, gcal.status?.().account].map((x) => String(x ?? '').toLowerCase()).filter(Boolean);
   return a.self === true || (!!a.email && mine.includes(a.email)) || (!!a.name && a.name.toLowerCase() === USER_NAME.toLowerCase());
 }
+const prepCache = createPrepCache(path.join(DATA_DIR, 'meeting-preps.json'));
 const prep = createPrepRunner({
   on: prepOn,
   conf: prepConf,
@@ -2493,10 +2544,19 @@ const prep = createPrepRunner({
   owner: () => OWNER,
   about: aboutMe,
   write: writeAtomic,
-  cache: createPrepCache(path.join(DATA_DIR, 'meeting-preps.json')),
+  cache: prepCache,
   log,
 });
 const prepAhead = () => prep.prepAhead();
+// a meeting note filed from a notes source links back to the prep note Quorum wrote for its event (issue 63), as one
+// frontmatter line Quorum owns. Nothing else in the note changes. In Cloud a meeting note syncs to the workspace and can
+// go to a team knowledge base (ee/meetingsKb.js), so the private prep note is linked only in the Local edition
+function linkPrepNote(text, m) {
+  const vault = brain()?.vault;
+  if (!prepOn() || !vault || account.meetingsKb) return text;
+  const rel = prepNoteFor(prepCache.entries(), { title: m?.title, start: m?.meetingAt ?? m?.date }, (r) => existsSync(path.join(vault, r)));
+  return withPrepLink(text, rel);
+}
 // the raw event (with invitees and invite text) behind an Up next row, by its id
 async function rawEvent(id) {
   const { events } = await calendarEvents(8);
@@ -2941,7 +3001,7 @@ function importWrite(file, prev, next) {
 }
 // a vault with no meetings folder yet gets 08-meetings, the same folder a first recording makes, so a first import
 // from Granola has somewhere to go
-const sourcesApi = registerSources({ ipcMain: connectIpc, settings, saveSettings, toUI, log, meetingsDir: () => meetingsDir() ?? (brain()?.vault ? path.join(brain().vault, '08-meetings') : null), keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), openFresh: openFreshSignIn, afterWrite: (file) => { account.sync.pushMeetingNote(file); keeper.schedule('import'); }, onNoteWrite: importWrite, version: app.getVersion(), agentRuntime: { runtime: RUNTIME, cli: CLI, env: RUNTIME_ENV } });
+const sourcesApi = registerSources({ ipcMain: connectIpc, settings, saveSettings, toUI, log, meetingsDir: () => meetingsDir() ?? (brain()?.vault ? path.join(brain().vault, '08-meetings') : null), keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), openFresh: openFreshSignIn, afterWrite: (file) => { account.sync.pushMeetingNote(file); keeper.schedule('import'); }, onNoteWrite: importWrite, linkNote: linkPrepNote, version: app.getVersion(), agentRuntime: { runtime: RUNTIME, cli: CLI, env: RUNTIME_ENV } });
 // platform accounts for cloud recordings (Zoom first) go through the relay, so they exist in the hosted edition only
 if (EDITION === 'cloud') { const ee = await loadEE('platforms.js'); ee.registerPlatforms({ ipcMain: connectIpc, account, clients: ee.platformClients({ packaged: packagedMeta, dev: !app.isPackaged }), settings, saveSettings, toUI, log, meetingsDir, keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), afterWrite: (file) => account.sync.pushMeetingNote(file) }); }
 ipcMain.handle('vault-graph', () => vindex?.graph() ?? null);
@@ -3148,7 +3208,7 @@ async function decideLink(key, verdict, step = async () => {}, keep = () => {}, 
     await step('Updating the vault index');
     vindex.sync();
     await recheck({ toRel: c.rel });
-    log('memory health', 'added alias', issue.target, 'to', c.rel);
+    log('memory health', 'added alias to', c.rel);
     return `Added “${issue.target}” as an alias of ${c.name ?? c.title}, so ${issue.links} ${issue.links === 1 ? 'link now works' : 'links now work'}`;
   }
   if (issue.action === 'relink' && c) {
@@ -3161,7 +3221,7 @@ async function decideLink(key, verdict, step = async () => {}, keep = () => {}, 
     await step('Updating the vault index');
     vindex.sync();
     await recheck({ toRel: c.rel });
-    log('memory health', 'fixed link', entry.target, '->', c.rel);
+    log('memory health', 'fixed link to', c.rel);
     return `Fixed ${done.links} ${done.links === 1 ? 'link' : 'links'} in ${done.files} ${done.files === 1 ? 'note' : 'notes'}`;
   }
   if (issue.action === 'unlink') {
@@ -3191,12 +3251,13 @@ async function decideLink(key, verdict, step = async () => {}, keep = () => {}, 
   await finder?.refresh();
   const hit = finder?.find(name);
   if (hit) throw new Error(`${hit.kind === 'branch' ? `A note with that name is on the branch ${hit.branch}` : `A ${hit.kind} with that name is at ${hit.where}`}, so Quorum did not write a note`);
-  await step(`Writing ${folder ? `${folder}/` : ''}${name}.md from ${draft?.text ? 'the agent\'s draft' : 'what the linking notes say'}`);
-  guard();
-  const rel = createNote(b.vault, folder, name);
-  keep(rel, true);
-  // a drafted note keeps the frontmatter Quorum writes (the confidential mark of its sources) above the draft's text
-  writeAtomic(path.join(b.vault, rel), `${frontBlock(contextNote(issue))}${draft.text.trim()}\n`);
+  // a drafted note keeps the frontmatter Quorum writes (the confidential mark of its sources) above the draft's text. The
+  // text is checked before the note exists: a link in it that opens nothing fails the fix, which writes nothing
+  await step('Checking the links in the draft');
+  const rel = await writeCheckedNote({
+    vault: b.vault, folder, name, text: `${frontBlock(contextNote(issue))}${draft.text.trim()}\n`, resolve: vindex.resolve, keep,
+    before: async () => { await step(`Writing ${folder ? `${folder}/` : ''}${name}.md from ${draft?.text ? 'the agent\'s draft' : 'what the linking notes say'}`); guard(); },
+  });
   await step('Updating the vault index');
   vindex.sync();
   await recheck({ made: rel });
@@ -3217,7 +3278,7 @@ const fixRunList = () => {
     // a fix still waiting or working when Quorum last quit never finished: it is marked Failed, the notes it wrote go
     // back from its undo record, and its issue is back in review
     const cut = fixRuns.filter((r) => r.status === 'queued' || r.status === 'running');
-    for (const r of cut) Object.assign(r, { status: 'error', error: 'Quorum quit before this fix finished. Approve it again to fix it.', endedAt: r.endedAt ?? Date.now() });
+    for (const r of cut) Object.assign(r, { status: 'error', error: 'Quorum quit before this fix finished. Approve it again to fix it.', interrupted: true, endedAt: r.endedAt ?? Date.now() });
     if (cut.length) setTimeout(() => { recoverRuns(cut).catch((e) => log('fix recover', e?.message)); }, 0);
   }
   return fixRuns;
@@ -3318,7 +3379,7 @@ async function pumpFixes() {
     // a note that still reads as the fix left it, and leaves one the person edited before the next start
     const stamp = () => { const h = hashNotes(run.vault, kept.map((k) => k.rel)); writeUndo(run, kept.map((k) => ({ ...k, after: h[k.rel] }))); };
     const step = async (label) => {
-      if (run.cancel) throw new Error(cancelText(run));
+      if (run.cancel) throw cancelError(run);
       if (work) work.progress((run.items ?? []).filter((i) => i.status === 'success').length, (run.items ?? []).length, label);
       if (kept.length) stamp();
       fixJournal.append(run.id, { step: 'step', label });
@@ -3348,8 +3409,7 @@ async function pumpFixes() {
       run.undoable = saveUndo(run, kept) || (run.kind === 'batch' && !!run.done?.length);
       if (run.kind === 'batch') afterBatch(run, kept);
     } catch (e) {
-      run.status = 'error';
-      run.error = e?.message ?? String(e);
+      endFailed(run, e);
       // a failure the batch could not keep to one item puts every item back: one it had fixed is marked rolled back, one
       // that failed on its own keeps its reason
       if (run.kind === 'batch') rollBackItems(run.items);
@@ -3386,29 +3446,17 @@ async function pumpFixes() {
   fixWorking = false;
 }
 ipcMain.handle('fix-start', (_e, keys) => startFixes(Array.isArray(keys) ? keys : []));
-// Cancel on a bulk Approve: its queued fixes end without running, so their issues stay in Needs review, and the running
-// one stops before its next step, where its rollback puts back every note it changed
+// Cancel on a bulk Approve, or on one fix by its run id (Stop on its row or the Fixing line): queued fixes end without
+// running, so their issues stay in Needs review, and the running one stops before its next step, where its rollback
+// puts back every note it changed
 handleAction('fix-cancel', (_e, batch) => {
   const id = String(batch ?? '');
   if (!id) return 0;
-  let n = 0;
   const by = currentActor() === 'you' ? null : actorLabel(currentActor());
-  for (const r of fixRunList()) {
-    if (r.batch !== id) continue;
-    if (by && (r.status === 'queued' || r.status === 'running')) r.cancelBy = by;
-    if (r.status === 'queued') {
-      const at = fixQueue.indexOf(r);
-      if (at >= 0) fixQueue.splice(at, 1);
-      r.status = 'error';
-      r.error = cancelText(r);
-      r.endedAt = Date.now();
-      for (const it of r.items ?? []) it.status = 'error';
-      batchPlans.delete(r.id);
-      fixJournal.append(r.id, { step: 'ended', status: r.status, error: r.error });
-      fixEmit(r);
-      n++;
-    } else if (r.status === 'running') { r.cancel = true; r.agentAbort?.abort(); n++; }
-  }
+  const n = cancelRuns(fixRunList(), id, {
+    queue: fixQueue, by,
+    ended: (r) => { batchPlans.delete(r.id); fixJournal.append(r.id, { step: 'ended', status: r.status, error: r.error }); fixEmit(r); },
+  });
   if (n) { fixRunsSave(); toUI('memory-updates', null); }
   return n;
 });
@@ -3758,13 +3806,13 @@ async function agentResolve(item, run, step) {
     // a contradiction call that already runs finishes first, so the agent makes one model call at a time. Neither the
     // drafter nor the contradiction agent starts a new call while this batch runs (their busy)
     while (contradictionAbort && !run.cancel) await new Promise((r) => setTimeout(r, 250));
-    if (run.cancel) throw new Error(cancelText(run));
+    if (run.cancel) throw cancelError(run);
     const ctl = new AbortController();
     run.agentAbort = ctl;
     let res;
     try { res = await drafter.onDemand(base, notes, { signal: ctl.signal }); } finally { run.agentAbort = null; }
     gateRuns.fallback(res);
-    if (res.cancelled || run.cancel) throw new Error(cancelText(run));
+    if (res.cancelled || run.cancel) throw cancelError(run);
     if (!res.draft) return res;
     draft = res.draft;
   }
@@ -4454,7 +4502,8 @@ function autoApply() {
   if (fixRunList().some((r) => r.vault === b.vault && (r.status === 'queued' || r.status === 'running'))) return null;
   // the gate's shown items only, and never a kind the live precision guard demoted
   const down = demotions(decisionLog.list(b.vault));
-  const items = gatedItems().filter((i) => i.autoFix && !i.hold && !i.reviewOnly && !i.agent && !i.fallback && i.gate.bucket === 'show' && !down[kindOf(i)]);
+  // an item whose last fix failed or was cancelled waits for the person: it never runs again on its own
+  const items = holdFailed(gatedItems().filter((i) => i.autoFix && !i.hold && !i.reviewOnly && !i.agent && !i.fallback && i.gate.bucket === 'show' && !down[kindOf(i)]), fixRunList().filter((r) => r.vault === b.vault));
   if (!items.length) return null;
   const plan = buildPlan(items);
   if (!plan.ok.length) return null;
@@ -4581,7 +4630,7 @@ ipcMain.handle('vault-add-alias', (_e, rel, alias) => {
   if (!abs || !name || /[\n\r[\]]/.test(name)) throw new Error("Can't add that alias");
   addAlias(abs, name);
   vindex.sync();
-  log('added alias', name, 'to', rel);
+  log('added alias to', rel);
   return true;
 });
 ipcMain.handle('vault-backlinks', (_e, rel) => vindex?.backlinks(String(rel)) ?? []);
@@ -4940,6 +4989,34 @@ const errorReports = createErrorReports({
   send: (body) => relayFetch('/v1/errors', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, { source: relaySource() }),
 });
 ipcMain.handle('report-error', (_e, r) => errorReports.report(r));
+// Report issue (issueReports.js): prepare gathers what a report could carry and captures the window when asked, before the
+// sheet covers it; send posts only what the person kept on the sheet to the relay's /v1/reports, a private inbox
+const issueReports = createIssueReports({
+  installId: () => errorReports.installId(), version: app.getVersion(), edition: EDITION, os: `macOS ${process.getSystemVersion?.() ?? release()} ${process.arch}`, appRoot: here, home: homedir(),
+  tail: logTail, log,
+  // the vault's own names, so log lines that name a note without brackets or .md are masked too
+  names: () => {
+    if (!vindex) return [];
+    const out = new Set();
+    for (const rel of vindex.rels()) {
+      out.add(path.basename(rel, '.md'));
+      const n = vindex.note(rel);
+      for (const a of n?.aliases ?? []) out.add(String(a));
+      if (typeof n?.props?.name === 'string') out.add(n.props.name);
+      for (const t of vindex.unresolved(rel)) { const name = String(t).replace(/\.md$/i, ''); out.add(name); out.add(path.basename(name)); }
+    }
+    return [...out];
+  },
+  session: async () => {
+    const c = EDITION === 'cloud' ? account.client?.() : null;
+    if (!c) return null;
+    const { data } = await c.auth.getSession();
+    return data?.session ? { token: data.session.access_token, email: data.session.user?.email ?? null } : null;
+  },
+  send: (body, headers) => relayFetch('/v1/reports', { method: 'POST', headers, body }, { source: relaySource() }),
+});
+ipcMain.handle('report-issue-prepare', (e, ctx) => issueReports.prepare(ctx ?? {}, { capture: async () => encodeCapture(await e.sender.capturePage()) }));
+ipcMain.handle('report-issue-send', (_e, draft) => issueReports.send(draft ?? {}));
 // Reload Quorum on a crash page: the window's page loads again; recording, sync and the tray keep running
 ipcMain.handle('reload-window', (e) => { e.sender.reloadIgnoringCache(); });
 ipcMain.handle('calendar', async () => {

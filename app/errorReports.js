@@ -25,9 +25,11 @@ export function scrub(text, { home = '', appRoot = '' } = {}) {
   s = s.replace(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g, '<email>');
   s = s.replace(/\b(?:sk|pk|rk|ghp|gho|xox[abp]|eyJ)[\w-]{12,}/g, '<token>');
   s = s.replace(/\b[A-Za-z0-9_-]{32,}\b/g, '<token>');
-  s = s.replace(/(["“'])([^"”'\n]{40,})(["”'])/g, (_m, a, body, b) => `${a}${body.slice(0, 24)}…${b}`);
-  return s;
+  return clipQuoted(s);
 }
+
+// quoted text longer than a few words (which can be a note's own words) cut to its first characters
+export const clipQuoted = (text) => String(text ?? '').replace(/(["“'])([^"”'\n]{40,})(["”'])/g, (_m, a, body, b) => `${a}${body.slice(0, 24)}…${b}`);
 
 // a stack frame's file, line and column: "at fn (file:///…/dist/assets/index-abc.js:1:2345)" or "at file:…:1:2"
 const FRAME = /(?:at\s+(?:(.+?)\s+\()?)?((?:file|https?):\/\/[^\s)]+?):(\d+):(\d+)\)?/;
@@ -92,6 +94,8 @@ export function createErrorReports({ dataDir, version, edition, os, appRoot, hom
   };
   return {
     build,
+    // the anonymous install id issue reports share (issueReports.js), so the relay counts one Mac once across both
+    installId,
     // posts the report; a failure is logged and dropped, so a crash never waits on the network
     report: async (raw) => {
       const body = build(raw);
