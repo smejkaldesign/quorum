@@ -21,6 +21,7 @@ import { MemoryUpdatesCard } from './MemoryUpdates';
 import { MeetingPrepCard } from './MeetingPrepSettings';
 import { MemorySetupCard } from './MemorySetup';
 import { MemoryRulesCard } from './MemoryRules';
+import { MemoryTopicsCard } from './MemoryTopics';
 import { LocalModelsCard } from './LocalModels';
 import {
   IconBell, IconBrain, IconBuilding, IconCalendar, IconChat, IconFolder, IconGrid, IconKeyboard, IconLock,
@@ -213,6 +214,7 @@ export function SettingsView({ open, brain, settings, onSettings, onConnect, onD
             <>
               <SecondBrain part="folder" brain={brain} onConnect={onConnect} onDisconnect={onDisconnect} onBrain={onBrain} onViewConnector={goConnector} />
               {brain && <MemorySetupCard />}
+              {brain && <MemoryTopicsCard settings={settings} onSettings={onSettings} />}
               {brain && <MemoryUpdatesCard settings={settings} onSettings={onSettings} advanced={<><MemoryRulesCard /><LocalModelsCard /></>} />}
             </>
           ) : page === 'members' ? <MembersArea />

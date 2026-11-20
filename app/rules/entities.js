@@ -201,6 +201,8 @@ export function ruleGraph(store) {
     inbound: memo((rel) => uniq(idsOf(rel).flatMap((id) => safe(() => store.edgesOf(id, { dir: 'in', current: true }), [])).filter((e) => !STRUCTURAL.has(e.kind)).map((e) => e.source_rel).filter((r) => r && r !== rel))),
     edgesFrom: (rel) => safe(() => store.edgesBySource(rel), []),
     node: (id) => safe(() => store.node(id), null),
+    // the communities biggest first (graph/topics.js), each with its members strongest first
+    communities: () => safe(() => store.communities(), []).map((c) => ({ ...c, members: safe(() => store.communityMembers(c.id), []) })),
     superseded: (id) => safe(() => store.edgesOf(id, { dir: 'in', kinds: ['supersedes'], current: true }), []).length > 0,
     linked: (a, b, kinds) => {
       const bs = new Set(idsOf(b));

@@ -19,7 +19,8 @@ export function run({ notes, resolve }) {
   const byRel = new Map(notes.map((n) => [n.rel, n]));
   const out = [];
   for (const n of live(notes)) {
-    if (!isSummary(n)) continue;
+    // Quorum's own topic summaries are refreshed by rules/topicSummaries.js
+    if (!isSummary(n) || String(n.note?.props?.quorum ?? '').toLowerCase() === 'generated') continue;
     const sources = [...new Set(sourceNames(n).map((s) => resolve(s, n.rel)).filter((r) => r && r !== n.rel))].sort();
     if (!sources.length) continue;
     const now = sources.map((r) => [r, noteHash(byRel.get(r)?.text ?? '', byRel.get(r)?.chars)]);
