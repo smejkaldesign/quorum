@@ -155,6 +155,14 @@ export function MemoryUpdatesCard({ settings, onSettings, advanced }: { settings
           desc="For fixes the rules cannot decide (a missing note to write, a weak relink or alias, two notes that repeat each other), the agent reads those notes and drafts the fix with quoted lines and a confidence. It runs on your own Claude Code sign-in, reads only the notes Quorum gives it, and changes nothing until you approve. It waits while you record or type. Off by default.">
           <Toggle on={settings.memoryDrafts === true} onChange={(v) => save({ memoryDrafts: v })} />
         </Row>
+        <Row icon={<IconListCheck width={18} height={18} />} title="Suggest notes for people and projects"
+          desc="When several notes mention a person or project with no note, Memory health suggests writing one. Quorum does this on its own when your vault keeps a note per person or project (a people or projects folder, or notes typed person or project), and never when one note lists them. Turn this on for a vault that shows neither. Off by default.">
+          <Toggle on={settings.memoryEntityNotes === true} onChange={(v) => save({ memoryEntityNotes: v })} />
+        </Row>
+        <Row icon={<IconListCheck width={18} height={18} />} title="Suggest moving notes into their folders"
+          desc="When a note typed person, project, meeting or decision sits outside the folder for its kind, Memory health suggests moving it. Quorum does this on its own when your vault keeps most notes of that kind in that folder, and never for a note your instructions or skills name. Turn this on to get the suggestion in any vault. Off by default.">
+          <Toggle on={settings.memoryPlacement === true} onChange={(v) => save({ memoryPlacement: v })} />
+        </Row>
         <Row icon={<IconHighlight width={18} height={18} />} title="Highlight changed text"
           desc="An open note shows the text its updates changed in green, or blue once approved. The highlight button on the note turns it off for that view.">
           <Toggle on={settings.memoryHighlight !== false} onChange={(v) => save({ memoryHighlight: v })} />

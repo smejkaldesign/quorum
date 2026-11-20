@@ -118,3 +118,31 @@ export function CatchupSummary({ onDismissed }: { onDismissed?: () => void }) {
     />
   );
 }
+
+// Memory health: after the vault connects, while Check everything now has never run on it, a small prompt suggests it
+// once. It starts nothing on its own: Check everything now opens the plan, and Not now hides the prompt for good
+export function CatchupNudge() {
+  const st = useCatchupStatus();
+  const est = useCatchupEstimate('memory');
+  const [shown, setShown] = useState<boolean | null>(null);
+  const [drafting, setDrafting] = useState(false);
+  const [planning, setPlanning] = useState(false);
+  useEffect(() => {
+    let live = true;
+    window.quorum.getSettings().then((s) => { if (live) { setShown(s.memoryCatchupNudged !== true); setDrafting(s.memoryDrafts === true); } }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+  if (!shown || !est || !st || st.running || st.last) return null;
+  const done = () => { setShown(false); window.quorum.setSettings({ memoryCatchupNudged: true }).catch(() => {}); };
+  const start = async () => { setPlanning(false); done(); await window.quorum.memoryCatchupStart().catch(() => {}); };
+  return (
+    <div className="cu-nudge" role="status">
+      <p>Check everything now has not run on this vault yet. It reads every note once, so Needs review lists what the daily checks have not reached. {catchupCost(est)}</p>
+      <span className="cu-nudge-actions">
+        <button className="act-pill" onClick={done}>Not now</button>
+        <button className="act-pill primary" onClick={() => setPlanning(true)}>Check everything now</button>
+      </span>
+      {planning && <CatchupPlan est={est} drafting={drafting} onStart={start} onClose={() => setPlanning(false)} />}
+    </div>
+  );
+}

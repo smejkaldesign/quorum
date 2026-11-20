@@ -2700,6 +2700,10 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 .run-banner:not(.live) .run-head + .mh-batch-note, .run-banner:not(.live) .run-head + .mh-batch-bar { margin-top: 10px; }
 .run-banner:not(.live) .mh-batch-note { margin-bottom: 14px; }
 .run-banner:not(.live) > .run-head:last-child { padding-bottom: 14px; }
+/* Check everything now, suggested once while it has never run (Catchup.tsx CatchupNudge) */
+.cu-nudge { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin: 0 0 12px; padding: 12px 14px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--card); }
+.cu-nudge p { flex: 1 1 280px; margin: 0; font-size: 13px; line-height: 1.45; color: var(--text); }
+.cu-nudge-actions { display: inline-flex; gap: 8px; margin-left: auto; }
 /* the last check's card: its summary reads in full white */
 .cu-summary .mh-batch-note { color: var(--text); }
 .run-banner.success .run-icon { background: rgba(var(--ok-rgb), 0.18); }

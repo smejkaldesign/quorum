@@ -11,7 +11,7 @@
 // chars. Every rule keeps a per-note cache of lines, shingles or claims; a 100 MB session log made each cache hold
 // hundreds of megabytes, and a sweep held the old copy and the new copy of the note at once.
 import path from 'node:path';
-import { createResolver } from './linkparse.js';
+import { createResolver, noteAliases } from './linkparse.js';
 import { createContradictionAgent } from './contradictionAgent.js';
 import { createMemorySweep, rescanTags, scanTags } from './memorySweep.js';
 import { analyze as contradictionPass } from './rules/contradictions.js';
@@ -63,7 +63,7 @@ export function createMemoryEngine({ dataDir, ask = async () => { throw new Erro
     log,
   });
 
-  const aliasesOf = (rel) => { const n = notes.get(rel)?.note; if (!n) return []; return typeof n.props?.name === 'string' && n.props.name ? [...(n.aliases ?? []), n.props.name] : (n.aliases ?? []); };
+  const aliasesOf = (rel) => noteAliases(notes.get(rel)?.note);
   const relink = () => { list = [...notes.values()]; resolve = createResolver([...notes.keys()], aliasesOf); };
   const lower = (t) => String(t).toLowerCase();
   // suggest.js isExcluded, on the term list main sends
@@ -116,7 +116,7 @@ export function createMemoryEngine({ dataDir, ask = async () => { throw new Erro
     }
     let g = null;
     if (cond.graphReady === true) { try { g = ruleGraph(graph(vault)); } catch (e) { log('memory engine', 'graph', e?.message); } }
-    const ctx = { notes: list, resolve, tags, folders: cond.folders ?? {}, contradictions: contradictions(), hygiene, graph: g, owner: cond.owner ?? '' };
+    const ctx = { notes: list, resolve, tags, folders: cond.folders ?? {}, contradictions: contradictions(), hygiene, graph: g, owner: cond.owner ?? '', optIn: cond.optIn ?? {}, instructions: cond.instructions ?? [] };
     const s = sweeps.run(vault, kind, ctx, { only });
     return { state: s, tags };
   }

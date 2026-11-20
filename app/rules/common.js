@@ -43,6 +43,18 @@ export const quote = (t) => `“${t}”`;
 export const ENTRY_NAME = /^(index|_index|readme|_readme|claude|agents|log|changelog|home|start|moc)$/i;
 // a note named by its date: a daily note or a session log, reached by date and written as a log
 export const DATED = /\d{4}-\d{2}-\d{2}/;
+// One dated instance of a recurring note: a note named by its date, or a meeting note (a meetings folder, type:
+// meeting, or attendees in its frontmatter). Two instances of one series (the same monthly all-hands on two dates, two
+// 1:1s with the same person) are separate notes: no rule proposes merging one into another or sending it to the Trash,
+// and the merge steps refuse to (memorySetup.js runSetupOp, reviewItems.js findingItem, memoryDraft.js)
+const MEETING_DIR = /(^|\/)(\d+[-_ ]?)?meetings?(\/|$)/i;
+export function meetingInstance(rel, props = {}) {
+  if (DATED.test(baseOf(rel)) || MEETING_DIR.test(dirOf(rel))) return true;
+  const type = String(Array.isArray(props?.type) ? props.type[0] : props?.type ?? '').trim().toLowerCase();
+  if (type === 'meeting' || type === 'meetings') return true;
+  return ['attendees', 'participants'].some((k) => (Array.isArray(props?.[k]) ? props[k].length : String(props?.[k] ?? '').trim()));
+}
+export const isInstance = (n) => !!n && meetingInstance(n.rel, n.note?.props ?? {});
 
 // the frontmatter block as raw lines, without the --- fences, or null when the note has none
 export function frontmatterLines(text) {

@@ -18,6 +18,39 @@ export function walk(dir, rel, isExcluded, out) {
   return out;
 }
 
+// Everything inside the vault a link can open besides an indexed note, for the link resolver (linkparse.js
+// createPathIndex): every folder, every file of another kind, and the notes walk() leaves out (dot folders such as
+// .claude/skills, and excluded paths). A left-out note gives its frontmatter name: as another name, read from its first
+// lines (nameOf(abs)), unless isExcluded keeps its text out. .git, node_modules, .trash and .obsidian hold nothing a
+// link means
+const PATH_SKIP = new Set(['node_modules', '.git', '.trash', '.obsidian']);
+export const PATHS_MAX = 100000;
+// The same walk serves the brain root around a vault in a subfolder: skip leaves the vault out, and all lists every note
+export function walkPaths(vault, isExcluded, nameOf, { max = PATHS_MAX, skip = null, all = false } = {}) {
+  const out = [];
+  const visit = (dir, rel, hidden, depth) => {
+    if (depth > 12 || out.length >= max) return;
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (out.length >= max) return;
+      if (PATH_SKIP.has(e.name)) continue;
+      const r = rel ? `${rel}/${e.name}` : e.name;
+      if (skip && path.join(dir, e.name) === skip) continue;
+      const left = all || hidden || e.name.startsWith('.') || SKIP.has(e.name);
+      if (e.isDirectory()) { out.push({ rel: r, names: [] }); visit(path.join(dir, e.name), r, left, depth + 1); continue; }
+      if (!e.name.endsWith('.md')) { out.push({ rel: r, names: [] }); continue; }
+      const excluded = isExcluded(r);
+      if (!left && !excluded) continue;
+      let slug = null;
+      if (!excluded) { try { slug = nameOf(path.join(dir, e.name)); } catch { slug = null; } }
+      out.push({ rel: r.replace(/\.md$/, ''), names: slug ? [slug] : [] });
+    }
+  };
+  visit(vault, '', false, 0);
+  return out;
+}
+
 export function vaultTree(vault, isExcluded) {
   const build = (dir, rel) => {
     const items = [];

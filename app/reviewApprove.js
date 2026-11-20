@@ -13,7 +13,7 @@
 // sources, or remove it. An unlink leaves nothing to improve.
 //
 // A review rule's finding with no fix of its own (rules/*.js) gets the change its rule allows, or keep:
-//   note.frontmatter  add each missing key, with the value Quorum can tell from the note or an empty one
+//   note.frontmatter  add each missing key Quorum can tell the value of from the note; never an empty one
 //   note.stale        status: archived when the open note is both untouched for 90 days and past its due date (two
 //                     signals); else Mark it current: last_verified set to today, so the rule waits a folder interval
 //   note.orphan       link the note from its folder's index note, when the folder has one
@@ -24,6 +24,7 @@ import path from 'node:path';
 import { sha } from './fixUndo.js';
 import { destOf, readRun, removeAlias } from './fixRecheck.js';
 import { parseNote } from './linkparse.js';
+import { fillable } from './rules/frontmatter.js';
 
 const q = (t) => `“${t}”`;
 const noExt = (t) => String(t ?? '').replace(/\.md$/i, '');
@@ -327,16 +328,10 @@ export function approveFinding(f, { rels = [], title = () => null, skip = () => 
   if (f.ruleId === 'note.frontmatter') {
     const missing = (f.facts ?? []).filter((x) => x.startsWith('missing:')).map((x) => x.slice(8));
     if (!missing.length) return keep('Quorum cannot tell the right values for these keys.');
-    const named = baseOf(f.rel).match(/^(\d{4}-\d{2}-\d{2})/)?.[1] ?? null;
-    const value = (key) => {
-      if (key === 'title' && title(f.rel)) return JSON.stringify(title(f.rel));
-      if ((key === 'date' || key === 'created') && named) return named;
-      return '""';
-    };
-    const ops = missing.map((key) => ({ op: 'setkey', rel: f.rel, key, value: value(key) }));
-    const filled = ops.filter((o) => o.value !== '""').map((o) => `${q(o.key)} (${o.value})`);
-    const empty = ops.filter((o) => o.value === '""').map((o) => q(o.key));
-    return { kind: 'setkey', says: `Add ${[...filled, ...(empty.length ? [`${empty.join(', ')} with an empty value`] : [])].join(' and ')}.`, ops };
+    // a key Quorum cannot fill from the note is never added empty (rules/frontmatter.js fillable)
+    const ops = missing.map((key) => ({ op: 'setkey', rel: f.rel, key, value: fillable(key, f.rel, title(f.rel)) })).filter((o) => o.value != null);
+    if (!ops.length) return keep('Quorum cannot tell the right values for these keys.');
+    return { kind: 'setkey', says: `Add ${ops.map((o) => `${q(o.key)} (${o.value})`).join(' and ')}.`, ops };
   }
   if (f.ruleId === 'note.stale') {
     // archiving takes a note out of what the agent reads, so it needs two signals: no update in 90 days and a due date

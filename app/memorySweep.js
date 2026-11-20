@@ -10,12 +10,15 @@
 import { closeSync, openSync, readFileSync, readSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseFrontmatter } from './linkparse.js';
-import { mergeFindings, runRules } from './rules/index.js';
+import { RULES, mergeFindings, runRules } from './rules/index.js';
 
 export const INCREMENTAL_EVERY = 3.5 * 3600000;
 export const FULL_EVERY = 24 * 3600000;
 export const IDLE_FOR = 10 * 60000;
 const HEAD = 8192;
+const VERSIONS = Object.fromEntries(RULES.map((r) => [r.rule.id, r.rule.version]));
+// a finding a rule of another version raised: the rule changed, so the next check runs it over the whole vault
+export const staleFinding = (f) => f.ruleId in VERSIONS && f.ruleVersion !== VERSIONS[f.ruleId];
 
 // which sweep is due now, or null. idleMs: how long the keyboard and mouse have been still; recording: a meeting is
 // being recorded or listened to
@@ -77,9 +80,10 @@ export function createMemorySweep({ file, now = () => Date.now() }) {
     const s = load()[vault] ?? (load()[vault] = { findings: [], lastFull: 0, lastIncremental: 0 });
     const live = new Set([...ctx.notes.map((n) => n.rel), ...(ctx.tags ?? []).map((t) => t.rel)]);
     const since = s.lastIncremental || s.lastFull || 0;
-    const scope = kind === 'save' ? only : kind === 'incremental' ? ctx.notes.filter((n) => n.mtime > since).map((n) => n.rel) : null;
     // a finding on a note that is gone goes with it
     const prev = s.findings.filter((f) => f.notes.every((rel) => live.has(rel)));
+    // findings a rule raised before it changed are checked again everywhere, so the ones it no longer raises go
+    const scope = prev.some(staleFinding) ? null : kind === 'save' ? only : kind === 'incremental' ? ctx.notes.filter((n) => n.mtime > since).map((n) => n.rel) : null;
     const { findings, ms, whole = [] } = scope && !scope.length ? { findings: [], ms: {} } : runRules(ctx, { only: scope });
     const seen = new Map(prev.map((f) => [f.key, f]));
     const at = now();

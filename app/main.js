@@ -68,7 +68,7 @@ import { createGuardrails } from './guardrails.js';
 import { createPlatformCache, eventRef, matchPlatforms } from './meetingPlatforms.js';
 import { calendarWindow, normalizeDays } from './calendarWindow.js';
 import { ARCHIVE_AFTER, feedPage, feedRows, labelOf, needsReview } from './activityFeed.js';
-import { issueMeta, issueOf } from './memoryHealth.js';
+import { groupByLine, issueMeta, issueOf } from './memoryHealth.js';
 import { LINK_RULE, LINK_RULE_VERSION, contextNote, isGenerated } from './linkRules.js';
 import { createDecisionLog, fingerprint } from './decisionLog.js';
 import { itemUndo } from './batchItemUndo.js';
@@ -76,7 +76,7 @@ import { batchItems, rollBackItems } from './batchItems.js';
 import { FIX_RECHECK_RULE, FIX_RECHECK_VERSION, fixVersions, recheckAll, undoPlan } from './fixRecheck.js';
 import { buildPlan, checkFirst, checkOrder, effects, groupLabel, groupOf, notesOf, planExclude } from './batchPlan.js';
 import { RETRO_TITLE, ROW, findingItem, itemLine, linkItem, pastFixItem } from './reviewItems.js';
-import { SETUP_OPS, approvedEdges, createMemorySetup, endEdges, graphFreshness, nodeIdOf, outsideInstructions, pickItem, recordContradictions, resolveContradiction, runSetupOp, setupReport } from './memorySetup.js';
+import { SETUP_OPS, approvedEdges, createMemorySetup, endEdges, graphFreshness, instructionTexts, nodeIdOf, outsideInstructions, pickItem, recordContradictions, resolveContradiction, runSetupOp, setupReport } from './memorySetup.js';
 import { approveFinding, approvePastFix, gitReader, retroCandidates, withLinkLine } from './reviewApprove.js';
 import { frontBlock, removeFrontmatterKey, withDate } from './frontmatter.js';
 import { createResolver } from './linkparse.js';
@@ -1521,6 +1521,13 @@ ipcMain.handle('set-settings', (_e, next) => {
   if (typeof next.memoryDraftConfidential === 'boolean') { settings.memoryDraftConfidential = next.memoryDraftConfidential; store.settings.save(); }
   // Settings > Memory: how many model calls Check everything now runs at once
   if (Number.isFinite(next.memoryCatchupParallel)) { settings.memoryCatchupParallel = Math.max(1, Math.min(MAX_PARALLEL, Math.round(next.memoryCatchupParallel))); store.settings.save(); }
+  // Settings > Memory: the suggestions the vault's own layout does not show (rules/missingEntity.js, rules/unplaced.js).
+  // A change checks the whole vault again, so the items the rules no longer raise leave Needs review
+  for (const k of ['memoryEntityNotes', 'memoryPlacement']) {
+    if (typeof next[k] === 'boolean' && next[k] !== (settings[k] === true)) { settings[k] = next[k]; store.settings.save(); setTimeout(() => { sweep('full').catch((e) => log('memory sweep', e?.message)); }, 0); }
+  }
+  // Settings > Memory: Check everything now was suggested once after the vault connected (Catchup.tsx CatchupNudge)
+  if (next.memoryCatchupNudged === true) { settings.memoryCatchupNudged = true; store.settings.save(); }
   // Settings > Memory: Let AI tools change memory and knowledge bases (appActions.js), off by default
   if (typeof next.memoryAgentActions === 'boolean') { settings.memoryAgentActions = next.memoryAgentActions; store.settings.save(); }
   if (Number.isFinite(next.memoryDraftCap)) { settings.memoryDraftCap = Math.max(1, Math.min(500, Math.round(next.memoryDraftCap))); store.settings.save(); }
@@ -2918,7 +2925,7 @@ function openIndex() {
   // the guardrails reach search too: a denied folder, a secret-looking file name or a denied frontmatter key never
   // enters the index, and a rule change rebuilds it (the guardrails IPC handlers below)
   vindex = createVaultIndex({
-    vault: b.vault, isExcludedPath: (rel) => excludedPath(rel) || isPrivatePath(rel) || isSecretPath(rel), isDeniedText: isConfidentialText, isExcludedText: suggester.isExcluded, redact: suggester.redactLines,
+    vault: b.vault, root: b.root, isExcludedPath: (rel) => excludedPath(rel) || isPrivatePath(rel) || isSecretPath(rel), isDeniedText: isConfidentialText, isExcludedText: suggester.isExcluded, redact: suggester.redactLines,
     onChange: (rels) => { toUI('vault-changed', rels); if (!built) { built = true; setTimeout(sweepTick, 5000); const kept = savesWaiting.take(b.vault); if (kept.length) sweepOnSave(kept); } else sweepOnSave(rels); }, renamed: () => settings.clusterNames?.[b.vault] ?? {},
     forget: (keys) => { const mine = settings.clusterNames?.[b.vault]; if (!mine) return; for (const k of keys) delete mine[k]; store.settings.save(); }, log: (...a) => log('index', ...a),
     onPaths: treePaths, onMoves: (moves) => { memoryGraph?.moved(moves); relinkMoves(moves); },
@@ -3066,10 +3073,13 @@ function linkIssues() {
   const ign = ignoreList();
   const items = (vindex?.linkHealth() ?? []).filter((m) => !onDisk(m.target) && !(ign.length && ignored(ign, LINK_RULE, { notes: m.sources, target: m.target })));
   const finder = elsewhereFinder();
-  if (!finder || !vindex) return items;
+  if (!finder || !vindex) return groupByLine(items, { left: linksLeft() });
   // a generated report is never the note a link is pointed at, so it is never a folder's index note either
   const rels = vindex.rels().filter((r) => !isGenerated(r, vindex.note(r)?.props));
-  try { return withFound(items, finder, rels); } catch (e) { log('memory health elsewhere', e?.message); return items; }
+  let found = items;
+  try { found = withFound(items, finder, rels); } catch (e) { log('memory health elsewhere', e?.message); }
+  // the dead links one line holds are one issue (memoryHealth.js groupByLine)
+  return groupByLine(found, { left: linksLeft() });
 }
 // a fix that needs a person to read it first (memoryHealth.js reviewOnly): a bulk Approve skips it
 const reviewOnlyKey = (key) => { const m = linkIssues().find((h) => h.target.toLowerCase() === String(key ?? '').toLowerCase()); return !!m && issueOf(withMarks(m)).reviewOnly; };
@@ -3179,6 +3189,23 @@ async function decideLink(key, verdict, step = async () => {}, keep = () => {}, 
   }
   // Dismiss marks it reviewed and changes nothing: the link stays and the issue moves to Dismissed
   if (verdict !== 'approve' || issue.action === 'leave') { if (verdict !== 'approve') logFinding(findingOf(issue), 'archived'); setLinksLeft([issue.key], true); return 'Dismissed. The link stays as it is'; }
+  // a line that links several missing notes (memoryHealth.js groupByLine): each dead link on it goes, its words stay
+  if (entry.group) {
+    const { rel, targets } = entry.group;
+    await step(`Removing the ${targets.length} dead links on line ${entry.group.line + 1} of ${rel}`);
+    if (liveRuns.state().files?.[rel]) throw new Error('Waits until the run writing this note finishes');
+    const moved = hashes ? changedSince(b.vault, hashes) : [];
+    if (moved.length) throw new Error(`“${moved[0]}” changed after Quorum found this issue, so Quorum did not write. Review the issue again`);
+    keep(rel);
+    let links = 0;
+    for (const t of targets) links += unlinkTarget({ vault: b.vault, sources: [rel], target: t }).links;
+    await step('Updating the vault index');
+    vindex.sync();
+    const still = new Set(vindex.missingIn(rel).map((l) => l.target.toLowerCase()));
+    if (targets.some((t) => still.has(t.toLowerCase()))) throw new Error(`Some of the links on line ${entry.group.line + 1} of ${rel} are still there, so the fix did not finish`);
+    log('memory health', 'removed dead links on one line', rel, `${links} links`);
+    return `Removed ${links} dead ${links === 1 ? 'link' : 'links'} and kept the words`;
+  }
   const c = issue.candidate;
   await step(`Reading the ${entry.sources.length === 1 ? 'linking note' : `${entry.sources.length} linking notes`}`);
   const busy = liveRuns.state().files ?? {};
@@ -3936,11 +3963,16 @@ function memoryCond(heavy = false) {
     // memory setup: the rules read the memory graph once it is built (memoryEngine.js)
     graphReady: graphReady(),
     owner: USER_NAME,
+    // Settings > Memory: suggestions the vault's own layout does not show, off by default (rules/missingEntity.js,
+    // rules/unplaced.js)
+    optIn: { entityNotes: settings.memoryEntityNotes === true, placement: settings.memoryPlacement === true },
   };
   if (!heavy || !b) return out;
   let bar = null;
   try { bar = ruleBar(decisionLog.list(b.vault)); } catch {}
-  return { ...out, bar, folders: confFolders(b.vault), terms: suggester.terms() };
+  let instructions = [];
+  try { instructions = instructionTexts({ root: b.root, vault: b.vault }); } catch (e) { log('memory instructions', e?.message); }
+  return { ...out, bar, folders: confFolders(b.vault), terms: suggester.terms(), instructions };
 }
 const memoryEngine = startMemoryEngine({
   fork: forkEngine(utilityProcess, here, DATA_DIR),

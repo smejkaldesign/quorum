@@ -11,6 +11,10 @@
 //   hygiene { litter, git, history } the folder walk, git status and size history of a full sweep (vaultHygiene.js)
 //   owner   the name of the person the vault belongs to (main.js USER_NAME)
 //   graph   the memory graph as the rules read it (rules/entities.js ruleGraph), or null while it is not built
+//   optIn   { entityNotes, placement }: the suggestions a person turned on that the vault's own layout does not show
+//           (Settings > Memory; rules/missingEntity.js, rules/unplaced.js)
+//   instructions  the text of the vault's instruction files outside the index (.claude/skills/*/SKILL.md, CLAUDE.md
+//           at the brain root), lowercased by the rules that read them
 import * as orphans from './orphans.js';
 import * as duplicates from './duplicates.js';
 import * as nearDuplicates from './nearDuplicates.js';

@@ -8,13 +8,15 @@
 // measurement: on a synthetic vault of edited copies and unrelated notes, and read-only on a real vault (see
 // docs/specs/memory-agent.md). Bodies under MIN_SHINGLES are left out, and so are pairs between two folders that share
 // MIRROR_PAIRS or more pairs (a deliberate mirror, such as a staging copy), and pairs of two notes named by their date
-// (a daily log or a recurring report writes much the same text each day).
+// (a daily log or a recurring report writes much the same text each day). A dated meeting note is left out of every
+// pair (common.js meetingInstance): the agent's draft of a merge sends one note to the Trash, and two instances of one
+// series are two notes.
 //
 // The fix: "link these notes" adds a Related line to the first note. When the agent drafts fixes (memoryDraft.js) it
 // drafts a merge instead. Both are review-only.
-import { DATED, bodyOf, dirOf, finding, quote, skipped } from './common.js';
+import { bodyOf, dirOf, finding, isInstance, quote, skipped } from './common.js';
 
-export const rule = { id: 'note.near-duplicate', version: 1, label: 'Notes that repeat each other' };
+export const rule = { id: 'note.near-duplicate', version: 2, label: 'Notes that repeat each other' };
 export const THRESHOLD = 0.5;
 export const MIN_SHINGLES = 40;
 const SHINGLE = 3;
@@ -133,8 +135,8 @@ const base = (rel) => rel.split('/').pop().replace(/\.md$/i, '');
 export const relatedLine = (to) => `Related: [[${to.replace(/\.md$/i, '')}]]`;
 
 export function run({ notes }) {
-  const live = notes.filter((n) => !skipped(n));
-  const pairs = dropMirrors(similarPairs(live).filter((p) => p.sim < 1 && !(DATED.test(p.a) && DATED.test(p.b))));
+  const live = notes.filter((n) => !skipped(n) && !isInstance(n));
+  const pairs = dropMirrors(similarPairs(live).filter((p) => p.sim < 1));
   const byRel = new Map(live.map((n) => [n.rel, n]));
   return pairs.map(({ a, b, sim }) => {
     const ta = byRel.get(a)?.note?.title ?? base(a);

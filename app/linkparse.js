@@ -95,3 +95,41 @@ export function createResolver(rels, aliasesOf) {
     return byAlias.get(t) ?? null;
   };
 }
+
+// every name a note goes by besides its file name: its aliases, and its frontmatter name: (auto-memory notes link to
+// each other by that slug). The vault index, the memory engine and the resolver read the same list
+export function noteAliases(note) {
+  if (!note) return [];
+  const own = note.aliases ?? [];
+  return typeof note.props?.name === 'string' && note.props.name ? [...own, note.props.name] : own;
+}
+
+// What a link can open that is not an indexed note: a folder, a file of another kind, or a note in a folder the index
+// leaves out (.claude/skills/<name>/, a memory note in a dot folder found by its name: slug). entries: [{ rel, names }],
+// rel relative to the vault (a folder without a trailing slash, a note without .md), names the other names it goes by.
+// Matches like createResolver: relative to the linking note, the exact path, a path suffix, then the last part of the
+// path and the names. Answers the rel it found, or null
+export function createPathIndex(entries) {
+  const byPath = new Map();
+  const byName = new Map();
+  for (const { rel, names = [] } of entries) {
+    const key = String(rel).replace(/\/+$/, '').toLowerCase();
+    if (!key) continue;
+    if (!byPath.has(key)) byPath.set(key, rel);
+    const base = path.posix.basename(key);
+    if (!byName.has(base)) byName.set(base, rel);
+    for (const n of names) { const k = String(n).trim().toLowerCase(); if (k && !byName.has(k)) byName.set(k, rel); }
+  }
+  return (target, fromRel = '') => {
+    const t = String(target ?? '').trim().replace(/\/+$/, '').replace(/\.md$/i, '').replace(/^\.\//, '').toLowerCase();
+    if (!t || t.startsWith('../') || t.startsWith('/')) return null;
+    const rel = path.posix.normalize(path.posix.join(path.posix.dirname(fromRel || '.'), t));
+    if (byPath.has(rel)) return byPath.get(rel);
+    if (byPath.has(t)) return byPath.get(t);
+    if (t.includes('/')) {
+      for (const [k, v] of byPath) if (k.endsWith(`/${t}`)) return v;
+      return null;
+    }
+    return byName.get(t) ?? null;
+  };
+}

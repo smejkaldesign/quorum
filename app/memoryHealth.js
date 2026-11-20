@@ -52,6 +52,7 @@ const folderCandidate = (f) => ({ rel: f.rel, title: f.rel.split('/').pop().repl
 
 // the fixes for a missing link, best first (see the order above)
 export function optionsOf(m) {
+  if (m.group) return ['unlink'];
   if (OUTSIDE_RE.test(m.target)) return ['leave'];
   const found = foundOf(m);
   if (found) return found.rel ? ['relink', 'leave'] : ['leave'];
@@ -72,6 +73,58 @@ export function categoryOf(m) {
 }
 const pending = (m) => { const no = new Set(m.declined ?? []); return optionsOf(m).filter((o) => !no.has(o)); };
 
+// One line that links several notes that do not exist (a callout that lists fifteen missing notes) is one issue with
+// one fix, instead of one issue per name. A missing link joins its line's group when every link to it sits on that line
+// and its own fix would be to remove it (no note matches it and nothing says enough to write one); a link with another
+// fix keeps its own issue. left: the keys a person dismissed, which stay on their own. The group goes by LINE_KEY, the
+// note and the line number, and lists its names in group.targets
+export const LINE_KEY = 'line:';
+export const MIN_LINE = 2;
+export function groupByLine(items, { left = new Set() } = {}) {
+  const lines = new Map();
+  for (const m of items) {
+    const at = m.at ?? [];
+    if (m.group || !at.length || left.has(m.target.toLowerCase())) continue;
+    if (!at.every((a) => a.rel === at[0].rel && a.line === at[0].line)) continue;
+    if (optionsOf(m)[0] !== 'unlink') continue;
+    const k = `${at[0].rel}\n${at[0].line}`;
+    (lines.get(k) ?? lines.set(k, []).get(k)).push(m);
+  }
+  const grouped = new Set();
+  const out = [];
+  for (const list of lines.values()) {
+    if (list.length < MIN_LINE) continue;
+    for (const m of list) grouped.add(m);
+    list.sort((a, b) => a.target.localeCompare(b.target, undefined, { sensitivity: 'base' }));
+    const { rel, line } = list[0].at[0];
+    out.push({
+      target: `${LINE_KEY}${rel}#${line + 1}`, group: { rel, line, targets: list.map((m) => m.target) },
+      sources: [rel], count: 1, links: list.reduce((n, m) => n + (m.links ?? 1), 0), lastAt: Math.max(0, ...list.map((m) => m.lastAt ?? 0)) || null,
+      candidates: [], contexts: (list[0].contexts ?? []).slice(0, 1), confidential: list[0].confidential ?? [], at: list.flatMap((m) => m.at),
+    });
+  }
+  return [...items.filter((m) => !grouped.has(m)), ...out];
+}
+// the issue for a group of dead links on one line (groupByLine)
+function lineIssueOf(m) {
+  const { rel, line, targets } = m.group;
+  const action = pending(m)[0] ?? 'leave';
+  const n = targets.length;
+  const names = list(targets.slice(0, 6).map(quote)) + (n > 6 ? ` and ${n - 6} more` : '');
+  const where = `line ${line + 1} of ${quote(rel)}`;
+  const title = `${where[0].toUpperCase()}${where.slice(1)} links to ${n} notes that do not exist`;
+  const recommend = action === 'unlink' ? `Remove the ${n} dead links on that line and keep their words.` : 'Leave the links as they are.';
+  return {
+    key: m.target.toLowerCase(), target: m.target, group: m.group, category: CATEGORY_OF[action], title, fix: recommend,
+    problem: `The links to ${names} open nothing. No note has a close name, and the note says too little about them to write one. The agent follows ${n} links to nothing.`,
+    effect: action === 'unlink' ? `The words stay on the line and the ${n} dead links go. The agent stops following them, and the graph drops the empty nodes.` : 'Nothing in your memory changes. The issue stops showing here.',
+    recommend, solution: action === 'unlink' ? `Quorum removes the ${n} dead links on ${where} and keeps their words.` : 'Nothing changes.',
+    value: action === 'unlink' ? 'The agent stops following them to nothing, and the graph drops the empty nodes.' : 'The issue stops showing here.',
+    decline: 'The links stay as they are, and the issue moves to Left as is.', action, next: null, candidate: null, sources: [rel],
+    reviewOnly: false, found: null, confidential: null, contexts: m.contexts ?? [], createIn: '', path: rel, links: m.links, notes: 1, folder: topFolder([rel]), lastAt: m.lastAt ?? null,
+  };
+}
+
 // the folder most of the links come from, and how many of the linking notes are in it
 export function topFolder(sources) {
   const n = new Map();
@@ -88,6 +141,7 @@ const quote = (t) => `“${t}”`;
 // one missing link as an issue: the title, the problem it causes, what fixing it does, what Approve does (the
 // recommended fix) and what Decline does (the next fix, or leaving it)
 export function issueOf(m) {
+  if (m.group) return lineIssueOf(m);
   const options = pending(m);
   const action = options[0] ?? 'leave';
   const next = options[1] ?? null;
@@ -211,9 +265,12 @@ export function footerFacts(issue, { date = (t) => new Date(t).toLocaleDateStrin
 // links with no issue are left out
 export function fileIssues(lines, items, left = new Set()) {
   const by = new Map(items.map((m) => [m.target.toLowerCase(), m]));
+  // a dead link that is part of a line's group goes to the group's issue
+  for (const m of items) for (const t of m.group?.targets ?? []) by.set(t.toLowerCase(), m);
   return lines
-    .filter((l) => by.has(l.target.toLowerCase()) && !left.has(l.target.toLowerCase()))
+    .filter((l) => by.has(l.target.toLowerCase()) && !left.has(by.get(l.target.toLowerCase()).target.toLowerCase()))
     .sort((a, b) => a.line - b.line)
+    .filter((l, i, all) => { const m = by.get(l.target.toLowerCase()); return !m.group || all.findIndex((x) => by.get(x.target.toLowerCase()) === m) === i; })
     .map((l) => ({ line: l.line, issue: issueOf(by.get(l.target.toLowerCase())) }));
 }
 
@@ -250,7 +307,7 @@ export function healthList(items, { tab = 'open', categories = [], q = '', sort 
     .filter((m) => left.has(m.target.toLowerCase()) === (tab === 'left'))
     .map(issueOf)
     .filter((i) => !cats.size || cats.has(i.category))
-    .filter((i) => { const hay = `${i.target} ${i.title} ${i.sources.join(' ')} ${i.candidate?.name ?? i.candidate?.title ?? ''}`.toLowerCase(); return words.every((w) => hay.includes(w)); })
+    .filter((i) => { const hay = `${i.target} ${i.group?.targets.join(' ') ?? ''} ${i.title} ${i.sources.join(' ')} ${i.candidate?.name ?? i.candidate?.title ?? ''}`.toLowerCase(); return words.every((w) => hay.includes(w)); })
     .sort(BY[sort] ?? BY.links);
 }
 

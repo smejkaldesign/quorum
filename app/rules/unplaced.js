@@ -5,13 +5,22 @@
 // a list of links), a note other root notes link to, or one named for the folder it points into (Projects.md). A confidential note stays too:
 // moving it out of its folder would drop the folder's confidential mark.
 import { DATED, ENTRY_NAME, baseOf, bodyOf, dirOf, finding, plural, quote } from './common.js';
+import { INSTRUCTION_NAME } from './instructions.js';
 import { FOLDER_RE, confidentialSet, kindFolder, live, normName, typeOf } from './entities.js';
 
-export const rule = { id: 'note.unplaced', version: 2, label: 'Notes outside the folder for their kind' };
+export const rule = { id: 'note.unplaced', version: 3, label: 'Notes outside the folder for their kind' };
 // a root note moves only when this share of its links, and at least MIN_LINKS of them, go into one folder
 export const LINK_SHARE = 0.6;
 export const MIN_LINKS = 3;
 export const MOC_LINKS = 10;
+export const CONVENTION = 0.75;
+export const MIN_KIND = 3;
+// whether the instruction texts name a note: its path, or its file name when that is long enough to mean it
+export function namedIn(texts, rel) {
+  const path = rel.replace(/\.md$/i, '').toLowerCase();
+  const file = path.split('/').pop();
+  return texts.some((t) => t.includes(path) || (file.length >= 6 && t.includes(file)));
+}
 const bare = (s) => normName(String(s).replace(/^\d+[-_ ]*/, ''));
 // a note that is mostly a list of links (a roadmap or an index under another name): half or more of its text lines
 // are list items with a link
@@ -22,14 +31,22 @@ const listOfLinks = (text) => {
 };
 
 export function run(ctx) {
-  const { notes, resolve } = ctx;
+  const { notes, resolve, optIn = {}, instructions = [] } = ctx;
   const secret = confidentialSet(ctx);
   const all = live(notes).filter((n) => !secret(n));
+  const texts = [...instructions, ...notes.filter((n) => INSTRUCTION_NAME.test(baseOf(n.rel))).map((n) => n.text)].map((t) => String(t ?? '').toLowerCase());
   // the root notes another root note links to
   const linkedFromRoot = new Set();
   for (const n of all) if (!dirOf(n.rel)) for (const l of n.note?.links ?? []) { const to = resolve(l.target, n.rel); if (to && to !== n.rel && !dirOf(to)) linkedFromRoot.add(to); }
   const rels = new Set(notes.map((n) => n.rel));
   const folders = Object.fromEntries(['person', 'project', 'meeting', 'decision'].map((k) => [k, kindFolder(all, k)]));
+  // the kinds whose folder the vault's own layout shows: most of the notes of that kind sit in it
+  const shown = new Set(Object.keys(folders).filter((k) => {
+    if (!folders[k]) return false;
+    const typed = all.filter((n) => typeOf(n) === k);
+    const inside = typed.filter((n) => FOLDER_RE[k].test(dirOf(n.rel))).length;
+    return inside >= MIN_KIND && inside / typed.length >= CONVENTION;
+  }));
   const out = [];
   const push = (n, to, why, evidence) => {
     if (rels.has(to)) return;
@@ -45,11 +62,12 @@ export function run(ctx) {
   };
   for (const n of all) {
     const name = baseOf(n.rel);
-    if (ENTRY_NAME.test(name)) continue;
+    if (ENTRY_NAME.test(name) || namedIn(texts, n.rel)) continue;
     const kind = typeOf(n);
     if (kind) {
       const home = folders[kind];
       if (!home || FOLDER_RE[kind].test(dirOf(n.rel))) continue;
+      if (!shown.has(kind) && optIn.placement !== true) continue;
       push(n, `${home}/${n.rel.split('/').pop()}`, `Its type is ${kind}, and the vault keeps ${kind} notes in ${home}. The agent and the keeper look for them there.`, [`type: ${kind}`, `Now in ${dirOf(n.rel) || 'the vault root'}`]);
       continue;
     }

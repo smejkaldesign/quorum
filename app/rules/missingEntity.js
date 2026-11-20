@@ -4,11 +4,15 @@
 // frontmatter. A name only confidential notes mention is left out: its note would carry the name out of them.
 // Approve writes the note from the vault's template for its kind, or a short default, with the notes that mention it
 // listed, and links the first mention in each of those notes to it.
+// The rule follows where the vault keeps people and projects (entities.js keptAs): it proposes notes only in a vault
+// that keeps one note each (a people or projects folder, or typed notes), never for a name a listing note or the
+// vault's instruction files already name, and in a vault with no sign of either only when the person turned on
+// Suggest notes for people and projects (ctx.optIn.entityNotes).
 import { baseOf, finding, plural, quote } from './common.js';
-import { cleanName, confidentialSet, entityKinds, folderKind, frontmatterNames, isName, kindFolder, kindOf, live, namesOf, normName } from './entities.js';
+import { cleanName, confidentialSet, entityKinds, folderKind, frontmatterNames, isName, keptAs, kindFolder, kindOf, live, namesOf, normName } from './entities.js';
 import { matchesOf } from './entityAliases.js';
 
-export const rule = { id: 'note.missing-entity', version: 2, label: 'People and projects with no note' };
+export const rule = { id: 'note.missing-entity', version: 3, label: 'People and projects with no note' };
 export const MIN_MENTIONS = 3;
 // the notes a fix links the name from, at most
 export const MAX_LINKED = 20;
@@ -34,8 +38,11 @@ export function entityText({ name, kind, file, sources, template = null, now = D
 }
 
 export function run(ctx) {
-  const { notes, resolve, graph = null, now = Date.now(), owner = '' } = ctx;
+  const { notes, resolve, graph = null, now = Date.now(), owner = '', optIn = {} } = ctx;
   const all = live(notes);
+  const kept = { person: keptAs(notes, 'person'), project: keptAs(notes, 'project') };
+  // a vault that keeps people in a list gets no person notes; one with no sign of either only when the person asked
+  const wants = (kind) => kept[kind].mode === 'notes' || (kept[kind].mode === null && optIn.entityNotes === true);
   const secret = confidentialSet(ctx);
   const byRel = new Map(notes.map((n) => [n.rel, n]));
   // every name a note goes by, so a mention that matches a note under another spelling is no gap
@@ -60,6 +67,7 @@ export function run(ctx) {
   const entities = all.filter((n) => entityOf(n));
   const out = [];
   for (const { name, kind, rels } of found.values()) {
+    if (!wants(kind) || kept[kind].listed(name)) continue;
     if (matchesOf(entities, name, kind, { kindOf: entityOf, names: namesOf }).length) continue;
     const open = [...rels].filter((r) => byRel.has(r) && !secret(byRel.get(r))).sort();
     if (open.length < MIN_MENTIONS) continue;

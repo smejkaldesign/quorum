@@ -18,7 +18,7 @@ export { toastWhenFixed, waitFix };
 import { Segmented } from './controls';
 import { BulkPlan } from './BulkPlan';
 import { AgentActivityBanner, WorkBanner } from './WorkBanner';
-import { CatchupSummary } from './Catchup';
+import { CatchupNudge, CatchupSummary } from './Catchup';
 import { NO_SELECTION, bulkView, dropAcross, selectedIds, toggleAcross, toggleOne, togglePage, type BulkSel } from './bulkSelect';
 
 // Memory health: links that point at a note that does not exist, one row per missing note, in the same list pattern
@@ -396,6 +396,8 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
       )}
       {/* long agent work on the memory (the first check, a full sweep, a batch, drafting), the same banner as on Home */}
       <AgentActivityBanner hide={(a) => a.kind === 'batch' && batchLive} />
+      {/* Check everything now, suggested once while it has never run on this vault */}
+      <CatchupNudge />
       {/* the last Check everything now pass: when it ran, what it checked and what it added to Needs review */}
       <CatchupSummary onDismissed={() => headRef.current?.focus()} />
       {bulkShown && <BatchBanner runs={bulkList} error={bulkOne?.status === 'error' ? bulkOne.error : null} onCancel={() => window.quorum.fixCancel(lastBatch!)} onDismiss={() => { setHiddenBatch(lastBatch!); try { localStorage.setItem('quorum.hiddenBatch', lastBatch!); } catch { /* the banner just shows again next time */ } }} />}

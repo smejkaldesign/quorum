@@ -174,8 +174,8 @@ export function planExclude(items, exclude = [], include = []) {
 // how much an item adds to its group's count: links for a relink or unlink, one note otherwise
 const countOf = (item, group) => {
   if (group !== 'relink' && group !== 'unlink') return 1;
-  const o = item.ops.find((x) => x.op === group);
-  return o ? (o.links ?? (Object.values(o.lines ?? {}).reduce((s, l) => s + l.length, 0) || (o.sources ?? []).length || 1)) : 1;
+  const os = item.ops.filter((x) => x.op === group);
+  return os.length ? os.reduce((n, o) => n + (o.links ?? (Object.values(o.lines ?? {}).reduce((s, l) => s + l.length, 0) || (o.sources ?? []).length || 1)), 0) : 1;
 };
 // a group's label for these items, in the words of the plan
 export function groupLabel(group, items) {

@@ -137,6 +137,38 @@ export function kindFolder(notes, kind) {
   return best;
 }
 
+// Where the vault keeps people and projects, from its own layout. 'notes' when it keeps one note each (a folder for the
+// kind, or MIN_TYPED notes typed as the kind), 'list' when one note lists them (an identity, people or team note; a
+// projects list or roadmap), else null. lists: those listing notes and the vault's instruction files (CLAUDE.md,
+// AGENTS.md), whose text names the people and projects the vault already knows
+export const MIN_TYPED = 2;
+const LIST_NAME = {
+  person: /^(people|persons|team|teams|contacts|identity|identities|who|directory|roster|crm|stakeholders|colleagues|about[-_ ]?me|me|user|users)$/i,
+  project: /^(projects|project[-_ ]?list|portfolio|roadmap|initiatives)$/i,
+};
+const LIST_TYPE = { person: /^(people|team|identity|roster|directory|contacts)$/i, project: /^(projects|portfolio|roadmap)$/i };
+const INSTRUCTIONS = /^(claude|agents|gemini|codex|copilot-instructions|instructions)$/i;
+export function keptAs(notes, kind) {
+  const all = live(notes);
+  const typed = all.filter((n) => typeOf(n) === kind).length;
+  const lists = all.filter((n) => {
+    const name = baseOf(n.rel).replace(/^\d+[-_ ]*/, '');
+    const type = String(one(n.note?.props?.type) ?? '').trim();
+    return LIST_NAME[kind].test(name) || LIST_TYPE[kind].test(type) || INSTRUCTIONS.test(name);
+  });
+  const own = lists.filter((n) => !INSTRUCTIONS.test(baseOf(n.rel)));
+  const mode = kindFolder(all, kind) || typed >= MIN_TYPED ? 'notes' : own.length ? 'list' : null;
+  // listed(name): whether one of those notes names it in its text
+  let said = null;
+  const listed = (name) => {
+    const want = normName(name);
+    if (!want) return false;
+    said ??= lists.map((n) => ` ${normName(n.text)} `);
+    return said.some((t) => t.includes(` ${want} `));
+  };
+  return { mode, lists, listed };
+}
+
 // The graph as the rules read it, from the store (graph/store.js), opened read-only in the memory engine; null while the graph is not built, and the rules fall back to the notes alone. A note stands for
 // note:<rel> and, when it is a person, project, meeting or decision, for that node too (nodesByRel). Shape:
 //   nodes(kind)          [{ id, kind, name, rel, aliases, mentions: [rel] }]: mentions are the notes with a current

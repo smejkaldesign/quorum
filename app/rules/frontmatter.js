@@ -1,10 +1,12 @@
 // Frontmatter schema per folder, learned from the folder's own notes: a key that 80% or more of a folder's notes carry
 // is expected there, and its type is the one 80% or more of them use. A note missing an expected key, or holding a
 // value of another type, is flagged; so is a key written twice in one note (the second silently replaces the first).
+// A missing key counts only when Quorum can tell its value from the note (fillable): an empty key adds nothing and
+// churns the vault's history, so a key Quorum could only add empty is never proposed.
 // Folders with fewer than five notes teach nothing. The confidential key has its own rule (confidential.js).
 import { ENTRY_NAME, baseOf, dirOf, finding, frontmatterLines, plural, quote, skipped } from './common.js';
 
-export const rule = { id: 'note.frontmatter', version: 1, label: 'Frontmatter that does not fit its folder' };
+export const rule = { id: 'note.frontmatter', version: 2, label: 'Frontmatter that does not fit its folder' };
 const MIN_FOLDER = 5;
 const EXPECTED = 0.8;
 const OWN_RULE = new Set(['confidential']);
@@ -18,6 +20,13 @@ const typeOf = (v) => {
   return 'text';
 };
 // a single text value where a list is usual reads the same to the agent
+// the value Quorum can give a missing key from the note itself, or null: its title, or the date its file is named by
+// (reviewApprove.js approveFinding writes it)
+export function fillable(key, rel, title) {
+  if (key === 'title') return title ? JSON.stringify(title) : null;
+  if (key === 'date' || key === 'created') return baseOf(rel).match(/^(\d{4}-\d{2}-\d{2})/)?.[1] ?? null;
+  return null;
+}
 const fits = (want, got) => want === got || got === 'empty' || (want === 'list' && got === 'text') || (want === 'text' && got === 'list');
 
 export function run({ notes }) {
@@ -53,7 +62,7 @@ export function run({ notes }) {
     const twice = [...counts].filter(([, c]) => c > 1).map(([k]) => k);
     // an index or README note opens its folder and follows no folder schema; its repeated keys still count
     const s = ENTRY_NAME.test(baseOf(n.rel)) ? null : schemas.get(dirOf(n.rel));
-    const missing = s ? s.expected.filter((e) => !(e.key in props)).map((e) => e) : [];
+    const missing = s ? s.expected.filter((e) => !(e.key in props) && fillable(e.key, n.rel, n.note?.title)) : [];
     const wrong = s ? s.expected.filter((e) => e.type && e.key in props && !fits(e.type, typeOf(props[e.key]))) : [];
     if (!twice.length && !missing.length && !wrong.length) continue;
     const folder = dirOf(n.rel) || 'the vault root';
