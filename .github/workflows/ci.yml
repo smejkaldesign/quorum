@@ -97,8 +97,9 @@ jobs:
           QUORUM_SUPABASE_URL: https://example.supabase.co
           QUORUM_SUPABASE_ANON_KEY: ci-placeholder
 
-  # the database's row level security, RPCs and triggers (supabase/tests): a local stack with only the database and
-  # auth running, every migration applied, and each test file in its own rolled-back transaction. No secrets: the
+  # the database's row level security, RPCs and triggers (supabase/tests): a local stack with every migration applied,
+  # and each test file in its own rolled-back transaction (supabase/tests/run.sh, which also fails on a pgTAP "not ok").
+  # Storage and its gateway stay up because the CLI creates the configured buckets through them. No secrets: the
   # stack's keys are the CLI's fixed local ones
   database:
     runs-on: ubuntu-latest
@@ -110,21 +111,9 @@ jobs:
         with:
           node-version: 22
       - name: Start the database with every migration
-        run: npx --yes supabase@2.105.0 start -x analytics,edge-runtime,imgproxy,inbucket,kong,meta,realtime,rest,storage,studio,vector
+        run: npx --yes supabase@2.105.0 start -x analytics,edge-runtime,imgproxy,inbucket,meta,realtime,studio,vector
       - name: Database tests
-        run: |
-          set -euo pipefail
-          for t in supabase/tests/*.sql; do
-            name=$(basename "$t")
-            # private_object.sql is a helper the tests that call pg_temp.assert_private load first
-            [ "$name" = private_object.sql ] && continue
-            echo "== $name"
-            if grep -q assert_private "$t"; then
-              { echo 'begin;'; cat supabase/tests/private_object.sql; grep -v '^begin;$' "$t"; } | docker exec -i supabase_db_quorum psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q -f -
-            else
-              docker exec -i supabase_db_quorum psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q -f - < "$t"
-            fi
-          done
+        run: supabase/tests/run.sh
 
   gitleaks:
     runs-on: ubuntu-latest
