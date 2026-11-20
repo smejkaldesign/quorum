@@ -4,6 +4,9 @@
 // pass never proposes that reading of that note again.
 import { finding, quote } from './common.js';
 import { confidentialSet } from './entities.js';
+import { HIGH } from '../memoryModelPass.js';
+
+const pct = (c) => `${Math.round(Number(c ?? 0) * 100)}%`;
 
 export const rule = { id: 'note.model-edge', version: 1, label: 'Connections the model read and is unsure of' };
 
@@ -18,7 +21,7 @@ export function proposalLine(p) {
   if (p.kind === 'member_of') return `${a} is part of ${b}`;
   if (p.kind === 'attended') return `${a} attended this meeting`;
   if (p.kind === 'decision') return `a decision: ${quote(x.text ?? '')}${x.about?.length ? ` about ${x.about.map((y) => quote(nameOf(y, y.id))).join(', ')}` : ''}`;
-  return `${a} ${p.kind} ${b}`;
+  return `${a} is connected to ${b}`;
 }
 
 // the proposals change when the pass runs, not when a note is saved: every run lists them all
@@ -39,12 +42,14 @@ export function run(ctx) {
     out.push(finding(rule, {
       key: p.key, target: p.rel, notes: [p.rel],
       title: `${quote(n.note?.title ?? p.rel)}: ${line}`,
-      problem: gap
-        ? `Quorum's model read this from the note's prose, and the graph has no ${gap.kind} named ${quote(gap.name)} yet. Agents do not see it until you approve it.`
-        : `Quorum's model read this from the note's prose with confidence ${Number(p.confidence ?? 0).toFixed(2)}, under the bar for adding it on its own. Agents do not see it until you approve it.`,
+      problem: x.conflict
+        ? `Quorum's model read this from the note's prose, and it disagrees with what ${quote(x.conflict.rel ?? 'another note')} states. Quorum keeps what your notes state and adds a model reading only when you approve it. Agents do not see it until then.`
+        : gap
+          ? `Quorum's model read this from the note's prose, and the memory graph has no ${gap.kind} named ${quote(gap.name)} yet. Agents do not see it until you approve it.`
+          : `Quorum's model read this from the note's prose and is ${pct(p.confidence)} sure. It adds a connection by itself only at ${pct(HIGH)} or more. Agents do not see it until you approve it.`,
       proposal: 'Approve to add it to the memory graph as a connection you confirmed. Quorum writes nothing to the note. Archive to decline it; the model pass will not suggest it again.',
       evidence: [`Line ${p.line}: ${x.quote ?? ''}`],
-      meta: [['Note', p.rel], ['Confidence', Number(p.confidence ?? 0).toFixed(2)]],
+      meta: [['Note', p.rel], ['Confidence', pct(p.confidence)]],
       fix: { kind: 'ops', group: 'confirm', ops: [{ op: 'confirm', rel: p.rel, key: p.key, label: line }] },
     }));
   }

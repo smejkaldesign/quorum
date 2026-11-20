@@ -147,10 +147,11 @@ export type MemorySetupReport = {
 };
 // the model pass (memoryModelPass.js): its estimate from the vault, its state and what it holds in the graph
 export type ModelPassCost = { kind: 'none' | 'free' | 'usd' | 'subscription' | 'provider'; usd: number | null; label: string };
-export type ModelPassEstimate = { notes: number; chars: number; cut: number; small: number; withheld: number; calls: number; inputTokens: number; outputTokens: number; tokens: number; seconds: number; runs: number; cap: number; cost: ModelPassCost };
+export type ModelPassEstimate = { source?: string | null; notes: number; chars: number; cut: number; small: number; withheld: number; calls: number; inputTokens: number; outputTokens: number; tokens: number; seconds: number; runs: number; cap: number; cost: ModelPassCost };
 export type ModelPassStatus = {
   on: boolean; cap: number; provider: string | null; running: boolean;
-  phase: 'idle' | 'running' | 'paused' | 'cancelled' | 'capped' | 'done' | 'failed' | 'off' | 'stopped';
+  phase: 'idle' | 'running' | 'paused' | 'cancelled' | 'capped' | 'done' | 'failed' | 'off' | 'stopped' | 'source-changed';
+  source: string | null; sourceNow: string | null; sourceChanged: boolean;
   done: number; total: number; tokens: number; edges: number; proposals: number; error: string | null; startedAt: number | null; endedAt: number | null;
   counts: { read: number; edges: number; waiting: number; approved: number; declined: number } | null;
   estimate?: ModelPassEstimate | null;

@@ -78,7 +78,7 @@ import { batchItems, rollBackItems } from './batchItems.js';
 import { FIX_RECHECK_RULE, FIX_RECHECK_VERSION, fixVersions, recheckAll, undoPlan } from './fixRecheck.js';
 import { buildPlan, checkFirst, checkOrder, effects, groupLabel, groupOf, notesOf, planExclude } from './batchPlan.js';
 import { RETRO_TITLE, ROW, autoApplyable, findingItem, itemLine, linkItem, pastFixItem } from './reviewItems.js';
-import { createModelPass } from './memoryModelPass.js';
+import { createMayRead, createModelPass } from './memoryModelPass.js';
 import { SETUP_OPS, approvedEdges, createMemorySetup, endEdges, graphFreshness, instructionTexts, nodeIdOf, outsideInstructions, pickItem, recordContradictions, resolveContradiction, runSetupOp, setupReport } from './memorySetup.js';
 import { approveFinding, approvePastFix, gitReader, retroCandidates, withLinkLine } from './reviewApprove.js';
 import { frontBlock, removeFrontmatterKey, withDate } from './frontmatter.js';
@@ -1443,6 +1443,9 @@ ipcMain.handle('copy', (_e, text) => clipboard.writeText(String(text)));
 ipcMain.handle('quit', () => app.quit());
 ipcMain.handle('get-settings', () => settings);
 ipcMain.handle('set-settings', (_e, next) => {
+  // the opt-out and never-listen lists, private folders and the model source live in settings: the model pass asks
+  // again which notes it may send, and estimates again
+  modelPass?.resetAccess();
   // the name Quorum uses for the recorder line and to tell the user's own voice apart; takes effect at once
   if (typeof next.userName === 'string') {
     settings.userName = next.userName.trim().slice(0, 80);
@@ -2933,19 +2936,20 @@ FEED_READS.add('memory-setup-status');
 // the vault. It runs on the person's own model source (the final notes provider, on the relations model) and sends a
 // note only when every other part of memory may read it. Turning it on, a run and Cancel come from the window only:
 // no agent call through the control socket starts it
-const EMAIL = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
-function modelMayRead(rel) {
-  const b = brain();
-  if (!b || excludedPath(rel) || isPrivatePath(rel) || isSecretPath(rel)) return false;
-  const raw = readVault(b.vault, rel);
+const modelMayRead = createMayRead({
+  vault: () => brain()?.vault ?? null,
+  excludedPath, isPrivatePath: (rel) => isPrivatePath(rel), isSecretPath: (rel) => isSecretPath(rel),
+  read: (vault, rel) => readVault(vault, rel),
   // a confidential mark or folder, a line the opt-out list withholds, an address on the never-listen list
-  if (raw == null || confidentialNote(b.vault, rel, raw) || suggester.isExcluded(raw)) return false;
-  return !(raw.match(EMAIL) ?? []).some((e) => onNeverList(e));
-}
+  confidential: (vault, rel, raw) => confidentialNote(vault, rel, raw), isExcludedText: (raw) => suggester.isExcluded(raw), onNeverList,
+});
+// the provider and model the pass runs on now; consent is kept for this, so a change waits for the person
+const modelSourceNow = () => (roleProvider('notes') ? modelLabel(roleProvider('notes'), MEMORY_MODELS.relations, settings.localModel, connectorsConf()) : null);
 modelPass = createModelPass({
   graph: () => memoryGraph,
   conf: () => { const b = brain(); return b ? memorySetup.modelChoice(b.vault) : { on: false }; },
   provider: () => roleProvider('notes'),
+  source: modelSourceNow,
   mayRead: modelMayRead,
   ask: (prompt, system, { signal }) => runClaude(prompt, system, MEMORY_MODELS.relations, { role: 'notes', signal, timeoutMs: 600000, maxTokens: 16000 }),
   recording: () => recordingNow(),
@@ -2960,16 +2964,19 @@ modelPass.attach(memoryGraph);
 setInterval(() => modelPass.tick(), 20 * 60000).unref?.();
 const modelView = () => ({ ...modelPass.status(), estimate: modelPass.estimate() });
 handleAction('memory-model-status', () => modelView());
-// { on, cap }: on starts a run, off stops one; what the pass added stays in the graph with model provenance
+// { on, cap }: on records consent for the model source in use now and starts a run; off stops one; a cap alone only
+// sets the cap. What the pass added stays in the graph with model provenance. Turning it on needs an estimate first
 ipcMain.handle('memory-model-set', (_e, opts) => {
   const b = brain();
   if (!b) throw new Error('No vault connected');
-  const c = memorySetup.chooseModel(b.vault, { on: typeof opts?.on === 'boolean' ? opts.on : undefined, cap: Number(opts?.cap) || undefined });
-  if (c.on) modelPass.start({ reason: 'on' }); else modelPass.cancel();
+  const on = typeof opts?.on === 'boolean' ? opts.on : undefined;
+  if (on === true && (!roleProvider('notes') || !modelPass.estimate())) throw new Error('Quorum turns this on once it can show the estimate. Choose a model provider and wait for the memory graph');
+  const c = memorySetup.chooseModel(b.vault, { on, cap: Number(opts?.cap) || undefined, source: on === true ? modelSourceNow() : undefined });
+  if (on === true && c.on) modelPass.start({ reason: 'on' }); else if (on === false) modelPass.cancel();
   return modelView();
 });
 ipcMain.handle('memory-model-run', () => { modelPass.start({ reason: 'manual' }); return modelView(); });
-ipcMain.handle('memory-model-cancel', () => modelPass.cancel());
+ipcMain.handle('memory-model-cancel', () => { modelPass.cancel(); return modelView(); });
 // ---- end Model pass ----
 function openIndex() {
   vindex?.stop();
@@ -4717,6 +4724,8 @@ ipcMain.handle('confidential-marks', () => {
 });
 // marks or clears a note or a folder; value null clears it. Answers a line saying what changed
 ipcMain.handle('confidential-mark', (_e, rel, isDir, value) => {
+  // the model pass asks again which notes it may send
+  modelPass?.resetAccess();
   const b = brain();
   if (!b) throw new Error('No vault connected');
   const r = String(rel ?? '').replace(/^\/+|\/+$/g, '');
@@ -5124,7 +5133,7 @@ function callLink(e) {
 let updates = null;
 ipcMain.handle('guardrails-get', (_e, opts) => guardrails.get({ fresh: opts?.fresh === true }));
 // a changed rule set reaches the index right away, so search stops answering from what is now denied
-const reindexed = (r) => { if (r?.ok) setTimeout(() => vindex?.rebuild(), 0); return r; };
+const reindexed = (r) => { if (r?.ok) { modelPass?.resetAccess(); setTimeout(() => vindex?.rebuild(), 0); } return r; };
 ipcMain.handle('guardrails-set', (_e, id, patch) => reindexed(guardrails.set(String(id ?? ''), patch ?? {})));
 ipcMain.handle('guardrails-add', (_e, rule) => reindexed(guardrails.add(rule ?? {})));
 ipcMain.handle('guardrails-remove', (_e, id) => reindexed(guardrails.remove(String(id ?? ''))));

@@ -454,10 +454,11 @@ export function createMemorySetup({ file, steps, emit = () => {}, log = () => {}
   let state = null;
   const save = () => { try { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, JSON.stringify(saved)); } catch (e) { log('memory setup', e?.message); } };
   const choice = (vault) => (saved[vault]?.keeper === 'on' || saved[vault]?.keeper === 'off' ? saved[vault].keeper : null);
-  // the model pass: on only when the person turned it on for this vault
+  // the model pass: on only when the person turned it on for this vault, for the model source (provider and model) they
+  // saw the estimate for
   const modelChoice = (vault) => {
     const m = saved[vault]?.model ?? {};
-    return { on: m.on === true, cap: MODEL_CAPS.includes(m.cap) ? m.cap : MODEL_CAP };
+    return { on: m.on === true, cap: MODEL_CAPS.includes(m.cap) ? m.cap : MODEL_CAP, source: typeof m.source === 'string' ? m.source : null };
   };
   const view = (vault) => {
     const last = saved[vault] ?? null;
@@ -493,11 +494,13 @@ export function createMemorySetup({ file, steps, emit = () => {}, log = () => {}
     save();
     return true;
   }
-  // { on, cap } from Memory setup or Settings, Memory; a cap not on the list is ignored
-  function chooseModel(vault, { on, cap } = {}) {
+  // { on, cap, source } from Memory setup or Settings, Memory; a cap not on the list is ignored. Turning it on records
+  // the source it was turned on for
+  function chooseModel(vault, { on, cap, source } = {}) {
     if (!vault) return modelChoice(vault);
     const cur = modelChoice(vault);
-    saved[vault] = { ...(saved[vault] ?? {}), model: { on: typeof on === 'boolean' ? on : cur.on, cap: MODEL_CAPS.includes(cap) ? cap : cur.cap } };
+    const next = typeof on === 'boolean' ? on : cur.on;
+    saved[vault] = { ...(saved[vault] ?? {}), model: { on: next, cap: MODEL_CAPS.includes(cap) ? cap : cur.cap, source: on === true && typeof source === 'string' ? source : cur.source } };
     save();
     return modelChoice(vault);
   }

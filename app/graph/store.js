@@ -317,6 +317,8 @@ export function openStore({ dir, vault, log = () => {}, now = Date.now, readOnly
     proposal: (key) => proposalRow(m('select * from model_proposals where key = ?').get(key)),
     proposals: ({ rel = null, status = null } = {}) => m('select * from model_proposals where (?1 is null or rel = ?1) and (?2 is null or status = ?2) order by id').all(rel, status).map(proposalRow),
     setProposal: (key, { status, edges = null }) => { m('update model_proposals set status = ?, edges = ?, decided_at = ? where key = ?').run(status, edges ? JSON.stringify(edges) : null, now(), key); },
+    // a reading of a moved note under its new key and path; a key already taken keeps the row it has
+    rekeyProposal: (key, { key: next, rel, src = null, dst = null, props = null }) => { m('update or ignore model_proposals set key = ?, rel = ?, src = ?, dst = ?, props = ? where key = ?').run(next, rel, src, dst, props ? JSON.stringify(props) : null, key); },
     dropProposals: (rel, status = 'pending') => { m('delete from model_proposals where rel = ? and status = ?').run(rel, status); },
     moveProposals: (from, to) => { m('update model_proposals set rel = ? where rel = ?').run(to, from); m('update or replace model_files set rel = ? where rel = ?').run(to, from); },
     close: () => { try { db.close(); } catch { /* closed */ } },

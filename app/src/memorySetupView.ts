@@ -32,7 +32,7 @@ export function duration(seconds: number) {
 export function modelEstimateText(e: ModelPassEstimate | null | undefined) {
   if (!e) return 'Quorum estimates the cost once the memory graph is built.';
   const out: string[] = [];
-  if (!e.notes) out.push('Nothing to read now: every note it may read is read.');
+  if (!e.notes) out.push('Nothing new to read. Quorum has read every note it is allowed to.');
   else {
     out.push(`Reads ${many(e.notes, 'note')}: about ${num(e.tokens)} tokens in ${many(e.calls, 'call')}, ${duration(e.seconds)}.`);
     out.push(`${e.cost.label}.`);
@@ -42,6 +42,30 @@ export function modelEstimateText(e: ModelPassEstimate | null | undefined) {
   if (e.withheld) out.push(`${many(e.withheld, 'note')} never ${e.withheld === 1 ? 'goes' : 'go'} to the model: private, confidential, opted out or on the never-listen list.`);
   return out.join(' ');
 }
+// what a screen reader hears: the phase only, never the counts that change with each call
+export function modelPhaseText(s: Pick<ModelPassStatus, 'phase' | 'running' | 'sourceChanged'> | null) {
+  if (!s) return '';
+  if (s.sourceChanged) return 'Model source changed. Waiting for you to confirm';
+  return ({ running: 'Reading your notes', paused: 'Paused while Quorum records', capped: 'Stopped at your token cap', cancelled: 'Cancelled', failed: 'Stopped', stopped: 'Stopped', 'source-changed': 'Model source changed. Waiting for you to confirm', done: 'Done reading' } as Record<string, string>)[s.phase] ?? '';
+}
+
+// The row's controls from the status. The switch turns on only once an estimate and a provider are there (turning it
+// off never waits); in onboarding (defer) it only selects, and the pass starts when the person finishes setup. A new
+// model source asks for Confirm before the pass goes on
+export function modelRowState(m: ModelPassStatus | null, { defer = false, pending = false }: { defer?: boolean; pending?: boolean } = {}) {
+  if (!m) return { on: false, toggleDisabled: true, needsProvider: false, confirm: false, action: null as null | 'run' | 'cancel', capDisabled: true };
+  const on = defer ? pending || m.on : m.on;
+  const ready = !!m.provider && !!m.estimate;
+  return {
+    on,
+    toggleDisabled: !on && !ready,
+    needsProvider: !m.provider,
+    confirm: !defer && m.on && !!m.sourceChanged && ready,
+    action: defer || !m.on || m.sourceChanged ? null : m.running ? 'cancel' as const : m.estimate?.notes ? 'run' as const : null,
+    capDisabled: m.running,
+  };
+}
+
 export function modelStateText(s: Pick<ModelPassStatus, 'phase' | 'done' | 'total' | 'tokens' | 'cap' | 'edges' | 'proposals' | 'error' | 'counts' | 'on'>) {
   const held = s.counts ? `${many(s.counts.edges, 'connection')} from the model in the graph · ${num(s.counts.waiting)} waiting in Needs review` : '';
   const run = (() => {
@@ -51,7 +75,7 @@ export function modelStateText(s: Pick<ModelPassStatus, 'phase' | 'done' | 'tota
       case 'capped': return `Stopped at your cap of ${num(s.cap)} tokens. The next run goes on from there.`;
       case 'cancelled': return 'Cancelled. What it read before stays; the next run goes on from there.';
       case 'failed': return s.error ? `Stopped: ${s.error}` : 'Stopped.';
-      case 'stopped': return s.error ?? 'Stopped.';
+      case 'stopped': case 'source-changed': return s.error ?? 'Stopped.';
       case 'done': return `Read ${many(s.done, 'note')}: ${many(s.edges, 'connection')} added, ${num(s.proposals)} for you to check.`;
       default: return '';
     }

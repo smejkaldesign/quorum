@@ -12,7 +12,7 @@ import { planSentence } from './catchupView';
 import { Toggle } from './controls';
 import { detectProvider, KEY_NAMES, KEY_PROVIDERS, SOURCE_NAMES, type KeyProvider } from './modelSource';
 import { SetupForm, answersFrom, draftFrom, draftIsEmpty, emptyDraft, type SetupDraft } from './SetupForm';
-import { MemorySetupCard } from './MemorySetup';
+import { MemorySetupCard, takePendingModel } from './MemorySetup';
 import mark from '../assets/quorum-mark.png';
 
 type Step = 'welcome' | 'agentos' | 'you' | 'model' | 'account' | 'permissions' | 'connect' | 'check' | 'done';
@@ -85,6 +85,9 @@ export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Bra
             <div className="onb-actions"><button className="pill ghost" onClick={back}>Back</button><button className="pill primary" autoFocus onClick={async () => {
               // the keeper offered on the Memory setup card turns on here, unless the person chose on the card
               if (brain && brain.made !== 'quorum') await window.quorum.memorySetupKeeper({ on: true, offer: true }).catch(() => null);
+              // the model pass selected on the card starts here, with the cap chosen there
+              const model = takePendingModel();
+              if (brain && model?.on) await window.quorum.memoryModelSet({ on: true, cap: model.cap }).catch(() => null);
               await window.quorum.onboardingDone(); if (brain && catchup && claudeOk) window.quorum.memoryCatchupStart().catch(() => {}); onDone();
             }}>Open Quorum</button></div>
           </section>
