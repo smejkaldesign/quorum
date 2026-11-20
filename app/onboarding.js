@@ -3,6 +3,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import { savedBrain } from './brainDetect.js';
 import { SUGGEST_SYSTEM, parseSuggestion, plan, readSetup, rerunSetup, suggestPrompt, writeStarter } from './starter.js';
 
 const PANES = {
@@ -69,7 +70,8 @@ export function registerOnboarding({ ipcMain, settings, saveSettings, inspectBra
       createVault(target, title);
       log('created Agent OS', target);
     }
-    const b = connect(inspectBrain(target));
+    // the folder Quorum just built is the Agent OS and its notes folder, whatever holds it
+    const b = connect(inspectBrain(target, { root: target, vault: target }));
     settings.brainMade = 'quorum';
     // every folder Quorum built a brain in stays listed after a disconnect, so Delete my data never removes one (dataReset.js)
     settings.brainsMade = [...new Set([...(Array.isArray(settings.brainsMade) ? settings.brainsMade : []), path.resolve(target)])];
@@ -98,10 +100,10 @@ export function registerOnboarding({ ipcMain, settings, saveSettings, inspectBra
   ipcMain.handle('setup-rerun', (_e, answers) => {
     if (!settings.brainRoot || !existsSync(settings.brainRoot)) throw new Error('No Agent OS folder is connected');
     const prev = readSetup(settings.brainRoot);
-    const name = prev?.name || inspectBrain(settings.brainRoot).name || 'My Agent OS';
+    const name = prev?.name || savedBrain(settings)?.name || 'My Agent OS';
     const r = rerunSetup(settings.brainRoot, { name, answers: answers ?? {} });
     log('setup re-run', settings.brainRoot, r.written.length, 'new files');
-    return { ...inspectBrain(settings.vaultPath || settings.brainRoot), made: settings.brainMade ?? null, written: r.written };
+    return { ...savedBrain(settings), made: settings.brainMade ?? null, written: r.written };
   });
   ipcMain.handle('onboarding-open-permission', (_e, which) => { if (PANES[which]) shell.openExternal(PANES[which]); });
   // where a new Agent OS goes: a folder the user picks or creates in the dialog; null when they cancel
