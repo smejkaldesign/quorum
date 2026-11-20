@@ -7,9 +7,10 @@ const clean = (s) => String(s ?? '').trim();
 const lower = (s) => clean(s).toLowerCase();
 
 // e: { organizer, organizerName?, organizerResource?, attendees: [{ name, email, self?, resource? }] }; isMe(attendee).
-// The name, in order: the organizer's display name when the organizer is a person; when the organizer is a group or
-// resource calendar, the first invitee who is not you, a room or a resource, by name and then by email; last, the
-// organizer's own address. A calendar organizer with nobody else invited reads as the calendar's display name, or ''.
+// The name, in order: the organizer's display name when the organizer is a person other than you; when the organizer
+// is you, or a group or resource calendar, the first invitee who is not you, a room or a resource, by name and then by
+// email; last, a person organizer's own address. A calendar's address is never the name: a calendar organizer with
+// nobody else invited reads as the calendar's display name, or ''.
 // others counts the invitees besides the one named and you.
 export function meetingWho(e, isMe = (a) => a?.self === true) {
   const org = clean(e?.organizer);
@@ -21,8 +22,15 @@ export function meetingWho(e, isMe = (a) => a?.self === true) {
     lead = notMe[0] ?? null;
     name = clean(lead?.name) || clean(lead?.email) || clean(e?.organizerName);
   } else if (org) {
-    lead = people.find((a) => lower(a.email) === lower(org)) ?? null;
-    name = clean(e?.organizerName) || clean(lead?.name) || org;
+    const row = people.find((a) => lower(a.email) === lower(org)) ?? null;
+    // a meeting you organized names the first other person invited; you only when nobody else is
+    if ((row ? isMe(row) : isMe({ email: org, name: clean(e?.organizerName) })) && notMe.length) {
+      lead = notMe[0];
+      name = clean(lead.name) || clean(lead.email);
+    } else {
+      lead = row;
+      name = clean(e?.organizerName) || clean(lead?.name) || org;
+    }
   } else {
     lead = notMe[0] ?? people[0] ?? null;
     name = clean(lead?.name) || clean(lead?.email);

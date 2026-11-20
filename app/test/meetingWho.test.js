@@ -39,6 +39,15 @@ describe('meeting subtitle', () => {
     expect(meetingWho({ organizer: GROUP, attendees: [room, projector, me, sam] })).toEqual({ name: 'Sam Lee', others: 0 });
     expect(meetingWho({ organizer: GROUP, attendees: [me, jane] }, (a) => a.email === 'pat@example.com').name).toBe('Jane Doe');
   });
+  it('never names you when you organized the meeting, and names the next person instead', () => {
+    expect(meetingWho({ organizer: 'pat@example.com', organizerName: 'Pat Example', attendees: [me, jane, sam] })).toEqual({ name: 'Jane Doe', others: 1 });
+    const byEmail = (a) => a.email === 'pat@example.com';
+    expect(meetingWho({ organizer: 'pat@example.com', organizerName: 'Pat Example', attendees: [{ name: 'Pat Example', email: 'pat@example.com' }, kim] }, byEmail)).toEqual({ name: 'kim@example.com', others: 0 });
+    // organizer not listed among the attendees, matched by address
+    expect(meetingWho({ organizer: 'pat@example.com', attendees: [jane] }, byEmail).name).toBe('Jane Doe');
+    // nobody else invited: your own name is all there is
+    expect(meetingWho({ organizer: 'pat@example.com', organizerName: 'Pat Example', attendees: [me] }).name).toBe('Pat Example');
+  });
   it('falls back to the invitee email when no one has a name, then to the organizer email', () => {
     expect(meetingWho({ organizer: GROUP, attendees: [me, kim] })).toEqual({ name: 'kim@example.com', others: 0 });
     expect(meetingWho({ organizer: 'kim@example.com', attendees: [me] })).toEqual({ name: 'kim@example.com', others: 0 });
