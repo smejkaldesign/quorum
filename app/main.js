@@ -75,7 +75,7 @@ import { itemUndo } from './batchItemUndo.js';
 import { batchItems, rollBackItems } from './batchItems.js';
 import { FIX_RECHECK_RULE, FIX_RECHECK_VERSION, fixVersions, recheckAll, undoPlan } from './fixRecheck.js';
 import { buildPlan, checkFirst, checkOrder, effects, groupLabel, groupOf, notesOf, planExclude } from './batchPlan.js';
-import { RETRO_TITLE, ROW, findingItem, itemLine, linkItem, pastFixItem } from './reviewItems.js';
+import { RETRO_TITLE, ROW, autoApplyable, findingItem, itemLine, linkItem, pastFixItem } from './reviewItems.js';
 import { SETUP_OPS, approvedEdges, createMemorySetup, endEdges, graphFreshness, instructionTexts, nodeIdOf, outsideInstructions, pickItem, recordContradictions, resolveContradiction, runSetupOp, setupReport } from './memorySetup.js';
 import { approveFinding, approvePastFix, gitReader, retroCandidates, withLinkLine } from './reviewApprove.js';
 import { frontBlock, removeFrontmatterKey, withDate } from './frontmatter.js';
@@ -4531,7 +4531,7 @@ function autoApply() {
   // the gate's shown items only, and never a kind the live precision guard demoted
   const down = demotions(decisionLog.list(b.vault));
   // an item whose last fix failed or was cancelled waits for the person: it never runs again on its own
-  const items = holdFailed(gatedItems().filter((i) => i.autoFix && !i.hold && !i.reviewOnly && !i.agent && !i.fallback && i.gate.bucket === 'show' && !down[kindOf(i)]), fixRunList().filter((r) => r.vault === b.vault));
+  const items = holdFailed(autoApplyable(gatedItems(), { linksReady: vindex.linksReady() }).filter((i) => i.autoFix && !i.hold && !i.reviewOnly && !i.agent && !i.fallback && i.gate.bucket === 'show' && !down[kindOf(i)]), fixRunList().filter((r) => r.vault === b.vault));
   if (!items.length) return null;
   const plan = buildPlan(items);
   if (!plan.ok.length) return null;

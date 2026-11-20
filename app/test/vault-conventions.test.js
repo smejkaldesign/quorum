@@ -7,7 +7,7 @@ import { createPathIndex, createVaultPaths, vaultBase, walkPaths } from '../vaul
 import { createVaultIndex } from '../vindex.js';
 import { fileIssues, groupByLine, issueOf, lineKey } from '../memoryHealth.js';
 import { unlinkLine } from '../relink.js';
-import { findingItem, itemLine, linkItem } from '../reviewItems.js';
+import { autoApplyable, findingItem, itemLine, linkItem } from '../reviewItems.js';
 import { buildPlan } from '../batchPlan.js';
 import { RULES, runRules } from '../rules/index.js';
 import * as entityAliases from '../rules/entityAliases.js';
@@ -131,6 +131,36 @@ describe('one resolver for the vault’s own link conventions', () => {
     expect(vaultBase(root, path.join(root, 'My Brain'))).toBe('My Brain');
     expect(vaultBase(root, root)).toBeNull();
     if (process.platform === 'darwin') expect(vaultBase(root.toUpperCase(), path.join(root, 'My Brain'))).toBe('My Brain');
+  });
+});
+
+describe('no link is judged dead while the link paths are still loading', () => {
+  it('a check before the first walk raises no dead link, draws no ghost node and gives auto-apply nothing; the walk then decides', async () => {
+    const vault = tmp('loading');
+    put(vault, '.claude/skills/deploy/SKILL.md', '# Deploy\n');
+    put(vault, 'hub.md', '# Hub\n\n[[deploy]] [[Gone A]] [[Gone B]]\n');
+    let told = 0;
+    const index = createVaultIndex({ vault, isExcludedPath: () => false, isExcludedText: () => false, redact: (t) => t, onChange: () => {}, onLinks: () => { told++; } });
+    // the walk has not run: sync starts it in the background and answers at once
+    index.sync();
+    expect(index.linksReady()).toBe(false);
+    expect(index.linkHealth()).toEqual([]);
+    expect(index.missingIn('hub.md')).toEqual([]);
+    expect(index.graph().nodes.some((n) => n.ghost)).toBe(false);
+    // a check now: no dead-link items, and auto-apply takes no link fix
+    const early = groupByLine(index.linkHealth()).map((m) => linkItem(issueOf(m), { noteOf: (r) => index.note(r) }));
+    expect(early).toEqual([]);
+    const linkFix = { id: 'r:link:gone a', kind: 'link', autoFix: true, ops: [{ op: 'unlink', target: 'Gone A', sources: ['hub.md'] }] };
+    const finding = { id: 'r:find:x', kind: 'finding', autoFix: true, ops: [{ op: 'keep' }] };
+    expect(autoApplyable([linkFix, finding], { linksReady: index.linksReady() })).toEqual([finding]);
+    await index.refreshPaths();
+    expect(index.linksReady()).toBe(true);
+    expect(told).toBeGreaterThan(0);
+    // once read, [[deploy]] opens the skill folder and only the two real dead links count, as one line
+    expect(index.missingIn('hub.md').map((l) => l.target)).toEqual(['Gone A', 'Gone B']);
+    expect(groupByLine(index.linkHealth()).filter((m) => m.group).map((m) => m.group.targets)).toEqual([['Gone A', 'Gone B']]);
+    expect(index.graph().nodes.filter((n) => n.ghost).map((n) => n.name).sort()).toEqual(['Gone A', 'Gone B']);
+    expect(autoApplyable([linkFix, finding], { linksReady: index.linksReady() })).toEqual([linkFix, finding]);
   });
 });
 

@@ -12,6 +12,8 @@ const open = (opts = {}) => {
   index.sync();
   return index;
 };
+// the index once its link paths are read, so a link that opens nothing counts as missing (vaultPaths.js)
+const openReady = async (opts = {}) => { const index = open(opts); await index.refreshPaths(); return index; };
 
 afterEach(() => { if (vault) rmSync(vault, { recursive: true, force: true }); vault = null; });
 
@@ -111,10 +113,10 @@ describe('graph cluster names', () => {
 });
 
 describe('linkHealth', () => {
-  it('keeps its answer until the index changes, then reflects edits and deletes', () => {
+  it('keeps its answer until the index changes, then reflects edits and deletes', async () => {
     vault = mkdtempSync(path.join(tmpdir(), 'vindex-'));
     write('a.md', '# A\n\n[[missing-one]]\n');
-    const index = open();
+    const index = await openReady();
     const first = index.linkHealth();
     expect(first.map((m) => m.target)).toEqual(['missing-one']);
     expect(index.linkHealth()).toBe(first);

@@ -128,3 +128,7 @@ export function itemLine(item) {
   if (o.op === 'commit') return `Commit ${o.paths.length} ${o.paths.length === 1 ? 'note' : 'notes'} on ${o.branch} with the message ${q(o.message)}`;
   return item.title;
 }
+
+// the items Apply memory fixes on its own may run: never a missing link's fix while the link paths are still loading
+// (vindex.js linksReady), since a link that opens nothing then may open a skill folder once they are read
+export const autoApplyable = (items, { linksReady = true } = {}) => items.filter((i) => linksReady || i.kind !== 'link');

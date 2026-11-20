@@ -52,12 +52,13 @@ describe('the re-check after a fix', () => {
     expect(fixCheck({ before: sets({}), after: sets({}), targetGone: true })).toMatch(/not in the vault/);
     expect(fixCheck({ before: sets({ 'a.md': ['orbit'] }), after: sets({ 'a.md': ['orbit'] }), stillMissing: true, target: 'orbit' })).toBe('The links to “orbit” still open nothing after the fix');
   });
-  it('catches a write that breaks a link, read from the vault index', () => {
+  it('catches a write that breaks a link, read from the vault index', async () => {
     fresh();
     put('notes/a.md', 'see [[orbit]] and [[plan]]');
     put('notes/plan.md', '# Plan');
     const idx = createVaultIndex({ vault, isExcludedPath: () => false, isExcludedText: () => false, redact: (t) => t, onChange: () => {} });
     idx.sync();
+    await idx.refreshPaths();
     const missing = () => new Map([['notes/a.md', new Set(idx.missingIn('notes/a.md').map((l) => l.target.toLowerCase()))]]);
     const before = missing();
     put('notes/a.md', 'see [[orbit-notes]] and [[plan-old]]');

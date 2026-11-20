@@ -115,7 +115,19 @@ export function createVaultIndex({ vault, root = null, onLinks = () => {}, isExc
   // around the vault has no watcher). Each read that changes the answer relinks and tells onLinks
   const paths = createVaultPaths({ vault, root, isExcluded: isExcludedPath, log, onChange: () => { if (stopped) return; relink(); try { onLinks(); } catch (e) { log('vault paths', String(e)); } } });
   let pathsAt = 0;
-  const refreshPaths = () => { pathsAt = Date.now(); return paths.refresh(); };
+  // until the first read is done no link counts as missing: a link to a skill folder is unknown, not dead, so Memory
+  // health raises no dead link, the graph draws no ghost node and auto-apply has no dead link to act on. The first
+  // read relinks and tells onLinks
+  let linksReady = false;
+  const refreshPaths = () => {
+    pathsAt = Date.now();
+    return paths.refresh().then(() => {
+      if (linksReady || stopped) return;
+      linksReady = true;
+      relink();
+      try { onLinks(); } catch (e) { log('vault paths', String(e)); }
+    });
+  };
 
   function relink() {
     health = null;
@@ -130,7 +142,7 @@ export function createVaultIndex({ vault, root = null, onLinks = () => {}, isExc
       for (const link of files.get(rel).note.links) {
         const to = resolve(link.target, rel);
         if (to && to !== rel) { out.push({ to, link }); (backward.get(to) ?? backward.set(to, []).get(to)).push({ from: rel, link }); }
-        else if (!to && !paths.at(link.target, rel)) missing.push(link);
+        else if (!to && linksReady && !paths.at(link.target, rel)) missing.push(link);
       }
       forward.set(rel, out);
       if (missing.length) unresolved.set(rel, missing);
@@ -486,6 +498,8 @@ export function createVaultIndex({ vault, root = null, onLinks = () => {}, isExc
     start, stop, sync, syncPaths, movesIn, rebuild, graph, backlinks, outgoing, search, resolve: (target, from) => resolve(target, from),
     // reads the link paths again (vaultPaths.js); resolves once the read is done
     refreshPaths,
+    // whether the first read of the link paths is done, so a link that opens nothing counts as missing
+    linksReady: () => linksReady,
     note: (rel) => files.get(rel)?.note ?? null,
     // the note's text as indexed: opted-out lines already withheld, and only the head of a note past INDEX_MAX
     text: (rel) => files.get(rel)?.text ?? null,
