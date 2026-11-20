@@ -7,6 +7,7 @@ import { CATEGORIES, HEALTH_SORTS, categoryCounts, countsLine, healthList, issue
 import { IconArchive, IconCheck, IconChevron, IconClose, IconReset, IconStop } from './icons';
 import { batchCancelled, lastFailures } from '../fixFailures.js';
 import { FixError } from './FixError';
+import { openReport } from './issueReport';
 import { PickMenu, SearchButton, SearchField } from './FilterBar';
 import { BulkPick, DismissButton, IssueParts, ReviewDetails, Row as FeedItem, RowMenu, RunBanner, StatusBadge, StatusSwap, UndoMenu, ViewButton, ago, runStatus } from './NotificationsView';
 import type { FeedRow, FixRun, MemoryDraft, MemoryFinding } from './quorum';
@@ -319,6 +320,7 @@ export function LinkHealth({ focus, isLive, onReview, onClose, onChanged }: {
           actions={[
             { label: 'Try again', primary: true, disabled: busy || locked(i), tip: locked(i) ? 'Waits until the run writing these notes finishes' : 'Waits until Quorum finishes the change in progress', onClick: () => decide([i], 'approve') },
             { label: 'Fix by hand', onClick: () => { dismissError(fail.run, i.key); onReview(i); } },
+            { label: 'Report as issue', onClick: () => openReport({ title: `Memory health fix ${fail.cancelled ? 'cancelled' : 'failed'}`, context: { view: 'settings/memory', doing: 'Running the fix on an item in Memory health', error: fail.error, screen: [{ label: 'Item', value: i.title }, { label: 'Recommendation', value: i.recommend ?? '' }, { label: 'Last fix', value: fail.error }], action: 'fix', runId: String(fail.run) } }) },
           ]} />
       )}
       <div className={`fold-anim${unfolded.has(i.key) ? ' open' : ''}`} aria-hidden={!unfolded.has(i.key)}>
