@@ -97,6 +97,24 @@ jobs:
           QUORUM_SUPABASE_URL: https://example.supabase.co
           QUORUM_SUPABASE_ANON_KEY: ci-placeholder
 
+  # the database's row level security, RPCs and triggers (supabase/tests): a local stack with every migration applied,
+  # and each test file in its own rolled-back transaction (supabase/tests/run.sh, which also fails on a pgTAP "not ok").
+  # Storage and its gateway stay up because the CLI creates the configured buckets through them. No secrets: the
+  # stack's keys are the CLI's fixed local ones
+  database:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: Start the database with every migration
+        run: npx --yes supabase@2.105.0 start -x analytics,edge-runtime,imgproxy,inbucket,meta,realtime,studio,vector
+      - name: Database tests
+        run: supabase/tests/run.sh
+
   gitleaks:
     runs-on: ubuntu-latest
     # pull_request runs list the PR's commits through the API, which the default token cannot do without this

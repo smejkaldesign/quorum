@@ -93,6 +93,7 @@ export function openStore({ dir, vault, log = () => {}, now = Date.now, readOnly
     supersede: q('update edges set valid_to = ?, superseded_by = ? where id = ?'),
     restore: q('update edges set valid_to = null, superseded_by = null where superseded_by = ?'),
     bySource: q("select * from edges where source_rel = ? and provenance != 'person'"),
+    fromSource: q('select * from edges where source_rel = ? order by id'),
     touching: q('select * from edges where src = ? or dst = ?'),
     degree: q('select (select count(*) from edges where src = ?1) + (select count(*) from edges where dst = ?1) as n'),
     findName: q('select * from nodes where name = ? collate nocase'),
@@ -321,6 +322,8 @@ export function openStore({ dir, vault, log = () => {}, now = Date.now, readOnly
       return addEdge({ src, dst, kind: 'supersedes', provenance: 'rule', source_rel, source_line, valid_from, props: { by: 'supersession', old, new: by } });
     },
     edgesBySource: (rel) => s.bySource.all(rel).map(edgeRow),
+    // every edge a source wrote, the ones a person approved included (Cloud graph sync publishes those too)
+    edgesFromSource: (rel) => s.fromSource.all(rel).map(edgeRow),
     updateEdge: (id, { source_line = null, confidence = 1, valid_from = null, props = null }) => { db.prepare('update edges set source_line = ?, confidence = ?, valid_from = ?, props = ? where id = ?').run(source_line, confidence, valid_from, props ? JSON.stringify(props) : null, id); },
     supersede: (edgeId, byEdgeId, at = now()) => { s.supersede.run(at, byEdgeId, edgeId); },
     node: (id) => nodeRow(s.getNode.get(id)),

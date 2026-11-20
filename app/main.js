@@ -2692,13 +2692,16 @@ function openMemoryGraph(vault) {
     memoryGraph.on('progress', (st) => toUI('memory-graph', st));
     // the first full graph build is also search's cue: onIndexed does not fire for the index's first read, and a first
     // call opens search on the graph's database and builds it in full
-    memoryGraph.on('ready', (st) => { toUI('memory-graph', st); searchChanged([]); topics?.schedule(0); setTimeout(() => modelPass?.tick(), 30000).unref?.(); });
+    memoryGraph.on('ready', (st) => { toUI('memory-graph', st); searchChanged([]); topics?.schedule(0); setTimeout(() => modelPass?.tick(), 30000).unref?.(); teamGraphSoon(); });
     openTopics(memoryGraph);
     modelPass?.attach(memoryGraph);
     // progress follows each update once the graph is built: the communities are read again after the edits settle
     memoryGraph.on('progress', (st) => { if (st?.phase === 'ready') topics?.schedule(); });
   } catch (err) { log('memory graph failed to open', String(err)); memoryGraph = null; }
 }
+// Cloud: a built graph trades edges with the team's knowledge bases (ee/graphSync.js). A graph ready before the account
+// below is set up skips this, and the account's first pull runs it instead. The Local edition has no graphSync
+function teamGraphSoon() { setTimeout(() => { try { account.graphSync?.run().catch(() => {}); } catch { /* account not set up yet */ } }, 0); }
 const graphBudget = (b) => Math.max(100, Math.min(Number(b) || 1500, 50000));
 const graphArgs = (a) => { const o = a && typeof a === 'object' ? { ...a } : {}; if ('budget' in o) o.budget = graphBudget(o.budget); return o; };
 // the window gets what the MCP tools get: an item that names an opted-out customer (its id, name or path, slugs
@@ -3062,7 +3065,7 @@ ipcMain.handle('vault-tree', () => { const b = brain(); return b ? treeCache.get
 // sync never pushes and the index never holds
 const { isPrivatePath, isSecretPath, isConfidentialText } = createPredicates({ guardrails, brain: () => brain() });
 const account = EDITION === 'cloud'
-  ? (await loadEE('account.js')).registerAccount({ ipcMain, settings, saveSettings, toUI, log, brain, meetingIndex, isExcluded: (rel) => excludedPath(rel) || isPrivatePath(rel) || isSecretPath(rel), isExcludedText: (t) => suggester.isExcluded(t) || isConfidentialText(t), openExternal: (u) => shell.openExternal(u), oauthRedirect: () => (app.isPackaged ? 'quorum://auth/callback' : 'http://127.0.0.1:47831/auth/callback') })
+  ? (await loadEE('account.js')).registerAccount({ ipcMain, settings, saveSettings, toUI, log, brain, meetingIndex, isExcluded: (rel) => excludedPath(rel) || isPrivatePath(rel) || isSecretPath(rel), isExcludedText: (t) => suggester.isExcluded(t) || isConfidentialText(t), openExternal: (u) => shell.openExternal(u), oauthRedirect: () => (app.isPackaged ? 'quorum://auth/callback' : 'http://127.0.0.1:47831/auth/callback'), memoryGraph: () => memoryGraph })
   : { sync: { pushNote() {}, pushMeetingNote() {}, pullNow() {}, live() {} }, meetingsKb: null };
 // the installed app owns the quorum:// scheme (package.json build.protocols); Google sign-in comes back on it. A
 // development copy takes quorum-dev:// (declared in its Info.plist by dev-app.cjs) for its connector links

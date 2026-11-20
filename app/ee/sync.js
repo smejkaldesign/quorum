@@ -79,7 +79,7 @@ export function parseFrontmatter(text) {
   return fm;
 }
 
-export function createSync({ account, store, brain = () => null, log = () => {}, meetingIndex = () => [], isExcluded = () => false, isExcludedText = () => false, idsFile = DEFAULT_IDS_FILE, teamRoot = defaultTeamRoot, meetings = null }) {
+export function createSync({ account, store, brain = () => null, log = () => {}, meetingIndex = () => [], isExcluded = () => false, isExcludedText = () => false, idsFile = DEFAULT_IDS_FILE, teamRoot = defaultTeamRoot, meetings = null, afterPull = () => {} }) {
   const IDS_FILE = idsFile;
   // path -> { id, hash } per workspace, so a note keeps its id across pushes and unchanged notes are skipped
   let ids = {};
@@ -407,6 +407,8 @@ export function createSync({ account, store, brain = () => null, log = () => {},
         lastPull = counts;
         if (notes.length || meetings.length) log('sync', `pulled ${notes.length} notes, ${meetings.length} meetings: ${counts.written} written, ${counts.conflicts} conflicts, ${counts.removed} removed, ${counts.skipped} withheld`);
         account.markSync({ lastPullAt: new Date().toISOString(), syncError: null });
+        // every pull, the Realtime ones included, is also the cue for the team's graph edges (graphSync.js)
+        try { afterPull(); } catch (err) { log('sync', 'after pull', err?.message ?? err); }
         return counts;
       } catch (err) {
         fail('the vault', err, 'pull');
