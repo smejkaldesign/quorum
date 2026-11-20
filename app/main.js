@@ -112,10 +112,10 @@ import { createTreeCache } from './treeCache.js';
 import { open as openAsync, stat as statAsync } from 'node:fs/promises';
 import { titleOf } from './notificationSummary.js';
 import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
-import { BRIEF_SYSTEM, SERIES_MIN, briefPrompt, createBriefCache, parseBrief, relatedOf, seriesKey, seriesOf } from './meetingBrief.js';
+import { BRIEF_SYSTEM, briefPrompt, createBriefCache, parseBrief, relatedOf, seriesKey, seriesOf } from './meetingBrief.js';
 import { prepSettings } from './meetingPrep.js';
 import { createPrepCache, createPrepRunner, prepLinks, prepNoteFor, withPrepLink } from './meetingPrepRun.js';
-import { createOneOff, oneOffBrief } from './meetingOneOff.js';
+import { createOneOff, oneOffBrief, oneOffGate } from './meetingOneOff.js';
 import { collectExport, exportFileName, writeZip } from './exportNotes.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -2434,9 +2434,10 @@ function noteMeetingApps(fm, abs) {
 // gained a note since. Below the threshold, { id, anyway: true, generate: true } (Generate anyways) writes a one-off
 // brief for that event from its invite and the vault (meetingOneOff.js), kept on the event until { force: true }
 const briefCache = createBriefCache(path.join(DATA_DIR, 'meeting-briefs.json'));
-const briefMin = () => (flagsApi?.get('meeting-prep') === true ? prepConf().minPast : SERIES_MIN);
 // Generate anyways has its own flag (on by default), so the platform owner can put it away on every install
-const anywayOn = () => flagsApi?.get('meeting-prep-anyway') === true;
+const oneOffGateNow = () => oneOffGate({ prepFlag: flagsApi?.get('meeting-prep') === true, anywayFlag: flagsApi?.get('meeting-prep-anyway') === true, conf: prepConf() });
+const briefMin = () => oneOffGateNow().min;
+const anywayOn = () => oneOffGateNow().on;
 ipcMain.handle('meeting-brief', async (_e, q) => {
   const title = String(q?.title ?? '');
   if (!title || suggester.isExcluded(title)) return { past: [], related: [], brief: null, status: 'few' };

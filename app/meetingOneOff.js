@@ -5,6 +5,7 @@
 // is gathered by gatherPrep (meetingPrep.js) as numbered sources. The model writes the bullets and the three About
 // lines, and each must cite a source that reached the prompt; anything that cites none is dropped, and an empty part
 // reads "Nothing found." The brief says it is based on limited history and what it was built from.
+import { SERIES_MIN } from './meetingBrief.js';
 import { asData, displayName, gatherPrep, inviteStamp, inviteesOf, isPrepRel, optedOut, plainText, stripCredentialsInText, wikiLink } from './meetingPrep.js';
 
 export const NOTHING = 'Nothing found.';
@@ -130,6 +131,14 @@ export async function oneOffBrief({ event, past = [], notes = [], meetings = [],
   const parsed = parseOneOff(reply, used);
   if (!parsed) return { status: 'failed' };
   return { status: 'ready', brief: renderOneOff({ parsed, gathered, used, invitees, series: past.map((m) => m.rel), meetingRels: meetings.map((m) => m.rel) }) };
+}
+
+// The threshold and whether Generate anyways is offered, from the meeting-prep and meeting-prep-anyway flags and
+// Settings > Calendar > Meeting prep (conf). The switch shows only while the meeting-prep flag is on; there, prep switched
+// off keeps the threshold at SERIES_MIN, hides Generate anyways and stops every one-off model call
+export function oneOffGate({ prepFlag = false, anywayFlag = false, conf = { enabled: false, minPast: SERIES_MIN } } = {}) {
+  const prepOn = prepFlag && conf.enabled;
+  return { min: prepOn ? conf.minPast : SERIES_MIN, on: anywayFlag && (!prepFlag || conf.enabled) };
 }
 
 // briefs for events that ended more than this long ago are dropped from the cache

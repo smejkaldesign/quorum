@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createBriefCache } from '../meetingBrief.js';
-import { KEEP_MS, NOTHING, ONE_OFF_SYSTEM, createOneOff, inviteSource, oneOffBrief, oneOffPrompt, parseOneOff, sourcesLine } from '../meetingOneOff.js';
+import { KEEP_MS, NOTHING, ONE_OFF_SYSTEM, createOneOff, oneOffGate, inviteSource, oneOffBrief, oneOffPrompt, parseOneOff, sourcesLine } from '../meetingOneOff.js';
 import { gatherPrep, prepSettings } from '../meetingPrep.js';
 import { prepNoteFor, withPrepLink } from '../meetingPrepRun.js';
 import { mapEvent } from '../sources/gcal.js';
@@ -147,6 +147,21 @@ describe('Google attachments', () => {
   });
 });
 
+describe('one-off gate', () => {
+  const conf = (enabled, minPast = 0) => ({ enabled, minPast });
+  it('offers Generate anyways at the series threshold while the meeting-prep flag is off', () => {
+    expect(oneOffGate({ prepFlag: false, anywayFlag: true, conf: conf(false) })).toEqual({ min: 3, on: true });
+    expect(oneOffGate({ prepFlag: false, anywayFlag: false, conf: conf(false) })).toEqual({ min: 3, on: false });
+  });
+  it('with Meeting prep switched off, keeps the threshold at 3 and offers nothing', () => {
+    expect(oneOffGate({ prepFlag: true, anywayFlag: true, conf: conf(false, 0) })).toEqual({ min: 3, on: false });
+  });
+  it('with Meeting prep switched on, uses its threshold', () => {
+    expect(oneOffGate({ prepFlag: true, anywayFlag: true, conf: conf(true, 0) })).toEqual({ min: 0, on: true });
+    expect(oneOffGate({ prepFlag: true, anywayFlag: false, conf: conf(true, 5) })).toEqual({ min: 5, on: false });
+  });
+});
+
 describe('createOneOff', () => {
   let dir, file, n = 0;
   beforeEach(() => { dir = mkdtempSync(path.join(tmpdir(), 'quorum-oneoff-')); });
@@ -192,6 +207,13 @@ describe('createOneOff', () => {
     expect(await moved.run(q(), [], [])).toMatchObject({ status: 'stale', brief: BRIEF });
     expect(await moved.run(q({ generate: true }), [], [])).toMatchObject({ status: 'ready' });
     expect(moved.d.build).toHaveBeenCalledTimes(1);
+  });
+  it('writes nothing on open with Meeting prep switched off and its threshold set to 0', async () => {
+    const g = oneOffGate({ prepFlag: true, anywayFlag: true, conf: { enabled: false, minPast: 0 } });
+    const s = setup({ on: g.on, min: g.min });
+    expect(await s.run(q(), [], [])).toMatchObject({ status: 'few', anyway: false });
+    expect(await s.run(q({ generate: true }), [], [])).toMatchObject({ status: 'few', anyway: false });
+    expect(s.d.build).not.toHaveBeenCalled();
   });
   it('writes one on open with the threshold at 0', async () => {
     const s = setup({ min: 0 });
