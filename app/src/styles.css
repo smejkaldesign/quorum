@@ -1024,7 +1024,7 @@ svg.err { color: var(--danger); }
 .onb-choice > svg.ok { color: var(--go); }
 .onb-choice > div { flex: 1; min-width: 0; }
 .onb-choice strong { display: block; font-weight: 500; font-size: 15px; }
-.onb-choice em { display: block; font-style: normal; color: var(--muted); font-size: 13px; margin-top: 2px; }
+.onb-choice em { display: block; font-style: normal; color: var(--muted); font-size: 13px; margin-top: 2px; overflow-wrap: anywhere; }
 .onb-choice .onb-field { margin-top: 10px; }
 .onb-state { font-size: 12px; font-weight: 500; color: var(--muted); margin-left: 8px; }
 .onb-state.ok { color: var(--go); }

@@ -167,7 +167,7 @@ export type MemorySetupState = {
 };
 // keeperChoice: what the person chose for the keeper in setup, or null while they have not chosen (the card then offers it)
 export type MemorySetupStatus = MemorySetupState & { made: 'quorum' | null; keeper: { on: boolean }; keeperChoice: 'on' | 'off' | null; graph: boolean };
-export type Brain = { root: string; vault: string; name: string; made?: 'quorum' | null; markers: { agentOS: string | null; obsidian: boolean; safetyHooks: boolean } };
+export type Brain = { root: string; vault: string; name: string; made?: 'quorum' | null; markers: { agentOS: string | null; obsidian: boolean; safetyHooks: boolean; notes?: boolean; found?: 'obsidian' | 'structure' | 'child' | 'notes' | 'none' | 'chosen' } };
 // hosted edition: who is signed in, which organization they are in, and whether notes sync
 export type Role = 'owner' | 'admin' | 'member';
 // teamEnabled is the Teams page's switch (migration 0019): off, the workspace is one person's and no team-level page shows
@@ -495,6 +495,7 @@ declare global {
       brain(): Promise<Brain | null>;
       onBrainChanged(cb: (b: Brain | null) => void): () => void;
       connectBrain(): Promise<Brain | null>;
+      pickNotesFolder(): Promise<Brain | null>;
       revealBrain(): Promise<void>;
       disconnectBrain(): Promise<null>;
       clearMeetingsDir(): Promise<true>;
