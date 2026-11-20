@@ -8,6 +8,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createVaultIndex } from '../vindex.js';
 import { createMemoryGraph } from '../graph/index.js';
+import { createTopics, inProcess } from '../graph/topics.js';
 import { openStore } from '../graph/store.js';
 import { createMemorySearch, createSearchIndex } from '../search/index.js';
 import { openMemoryDb } from '../search/db.js';
@@ -328,6 +329,10 @@ describe('an opt-out added after the build', () => {
     await search.changed([]);
     expect(w.g.store.node('company:acme-corp')).not.toBeNull();
     expect((await search.search({ q: 'acme rollout' })).results.length).toBeGreaterThan(0);
+    // communities as main.js builds them after the graph (graph/topics.js), read again after the update below
+    const topics = createTopics({ store: w.g.store, run: inProcess(w.g.store) });
+    await topics.refresh();
+    expect(JSON.stringify(w.g.store.db().prepare('select * from communities').all())).toMatch(/acme-corp/);
 
     // the person adds Acme Corp to the opt-out list: main.js re-reads the index, which reaches the graph and search
     terms.push('acme corp');
@@ -335,10 +340,11 @@ describe('an opt-out added after the build', () => {
     await w.g.update(changed);
     await search.changed(changed);
     await search.idle();
+    await topics.refresh();
 
     const ACME = /acme[\s_-]*corp/i;
     const db = w.g.store.db();
-    for (const [t, cols] of [['nodes', ['id', 'name', 'rel', 'props']], ['aliases', ['node', 'alias']], ['edges', ['src', 'dst', 'source_rel', 'props']], ['chunks', ['rel', 'heading', 'text']], ['search_files', ['rel', 'title']]]) {
+    for (const [t, cols] of [['nodes', ['id', 'name', 'rel', 'props']], ['aliases', ['node', 'alias']], ['edges', ['src', 'dst', 'source_rel', 'props']], ['chunks', ['rel', 'heading', 'text']], ['search_files', ['rel', 'title']], ['communities', ['node', 'community']], ['community_info', ['id', 'name', 'hub', 'props']]]) {
       for (const r of db.prepare(`select ${cols.join(', ')} from ${t}`).all()) expect(JSON.stringify(r), t).not.toMatch(ACME);
     }
     expect(db.prepare("select count(*) as n from chunks_fts where chunks_fts match 'acme'").get().n).toBe(0);
@@ -354,6 +360,8 @@ describe('an opt-out added after the build', () => {
       ['memory-graph-entity', (_e, a) => out(g.entity(a.name, a))],
       ['memory-graph-decisions', (_e, a) => out(g.decisions(a))],
       ['memory-graph-path', (_e, a) => out(g.graphPath(a.a, a.b, a))],
+      ['memory-graph-communities', (_e, a) => out(g.communities(a))],
+      ['memory-graph-hubs', (_e, a) => out(g.hubs(a))],
       ['memory-search', async (_e, a) => out(await search.search(a))],
       ['memory-search-status', () => search.status()],
       ['memory-setup-status', () => ({ phase: 'done', gaps: [] })],
@@ -365,6 +373,8 @@ describe('an opt-out added after the build', () => {
       explain: [{ id: 'person:ana-ruiz', budget: 50000 }, { id: 'project:heron', budget: 50000 }, { id: 'company:acme-corp' }, { id: 'Acme Corp' }],
       entity: [{ name: 'Ana Ruiz', budget: 50000 }, { name: 'Heron', budget: 50000 }, { name: 'acme-corp' }],
       decisions: [{ budget: 50000 }, { about: 'Heron', current: false, budget: 50000 }],
+      communities: [{ budget: 50000 }, { id: 'Heron', budget: 50000 }, { id: 'company:acme-corp' }, { id: 'Acme Corp' }],
+      hubs: [{ budget: 50000 }, { community: 'Ana Ruiz', budget: 50000 }],
       memory_status: [{}],
     };
     expect(Object.keys(asks).sort()).toEqual(MEMORY_TOOLS.map((t) => t.name).sort());

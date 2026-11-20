@@ -25,6 +25,7 @@
 //                                               pointed at rel, drop to the Trash
 //   { op: 'split', rel, parts }                 move each part (heading, start, end, to) into a note of its own
 //   { op: 'movefacts', rel, to }                move the learned facts block of rel into the facts file to
+//   { op: 'summary', rel, folder, text, replace }  write a topic summary in the Quorum folder, over one Quorum wrote
 //   { op: 'keep' }                              change nothing: Approve keeps the item as it is and marks it done
 // An item the agent drafted (memoryDraft.js) carries draft; a merge is a restore of the kept note and a trash of the
 // other, a rewrite is a restore.
@@ -71,6 +72,7 @@ export function effects(o) {
     case 'merge': writes.push({ rel: o.rel, region: 'all' }); out.removes.push(o.drop); break;
     case 'split': writes.push({ rel: o.rel, region: 'all' }); out.creates.push(...(o.parts ?? []).map((p) => p.to)); break;
     // each source adds its own lines to the facts file, read when the step runs, so two sources never conflict there
+    case 'summary': if (o.replace) writes.push({ rel: o.rel, region: 'all' }); else out.creates.push(o.rel); break;
     case 'movefacts': writes.push({ rel: o.rel, region: 'learned' }, { rel: o.to, region: `learned:${norm(o.rel)}` }); break;
     default: break;
   }

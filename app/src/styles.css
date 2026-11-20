@@ -2829,6 +2829,9 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 .mr-name .muted { font-size: 13px; }
 .mr-counts { display: flex; flex-wrap: wrap; gap: 6px; }
 .mr-count { display: inline-flex; align-items: center; height: 24px; padding: 0 9px; border-radius: 999px; border: 1px solid var(--line-2); font-size: 12px; color: var(--muted); }
+/* Settings > Memory, Topics (MemoryTopics.tsx) */
+.mt-topic, .mt-hub { flex-wrap: wrap; gap: 8px 16px; }
+.mt-hub .mr-name .link-btn, .mt-topic .mr-count .link-btn { justify-self: start; font-size: inherit; }
 
 /* Memory setup (MemorySetup.tsx): the scan's progress and the gaps it lists */
 .ms-card .ms-progress { margin: 0; padding: 14px 16px; border-bottom: 1px solid var(--line-2); }

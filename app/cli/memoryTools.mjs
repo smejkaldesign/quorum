@@ -39,6 +39,16 @@ export const MEMORY_TOOLS = [
     inputSchema: { type: 'object', properties: { about: str('a project, person, company or topic; all decisions when left out'), since: str('ISO date: only decisions on or after it'), current, budget } },
   },
   {
+    name: 'communities', handler: 'memory-graph-communities',
+    description: 'The topics in the vault: communities of notes, people and projects that link to each other more than to the rest, found in the knowledge graph with no model. Biggest first, each with its name, size, hub and strongest members. With id (a community id, its name, or any node in it), that one community and its members strongest first.',
+    inputSchema: { type: 'object', properties: { id: str('a community id such as c:project:orca, a community name, or a node name or id: that community only'), min: { type: 'number', description: 'smallest community to list, default 3' }, budget } },
+  },
+  {
+    name: 'hubs', handler: 'memory-graph-hubs',
+    description: 'The most connected nodes in the knowledge graph, overall or in one community: each with its distinct neighbors, its edge count and its community. Tags and folders are left out. Good places to start reading.',
+    inputSchema: { type: 'object', properties: { community: str('a community id, a community name, or a node in it: the hubs of that community only'), budget } },
+  },
+  {
     name: 'memory_status', handler: 'memory-graph-status', status: 'memory-search-status', setup: 'memory-setup-status',
     description: 'How complete Quorum\'s memory of the vault is: setup progress and gaps from the memory scan, notes indexed, nodes and edges by kind, links resolved, passages and embeddings built, and the open gaps listed in Needs review.',
     inputSchema: { type: 'object', properties: {} },
@@ -63,12 +73,23 @@ export const isHidden = (item, { withheld = () => false, isExcluded = () => fals
   const names = strings(NAME_KEYS.map((k) => item[k]));
   return isExcluded(names.join('\n')) || isExcluded(names.map(unslug).join('\n'));
 };
+// a node's community (communities, hubs, explain, entity) named after an opted-out customer is blanked, and the node
+// stays: being in that topic does not name the customer
+const COMMUNITY_KEYS = ['community', 'communityName'];
+const namesCommunity = (o, { isExcluded = () => false } = {}) => {
+  const names = COMMUNITY_KEYS.flatMap((k) => (typeof o[k] === 'string' ? [o[k]] : o[k] && typeof o[k] === 'object' && !Array.isArray(o[k]) ? strings([o[k].community, o[k].id, o[k].name]) : []));
+  return names.length > 0 && (isExcluded(names.join('\n')) || isExcluded(names.map(unslug).join('\n')));
+};
 export function withhold(value, filters = {}) {
   const redact = filters.redact ?? ((t) => t);
   const walk = (v) => {
     if (typeof v === 'string') return redact(v);
     if (Array.isArray(v)) return v.filter((x) => !isHidden(x, filters)).map(walk);
-    if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)]));
+    if (v && typeof v === 'object') {
+      const out = Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)]));
+      if (namesCommunity(v, filters)) for (const k of COMMUNITY_KEYS) if (k in out) out[k] = null;
+      return out;
+    }
     return v;
   };
   return walk(value);
@@ -78,7 +99,7 @@ export function withhold(value, filters = {}) {
 // gives nothing of it, and the rest goes through withhold
 export function withholdAnswer(r, filters = {}) {
   if (!r || typeof r !== 'object' || Array.isArray(r) || r.error) return r;
-  const subject = r.node ?? r.entity ?? r.about;
+  const subject = r.node ?? r.entity ?? r.about ?? r.community;
   if (isHidden(subject, filters)) return { error: 'That note is withheld.' };
   return withhold(r, filters);
 }

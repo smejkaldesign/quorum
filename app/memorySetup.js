@@ -30,7 +30,7 @@ import { bodyOf, DAY, meetingInstance } from './rules/common.js';
 import { ENTITY_FOLDERS, entityId, folderKind, noteKind } from './graph/extract.js';
 
 // the ops this module runs for a finding item (main.js runOp hands them here)
-export const SETUP_OPS = new Set(['create', 'mention', 'alias', 'merge', 'split', 'movefacts']);
+export const SETUP_OPS = new Set(['create', 'mention', 'alias', 'merge', 'split', 'movefacts', 'summary']);
 export const FRESH_DAYS = 90;
 const noExt = (rel) => String(rel).replace(/\.md$/i, '');
 const base = (rel) => noExt(rel).split('/').pop();
@@ -218,6 +218,23 @@ export async function runSetupOp(item, o, { step, keep, vault, written = new Set
     }
     keep(o.rel);
     writeAtomic(vaultPath(vault, o.rel), m.from);
+  } else if (o.op === 'summary') {
+    // a topic summary (rules/topicSummaries.js): written only in the Quorum folder, and over a note only when Quorum
+    // wrote that note (quorum: generated), so a note of the person's is never replaced
+    const folder = String(o.folder ?? '').replace(/\/+$/, '');
+    if (!folder || path.posix.normalize(String(o.rel)) !== o.rel || !o.rel.startsWith(`${folder}/`)) throw new Error(`“${o.rel}” is outside the Quorum folder, so Quorum did not write it`);
+    const abs = vaultTarget(vault, o.rel);
+    if (!abs) throw new Error(`“${o.rel}” is outside the vault`);
+    const there = existsSync(abs);
+    if (there) {
+      if (!o.replace) throw new Error(`A note is already at “${o.rel}”, so Quorum did not write it`);
+      fresh(o.rel);
+      if (String(parseNote(o.rel, read(o.rel)).props?.quorum ?? '').toLowerCase() !== 'generated') throw new Error(`“${o.rel}” is a note of yours, so Quorum did not write over it`);
+    }
+    await step(`${there ? 'Writing again' : 'Writing'} ${o.rel}`);
+    mkdirSync(path.dirname(abs), { recursive: true });
+    keep(o.rel, !there);
+    writeAtomic(abs, o.text);
   } else throw new Error(`Quorum cannot run a ${o.op} step here`);
   vindex.sync();
 }
