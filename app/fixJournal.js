@@ -6,9 +6,10 @@
 // Failed with a plain reason. Journals and undo records are deleted only when their run drops off the run list.
 import { appendFileSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { createResolver, parseNote } from './linkparse.js';
 import { sha } from './fixUndo.js';
 import { writeAtomic } from './relink.js';
-import { vaultPath, vaultTarget } from './vault.js';
+import { createNote, vaultPath, vaultTarget } from './vault.js';
 
 const safe = (id) => String(id).replace(/[^a-z0-9_-]/gi, '_').slice(0, 200);
 
@@ -91,6 +92,31 @@ export function fixCheck({ before, after, stillMissing = false, targetGone = fal
   }
   if (stillMissing) return `The links to “${target}” still open nothing after the fix`;
   return null;
+}
+
+// the check before a fix writes a note: every link in the text it would write must open a note that is in the vault
+// now, or the note itself. resolve(target, fromRel) is the vault index's resolver. Answers a plain reason, or null, so
+// a fix that would leave a new broken link fails before it writes anything
+export function newLinksCheck({ text, rel, resolve }) {
+  const self = createResolver([rel], () => []);
+  for (const l of parseNote(rel, text).links) {
+    if (resolve(l.target, rel) || self(l.target, rel)) continue;
+    return `The fix would leave a new broken link to “${l.target.replace(/\.md$/i, '').trim()}” in ${rel}, so Quorum did not write it`;
+  }
+  return null;
+}
+
+// writes a missing note from a fix's text, checked first: a link in the text that opens nothing throws before the note
+// exists. before() runs between the check and the write (the run's step and its guard); keep(rel, true) records the new
+// note for the run's rollback before its text is written. Answers the note's path
+export async function writeCheckedNote({ vault, folder, name, text, resolve, keep = () => {}, before = async () => {} }) {
+  const bad = newLinksCheck({ text, rel: `${folder ? `${folder}/` : ''}${name}.md`, resolve });
+  if (bad) throw new Error(bad);
+  await before();
+  const rel = createNote(vault, folder, name);
+  keep(rel, true);
+  writeAtomic(path.join(vault, rel), text);
+  return rel;
 }
 
 // puts back the notes a run wrote, from its undo record (files: { rel, before, after, gone }). A note whose text no longer
