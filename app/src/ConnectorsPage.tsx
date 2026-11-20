@@ -7,7 +7,9 @@ import { libraryAreas } from './libraryFilter';
 import { createInstallsReader, type InstallsView } from './githubInstalls';
 import { useSession } from './session';
 import { TRADEOFFS } from '../sources/agent-import-shared';
-import { AREAS, CONNECTORS_CHANGED, CONNECTOR_BY_ID, aboutFor, areaOf, areaOfCategory, connectorsFor, featuresFor, isConnected, mcpPathsOf, type LibraryConnector } from '../connectors/library';
+import { TRANSCRIPT_PRIVACY, transcriptRemoteWarning } from '../sources/transcript-privacy';
+import { ZOOM_MY_NOTES_STEPS, ZOOM_WEB_SETTINGS } from '../joinAdvice';
+import { AREAS, CONNECTORS_CHANGED, CONNECTOR_BY_ID, aboutFor, areaOf, areaOfCategory, connectorsFor, featuresFor, isConnected, mcpPathsOf, withoutOf, type LibraryConnector } from '../connectors/library';
 import { BLOCKED_SENTENCE, ORG_LABEL, ORG_SENTENCE, UNAPPROVED_LABEL, approvalOf, canConnect, hasLocalPart, hiddenFromList, isGoverned, type Approval } from '../connectors/approval';
 import { SyncedFolderConnections, useConnectorPolicy } from './edition';
 import { useFlag } from './flags';
@@ -352,9 +354,9 @@ const metaLine = (x: LibraryConnector, live: Live) => {
   if (x.id === 'gemini') return 'Set up in AI tools';
   if (x.account) return accountFor(x, live)?.account ?? `${x.name} account`;
   const p = providerFor(x, live);
-  if (p) { const plat = platformFor(x, live); return `${p.inCall ? 'In a call now' : 'Listening on this Mac'}${plat?.connected ? ` · ${plural(plat.notes, 'recording')} imported` : ''}`; }
+  if (p) { const plat = platformFor(x, live); return `${p.inCall ? 'In a call now' : 'Listening on this Mac'}${plat?.connected ? ` · ${plural(plat.notes, 'meeting')} imported` : ''}`; }
   const plat = platformFor(x, live);
-  if (plat?.connected) return `${plural(plat.notes, 'recording')} imported`;
+  if (plat?.connected) return `${plural(plat.notes, 'meeting')} imported`;
   return null;
 };
 
@@ -588,7 +590,7 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
     ['Accessibility', prov.access === false ? 'Not granted' : prov.access ? 'Granted' : 'Not needed'],
     ['In a call', prov.inCall ? 'Yes, now' : 'No'],
     ['Chat notice', prov.chat ? `Posts Quorum's notice in the ${x.name} chat when it starts listening` : 'None yet; you tell the call Quorum is listening'],
-    ['Cloud recordings', (() => { const plat = platformFor(x, live); return !plat ? 'Part of Quorum Cloud: sign in to connect your account' : !plat.available ? 'Not available in this build' : plat.connected ? `Connected as ${plat.account ?? plat.accountName ?? 'your account'} · ${plural(plat.notes, 'recording')} imported · last checked ${ago(plat.lastSyncAt)}` : 'Not connected'; })()],
+    [x.app === 'zoom' ? 'Zoom AI notes' : 'Cloud recordings', (() => { const plat = platformFor(x, live); return !plat ? 'Part of Quorum Cloud: sign in to connect your account' : !plat.available ? 'Not available in this build' : plat.connected ? `Connected as ${plat.account ?? plat.accountName ?? 'your account'} · ${plural(plat.notes, 'meeting')} imported · last checked ${ago(plat.lastSyncAt)}` : 'Not connected'; })()],
   );
   if (x.id === 'claude-code' && live.mcp) rows.push(['Registered with', <code>{live.mcp.command}</code>]);
   // what to do once connected: bring in what the connection reaches so far
@@ -665,16 +667,22 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
           {x.kind === 'mcp-source' && src?.extras?.includes('transcripts') && (
             <label className="conn-check">
               <input type="checkbox" checked={src.syncTranscripts} disabled={!src.syncNotes} onChange={(e) => act(() => window.quorum.sourceSetOption(src.id, { syncTranscripts: e.target.checked }))} />
-              <span><strong>Also import transcripts</strong><span>Saves each meeting's full transcript in a transcripts folder next to the notes and links it from the note, for meetings already imported too. Transcripts are long: an agent that reads one spends far more tokens than on the note.</span></span>
+              <span><strong>Also file transcripts</strong><span>Saves each meeting's full transcript in a transcripts folder next to the notes and links it from the note, for meetings already imported too. Transcripts are long: an agent that reads one spends far more tokens than on the note.</span><TranscriptPrivacy remote={src.vaultRemote ?? null} /></span>
             </label>
           )}
+          {x.kind === 'meeting-app' && platformFor(x, live)?.connected && (() => { const plat = platformFor(x, live)!; return (
+            <label className="conn-check">
+              <input type="checkbox" checked={!!plat.syncTranscripts} onChange={(e) => act(() => window.quorum.platformSetOption(plat.id, { syncTranscripts: e.target.checked }))} />
+              <span><strong>Also file transcripts</strong><span>Saves each {x.name} meeting's transcript (from My Notes, the cloud recording or AI Companion) in a transcripts folder next to the note. Applies to meetings imported from now on.</span><TranscriptPrivacy remote={plat.vaultRemote ?? null} /></span>
+            </label>
+          ); })()}
           {prov && x.app && (
             <label className="conn-check">
               <input type="checkbox" checked={prov.enabled} onChange={(e) => act(() => window.quorum.meetingProviderSet(x.app!, e.target.checked))} />
               <span><strong>Listen to {x.name} calls on this Mac</strong><span>Quorum notices when a {x.name} call starts and transcribes it. Off means Quorum ignores {x.name}; your notes stay where they are.</span></span>
             </label>
           )}
-          {!(x.kind === 'mcp-source' && src) && !(prov && x.app) && <p className="src-status">No settings for this connector yet.</p>}
+          {!(x.kind === 'mcp-source' && src) && !(prov && x.app) && !(x.kind === 'meeting-app' && platformFor(x, live)?.connected) && <p className="src-status">No settings for this connector yet.</p>}
         </div>
       ) : (
         <div className="set-card conn-table">
@@ -684,6 +692,10 @@ function ConnectorDetail({ connector: x, icon, live, onChange, initialError = ''
       {overlap && !mcpIgnored && <McpCompareSection connector={x} overlap={overlap} appOn={on} />}
       {x.id === 'github' && <SyncedFolderConnections />}
       {x.kind === 'mcp-source' && src?.agent && src.agent.runners.length > 0 && (!on || src.agent.schedule !== 'off') && <AgentImport source={src} busy={busy} act={act} />}
+      {!on && withoutOf(x) && <>
+        <h4>Without it</h4>
+        <div className="set-card conn-features"><p>{withoutOf(x)}</p></div>
+      </>}
       <h4>Enables</h4>
       <div className="set-card conn-features">
         <ul>{featuresFor(x, capture(x)).map((f) => <li key={f}><IconCheck width={14} height={14} />{f}</li>)}</ul>
@@ -785,20 +797,55 @@ function Capabilities({ connector: x, provider: p, platform: plat, busy, act, re
         <p>{why}</p>
       </div>}
       <div className={`conn-cap${plat?.connected ? ' on' : ''}`}>
-        <div className="conn-cap-head"><strong>Import cloud recordings</strong>{plat?.connected ? <span className="conn-ok"><i />Connected</span> : !plat ? <em className="soon grey">Quorum Cloud</em> : !plat.available ? <em className="soon grey">Soon</em> : null}</div>
+        <div className="conn-cap-head"><strong>{x.app === 'zoom' ? 'Import Zoom AI notes' : 'Import cloud recordings'}</strong>{plat?.connected ? <span className="conn-ok"><i />Connected</span> : !plat ? <em className="soon grey">Quorum Cloud</em> : !plat.available ? <em className="soon grey">Soon</em> : null}</div>
         {!plat && <p>Recordings and transcripts {x.name} makes in the cloud, for calls Quorum did not hear. Sign in to Quorum Cloud to connect your {x.name} account.</p>}
         {plat && !plat.available && <p>{x.name} account connections are not available in this build yet.</p>}
         {plat && plat.available && !plat.connected && (
           <div className="conn-cap-row">
-            <p>Transcripts of your {x.name} cloud recordings become meeting notes, downloaded straight to this Mac.</p>
+            <p>{x.app === 'zoom' ? 'Your AI Companion summaries and My Notes become meeting notes after each Zoom meeting, downloaded straight to this Mac. Transcripts are filed only if you turn that on under Settings.' : `Transcripts of your ${x.name} cloud recordings become meeting notes, downloaded straight to this Mac.`}</p>
             {refusal ? <p className="muted">{refusal}</p> : <button className="pill primary small-pill" disabled={busy} onClick={() => act(() => window.quorum.platformConnect(x.app!))}>{busy ? 'Finish in your browser…' : `Connect ${x.name} account`}</button>}
           </div>
         )}
         {plat?.connected && (plat.job && plat.job.status !== 'failed' && running
           ? <JobLine job={plat.job} />
-          : <p>{plat.account ?? plat.accountName ?? 'Connected'} · {plural(plat.notes, 'recording')} imported · last checked {ago(plat.lastSyncAt)}. New recordings arrive when {x.name} finishes them, and Quorum checks once a day regardless.</p>)}
+          : <p>{plat.account ?? plat.accountName ?? 'Connected'} · {plural(plat.notes, 'meeting')} imported · last checked {ago(plat.lastSyncAt)}. New notes arrive when {x.name} finishes them, and Quorum checks every 30 minutes while it runs.</p>)}
+        {plat?.connected && !!plat.missing?.length && <p className="muted">Quorum's {x.name} app does not have permission to {plat.missing.join(', ')} yet, so those parts are skipped and each note says so. They import once the app has it; there is nothing to change on your side.</p>}
+        {plat?.connected && plat.trouble && <p className="set-error" role="status">{plat.trouble.status ? `${x.name} answered ${plat.trouble.status}` : `${x.name} could not be reached`} on the last {plat.trouble.failures} tries, last at {new Date(plat.trouble.at).toLocaleTimeString()}. Nothing is lost: the waiting notes stay queued, and Quorum tries again after {new Date(plat.trouble.until).toLocaleTimeString()}.</p>}
+        {plat?.connected && plat.transcriptNotice && (
+          <div className="conn-cap-row" role="status">
+            <p><strong>Transcripts are filed for this connection.</strong> It was set up before transcript filing became a setting, so it kept filing them. {TRANSCRIPT_PRIVACY}{plat.vaultRemote ? ` ${transcriptRemoteWarning(plat.vaultRemote)}` : ''}</p>
+            <span>
+              <button className="pill primary small-pill" disabled={busy} onClick={() => act(async () => { await window.quorum.platformSetOption(plat.id, { syncTranscripts: false, transcriptNoticeSeen: true }); return { ok: true }; })}>Turn off transcripts</button>{' '}
+              <button className="pill small-pill" disabled={busy} onClick={() => act(() => window.quorum.platformSetOption(plat.id, { transcriptNoticeSeen: true }))}>Keep them on</button>
+            </span>
+          </div>
+        )}
+        {plat?.connected && x.app === 'zoom' && <MyNotesCheck platform={plat} busy={busy} act={act} />}
         {plat?.job?.status === 'failed' && <p className="set-error one-line" title={plat.job.error ?? ''}>{plat.job.error}</p>}
       </div>
+    </div>
+  );
+}
+
+// what filing transcripts means, under every transcript toggle; the second line only when the vault pushes to a remote
+function TranscriptPrivacy({ remote }: { remote: string | null }) {
+  return <span className="muted">{TRANSCRIPT_PRIVACY}{remote ? ` ${transcriptRemoteWarning(remote)}` : ''}</span>;
+}
+
+// Zoom keeps My Notes behind two settings in two places and its API reads neither, so the page shows exactly where they
+// are until the person says both are on (#197). A My Notes import shows the first one is on.
+function MyNotesCheck({ platform: plat, busy, act }: { platform: PlatformInfo; busy: boolean; act: Act }) {
+  const seen = plat.myNotes?.seenAt ?? null;
+  if (plat.myNotes?.confirmedAt) return <p className="muted">My Notes and Auto-start My Notes are on.{seen ? ` Last My Notes import ${ago(seen)}.` : ''}</p>;
+  return (
+    <div className="conn-cap-row">
+      <p><strong>{seen ? 'My Notes is on. Check Auto-start My Notes' : 'Turn on My Notes in Zoom'}</strong>{' '}
+        {seen ? 'Quorum imported My Notes recently. Zoom does not tell Quorum whether Auto-start My Notes is on, so check it once.' : 'Quorum can only import notes Zoom took. Zoom does not tell Quorum whether these settings are on, so check both once.'}</p>
+      <ol>{ZOOM_MY_NOTES_STEPS.map((step) => <li key={step}>{step}</li>)}</ol>
+      <span>
+        <button className="pill small-pill" onClick={() => window.quorum.openExternal(ZOOM_WEB_SETTINGS)}>Open Zoom web settings</button>{' '}
+        <button className="pill primary small-pill" disabled={busy} onClick={() => act(() => window.quorum.platformSetOption(plat.id, { notesConfirmed: true }))}>Both are on</button>
+      </span>
     </div>
   );
 }

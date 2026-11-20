@@ -15,6 +15,7 @@ import { budgetOf, formatMemory } from './budget.mjs';
 import { keeperHome, learnedFileIn, learnedLines } from './learned.mjs';
 import { MEMORY_TOOLS, memoryTool } from './memoryTools.mjs';
 import { untrusted } from './untrusted.mjs';
+import { meetingIndex, sameMeeting } from '../sources/sameMeeting.js';
 
 // a development copy of the app keeps its data in Quorum Dev (app/edition.js); QUORUM_ENV=development reads that folder
 const HOME = path.join(homedir(), 'Library/Application Support', process.env.QUORUM_ENV === 'development' ? 'Quorum Dev' : 'Quorum');
@@ -212,10 +213,13 @@ function statusline() {
 }
 
 // the one write: a meeting note from another app, imported through the person's agent (sources/agent-import.js).
-// Dedupes by source id (first save wins), writes under <meetings>/<source>/, and never overwrites a file
+// Dedupes by source id (first save wins), writes under <meetings>/<source>/, and never overwrites a file. A transcript
+// is filed next to the note (transcripts/, the shape sources/transcripts.js writes) only when the person turned on
+// transcript filing for that source in Quorum; otherwise it is dropped and the answer says so. A meeting another source
+// already filed for the same calendar event is skipped (sameMeeting.js)
 const yamlStr = (s) => JSON.stringify(String(s));
 const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'meeting';
-function importMeeting({ source, id, title, date, participants = [], url = null, body = '' }) {
+function importMeeting({ source, id, title, date, participants = [], url = null, body = '', transcript = '' }) {
   const src = String(source ?? '').toLowerCase();
   if (!/^[a-z0-9][a-z0-9-]{0,40}$/.test(src) || src === 'quorum') throw new Error('source must be the id of a connector, for example granola');
   const sid = String(id ?? '').trim();
@@ -226,13 +230,14 @@ function importMeeting({ source, id, title, date, participants = [], url = null,
   const root = meetingsDir();
   if (!root) throw new Error('Quorum has no meeting notes folder yet. Connect an Agent OS in Quorum first.');
   const dir = path.join(root, src);
-  mkdirSync(dir, { recursive: true });
-  for (const f of readdirSync(dir)) {
+  for (const f of existsSync(dir) ? readdirSync(dir) : []) {
     if (!f.endsWith('.md')) continue;
     const head = readFileSync(path.join(dir, f), 'utf8').slice(0, 2000);
     if (new RegExp(`^(?:source_id|${src.replace(/-/g, '_')}_id):\\s*"?${sid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"?\\s*$`, 'm').test(head)) return { skipped: true, file: path.relative(root, path.join(dir, f)) };
   }
   const when = date && !isNaN(Date.parse(date)) ? new Date(date).toISOString() : new Date().toISOString();
+  // one calendar event, one note: a meeting another source already filed is skipped too (sources/sameMeeting.js)
+  if (date && !isNaN(Date.parse(date))) { const other = sameMeeting(meetingIndex(root), { date: when, title, source: src }); if (other) return { skipped: true, elsewhere: other.source, file: path.relative(root, other.file) }; }
   const people = (Array.isArray(participants) ? participants : []).map((p) => String(p?.name ?? p).replace(/[\r\n]+/g, ' ').trim()).filter(Boolean).slice(0, 50);
   // the link is written unquoted, so it must be one line: a line break would add keys such as visibility: public
   const link = url && /^https?:\/\/\S+$/.test(String(url)) ? String(url) : null;
@@ -242,11 +247,21 @@ function importMeeting({ source, id, title, date, participants = [], url = null,
     `source: ${src}`, 'visibility: private', 'imported_by: agent', ...(link ? [`${src.replace(/-/g, '_')}_url: ${link}`] : []),
     '---', '', `# ${title || 'Untitled meeting'}`, '', String(body ?? '').slice(0, 200000).trim(), '',
   ].join('\n');
+  mkdirSync(dir, { recursive: true });
   let file = path.join(dir, `${when.slice(0, 10)}-${slug(title || 'meeting')}.md`);
   if (existsSync(file)) file = file.replace(/\.md$/, `-${sid.slice(0, 8).replace(/[^a-z0-9]/gi, '')}.md`);
   if (existsSync(file)) throw new Error('A note with this name already exists');
-  writeFileSync(file, text, { flag: 'wx' });
-  return { skipped: false, file: path.relative(root, file) };
+  const said = String(transcript ?? '').slice(0, 2000000).trim();
+  const fileIt = !!said && settings().sources?.[src]?.syncTranscripts === true;
+  let out = text;
+  if (fileIt) {
+    const rel = `transcripts/${path.basename(file)}`;
+    mkdirSync(path.join(dir, 'transcripts'), { recursive: true });
+    writeFileSync(path.join(dir, rel), ['---', 'type: transcript', `transcript_of: ${yamlStr(sid)}`, `title: ${yamlStr(`${title || 'Untitled meeting'} (transcript)`)}`, `date: ${when}`, `source: ${src}`, 'visibility: private', '---', '', `# ${title || 'Untitled meeting'} · Transcript`, '', said, ''].join('\n'), { flag: 'wx' });
+    out = text.replace('\nimported_by: agent', `\nimported_by: agent\ntranscript: ${rel}`);
+  }
+  writeFileSync(file, out, { flag: 'wx' });
+  return { skipped: false, file: path.relative(root, file), transcript: !said ? 'none' : fileIt ? 'filed' : 'not filed: transcript filing is off for this source in Quorum' };
 }
 
 // a live Granola search runs in the app, which holds the Granola sign-in and withholds opted-out customers
@@ -272,7 +287,7 @@ const TOOLS = [
   { name: 'kb_search', description: 'Search the Quorum Cloud knowledge bases the person can read in their workspace, with Postgres full-text search (English stemming, then plain words). Returns the best notes first, each with its knowledge base, folder path, title, a passage around the match, a note id for kb_read and a quorum:// link that opens it in Quorum. Every word must match; quotes make a phrase and -word leaves a word out. When nothing matches every word, notes matching any word come back. Needs the Quorum app open and signed in.', inputSchema: { type: 'object', properties: { query: { type: 'string' }, kb: { type: 'string', description: 'only this knowledge base, by name or id (from kb_list)' }, limit: { type: 'number', description: '1 to 50, default 8' } }, required: ['query'] }, run: ({ query, kb, limit }) => ask('kb_search', { query, kb, limit }) },
   { name: 'kb_read', description: 'The full text of one knowledge base note, by the id kb_search returns or by its path: "Knowledge base/Folder/Note title". Needs the Quorum app open and signed in.', inputSchema: { type: 'object', properties: { id: { type: 'string' }, path: { type: 'string' } } }, run: ({ id, path: p }) => ask('kb_read', { id, path: p }) },
   { name: 'kb_list', description: 'The Quorum Cloud knowledge bases the person can read, with their role in each and the folders. Needs the Quorum app open and signed in.', inputSchema: { type: 'object', properties: {} }, run: () => ask('kb_list') },
-  { name: 'import_meeting', description: 'Save one meeting from another app as a note in the vault, under the meeting notes folder\'s <source> subfolder, for example a Granola meeting your own Granola MCP or granola_search found. Skips it when Quorum already has that source id. Pass body as the original notes in markdown. Refused when Quorum is set to read only.', inputSchema: { type: 'object', properties: { source: { type: 'string', description: 'connector id, for example granola' }, id: { type: 'string', description: 'the meeting\'s id in the source app' }, title: { type: 'string' }, date: { type: 'string', description: 'ISO 8601' }, participants: { type: 'array', items: { type: 'string' } }, url: { type: 'string' }, body: { type: 'string', description: 'the notes as markdown' } }, required: ['source', 'id', 'title', 'body'] }, run: (a) => importMeeting(a) },
+  { name: 'import_meeting', description: 'Save one meeting from another app as a note in the vault, under the meeting notes folder\'s <source> subfolder, for example a Granola meeting your own Granola MCP or granola_search found. Skips it when Quorum already has that source id. Pass body as the original notes in markdown. Refused when Quorum is set to read only.', inputSchema: { type: 'object', properties: { source: { type: 'string', description: 'connector id, for example granola' }, id: { type: 'string', description: 'the meeting\'s id in the source app' }, title: { type: 'string' }, date: { type: 'string', description: 'ISO 8601' }, participants: { type: 'array', items: { type: 'string' } }, url: { type: 'string' }, body: { type: 'string', description: 'the notes as markdown' }, transcript: { type: 'string', description: 'optional: the full transcript as plain text. Filed only when the person turned on transcript filing for this source in Quorum' } }, required: ['source', 'id', 'title', 'body'] }, run: (a) => importMeeting(a) },
 ];
 
 // the read tools for connected Slack, Notion and GitHub accounts (connectorTools.mjs): listed while settings say the

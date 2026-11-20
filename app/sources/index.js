@@ -7,13 +7,14 @@ import { BY_ID, SOURCES, publicManifest } from './catalog.js';
 import { setFrontmatterKey } from '../frontmatter.js';
 import { adapterFor } from './adapters.js';
 import { createJobs } from './jobs.js';
-import { countTranscripts, syncTranscripts } from './transcripts.js';
+import { countTranscripts, syncTranscripts, vaultRemote } from './transcripts.js';
 import { createMcp } from './mcp.js';
 import { connect as oauthConnect, discover, refresh as oauthRefresh } from './oauth.js';
 import { createTokenStore } from './tokens.js';
 import { detectRunners, runnersWithSource } from './runners.js';
 import { SCHEDULES, dueFor, runImport } from './agent-import.js';
 import { granolaSearch } from './granola-search.js';
+import { meetingIndex, sameMeeting } from './sameMeeting.js';
 import { NO_ACCOUNT } from './granola.js';
 
 const SYNC_EVERY = 30 * 60 * 1000;
@@ -21,7 +22,7 @@ const FILED_FOR = 10 * 60 * 1000;
 // the raw Granola refusal, or the plain wording adapters put on it: this sign-in has no account at the source
 const UNKNOWN_ACCOUNT = new RegExp(`${NO_ACCOUNT.source}|No Granola account|no .* account for this sign-in`, 'i');
 
-// ids already in the vault: every markdown note under the meetings folder that names a granola_id or source_id
+// ids already in the vault: every markdown note under the meetings folder that names a granola_id, source_id or zoom_note_id
 export function scanExisting(root) {
   const ids = new Set();
   if (!root || !existsSync(root)) return ids;
@@ -35,7 +36,7 @@ export function scanExisting(root) {
       let head;
       try { head = readFileSync(p, 'utf8').slice(0, 2000); } catch { continue; }
       if (!head.startsWith('---')) continue;
-      for (const m of head.matchAll(/^(?:granola_id|source_id):\s*(\S+)\s*$/gm)) ids.add(m[1]);
+      for (const m of head.matchAll(/^(?:granola_id|source_id|zoom_note_id):\s*(\S+)\s*$/gm)) ids.add(m[1]);
     }
   };
   walk(root, 0);
@@ -113,7 +114,7 @@ export function createSources({ settings, saveSettings, toUI = () => {}, log = (
       const s = stateOf(id);
       progress({ message: `${r.name} is reading ${src.name}. This spends your ${r.name} tokens.`, total: null });
       // a project-scoped server is reachable only from its project folder; the listing narrows to new meetings only once a run has caught up
-      const result = await runImport({ runnerId: r.id, server: r.server, source: src, since: s.agentCaughtUp ? s.agentLastRunAt ?? null : null, quorum: agentRuntime, dir, cwd: r.project ?? null });
+      const result = await runImport({ runnerId: r.id, server: r.server, source: src, since: s.agentCaughtUp ? s.agentLastRunAt ?? null : null, quorum: agentRuntime, dir, cwd: r.project ?? null, transcripts: !!s.syncTranscripts });
       s.agentRunner = r.id; s.agentLastRunAt = new Date().toISOString(); s.agentCaughtUp = !!result.caughtUp;
       s.agentLastResult = `${result.imported} imported, ${result.skipped} skipped`;
       saveSettings();
@@ -156,7 +157,10 @@ export function createSources({ settings, saveSettings, toUI = () => {}, log = (
     filed = existing; filedAt = Date.now();
     progress({ message: 'Checking Granola', total: null });
     const adapter = adapterFor(src);
-    const result = await adapter.sync({ mcp: mcpFor(id), existing, since: s.since ?? undefined, write: writeNote(dir, id), progress }).catch(dropIfUnknown);
+    // one calendar event, one note: a meeting another source (Zoom, Quorum's own capture) already filed is left out
+    const index = meetingIndex(meetingsDir());
+    const elsewhere = (m) => !!sameMeeting(index, { date: m.meetingAt, title: m.title, source: id });
+    const result = await adapter.sync({ mcp: mcpFor(id), existing, since: s.since ?? undefined, write: writeNote(dir, id), progress, elsewhere }).catch(dropIfUnknown);
     // extras run after the notes, so a failing transcript never costs a note
     if (s.syncTranscripts && adapter.transcript) {
       const t = await syncTranscripts({ adapter, mcp: mcpFor(id), dir, source: id, progress, afterWrite });
@@ -173,11 +177,11 @@ export function createSources({ settings, saveSettings, toUI = () => {}, log = (
     return result;
   });
 
-  const list = () => SOURCES.map((src) => {
+  const list = () => { const remote = vaultRemote(meetingsDir()); return SOURCES.map((src) => {
     const s = stateOf(src.id);
     const dir = folderFor(src.id);
-    return { ...publicManifest(src), method: s.method, connected: !!s.connected, syncNotes: s.syncNotes !== false, syncTranscripts: !!s.syncTranscripts, transcripts: dir ? countTranscripts(dir) : 0, freshNext: !!s.freshNext, account: s.account ?? null, lastSyncAt: s.lastSyncAt, imported: s.imported ?? 0, folderPath: dir, notes: dir ? countNotes(dir) : 0, job: jobs.snapshot(src.id), agent: agentInfo(src) };
-  });
+    return { ...publicManifest(src), vaultRemote: remote, method: s.method, connected: !!s.connected, syncNotes: s.syncNotes !== false, syncTranscripts: !!s.syncTranscripts, transcripts: dir ? countTranscripts(dir) : 0, freshNext: !!s.freshNext, account: s.account ?? null, lastSyncAt: s.lastSyncAt, imported: s.imported ?? 0, folderPath: dir, notes: dir ? countNotes(dir) : 0, job: jobs.snapshot(src.id), agent: agentInfo(src) };
+  }); };
 
   const fail = (err, fallback) => { log('sources', err?.message ?? err); return { error: err?.message && !/[{};]|ECONN|ENOTFOUND|fetch failed/i.test(err.message) ? err.message : fallback }; };
 

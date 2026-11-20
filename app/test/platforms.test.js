@@ -113,7 +113,11 @@ describe('zoom platform connection', () => {
     expect(w.saved['platform-zoom'].accessToken).toBe('zoom-at-1');
     const reg = w.calls.find((c) => c.url.endsWith('/v1/connect/zoom/account'));
     expect(reg.body).toMatchObject({ accountId: 'acc1', externalUserId: 'zu1' });
-    expect(settings.platforms.zoom).toMatchObject({ connected: true, account: 'alex@example.com', accountId: 'acc1', name: 'Alex Rivera' });
+    expect(settings.platforms.zoom).toMatchObject({ connected: true, account: 'alex@example.com', accountId: 'acc1', name: 'Alex Rivera', syncTranscripts: false });
+    // transcript filing is off for a new connection: a meeting with only a transcript files nothing
+    expect(await p.sync('zoom')).toMatchObject({ imported: 0, transcriptOnly: 1 });
+    expect(existsSync(path.join(dir, 'zoom'))).toBe(false);
+    expect(p.handlers['platform-set-option']('zoom', { syncTranscripts: true })).toEqual({ ok: true });
     await p.sync('zoom');
     const note = readFileSync(path.join(dir, 'zoom', fileNameFor(recording())), 'utf8');
     expect(note).toContain('source_id: uuid-1');

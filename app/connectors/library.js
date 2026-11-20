@@ -110,7 +110,7 @@ const BY_CATEGORY = {
   ai: (n) => [`Lets ${n} search your meeting notes and answer from them`, `Pulls action items and decisions into ${n}`],
 };
 const OVERRIDES = {
-  zoom: () => ['Listens to Zoom calls on this Mac and writes the meeting note live', 'Posts Quorum\'s notice in the Zoom chat when it starts listening', 'Transcribes on this Mac, or with the transcription you chose', 'Imports Zoom cloud recordings and transcripts, covering calls Quorum did not hear (Quorum Cloud)'],
+  zoom: () => ['Listens to Zoom calls on this Mac and writes the meeting note live', 'Posts Quorum\'s notice in the Zoom chat when it starts listening', 'Transcribes on this Mac, or with the transcription you chose', 'Imports your Zoom AI Companion summaries and My Notes, covering calls Quorum did not hear (Quorum Cloud)'],
   'apple-calendar': () => ['Shows upcoming meetings from the Calendar app on Home', 'Gives each note the meeting title and the people in it', 'Reads on this Mac; nothing leaves it'],
   slack: () => ['Connects your Slack account; the token stays in this Mac\'s Keychain', 'Soon: shares a meeting note to any Slack channel', 'Soon: posts notes from a folder on their own'],
   gmail: () => ['Drafts a follow-up email after each meeting, ready to review and send'],
@@ -146,6 +146,22 @@ export const aboutOf = (x) => ABOUT[x.id] ?? (ABOUT_BY_CATEGORY[x.category] ?? (
 
 export const featuresOf = (x) => (OVERRIDES[x.id] ?? BY_CATEGORY[x.category] ?? (() => []))(x.name);
 
+// what a person loses while a connector is not connected, shown on its page so leaving one off is an informed choice
+const WITHOUT = {
+  granola: 'New Granola meetings stop reaching your vault. Your agent can still read Granola through its own MCP server, but Quorum does not file, link or tidy those notes, and meeting prep, search and memory in Quorum do not see them.',
+  zoom: 'Zoom meetings Quorum did not hear on this Mac are not filed: no AI Companion summaries, no My Notes and no cloud recording transcripts. Quorum also cannot check that My Notes is on before you join a Zoom call.',
+  'apple-calendar': 'Home shows no upcoming meetings, notes get no title or attendee list from the invite, meeting prep has nothing to prepare, and the never-listen list cannot match people by the email on the invite.',
+  'google-calendar': 'Home shows no upcoming Google Calendar meetings, notes get no title or attendee list from the invite, meeting prep has nothing to prepare, and the never-listen list cannot match people by the email on the invite.',
+  'claude-code': 'Claude Code cannot search your meetings, notes or knowledge bases through Quorum. It can still read the vault files directly, without Quorum\'s search, guardrails or opt-out filtering.',
+  codex: 'Codex cannot search your meetings, notes or knowledge bases through Quorum, and cannot run summaries on your ChatGPT sign-in.',
+};
+const WITHOUT_BY_CATEGORY = {
+  'meeting-notes': (n) => `New ${n} meetings do not reach your vault, so Quorum's search, meeting prep and memory do not see them.`,
+  calendar: (n) => `Upcoming ${n} meetings do not show on Home, and notes get no title or attendee list from the invite.`,
+};
+// null for a connector whose absence costs nothing yet (one that is not built)
+export const withoutOf = (x) => (x.status === 'soon' ? null : WITHOUT[x.id] ?? WITHOUT_BY_CATEGORY[x.category]?.(x.name) ?? null);
+
 export const CONNECTOR_BY_ID = Object.fromEntries(CONNECTORS.map((x) => [x.id, x]));
 export const byCategory = (categoryId) => CONNECTORS.filter((x) => x.category === categoryId);
 
@@ -153,12 +169,12 @@ export const byCategory = (categoryId) => CONNECTORS.filter((x) => x.category ==
 // or Teams calls. Their rows then describe what is left: Zoom's cloud recordings through Quorum Cloud, and the cloud
 // imports for Meet and Teams, which are not built yet. The rows above keep the listening copy for when the flag is on.
 const CLOUD_ONLY = {
-  zoom: { description: 'Imports the transcripts of your Zoom cloud recordings into your notes folder, through your own Zoom account (Quorum Cloud).', status: 'available' },
+  zoom: { description: 'Imports your Zoom AI Companion summaries, your My Notes and, if you turn it on, transcripts into your notes folder, through your own Zoom account (Quorum Cloud).', status: 'available' },
   'google-meet': { description: 'Will import the transcripts of your Google Meet recordings into your notes folder.', status: 'soon' },
   teams: { description: 'Will import the transcripts of your Teams meetings into your notes folder.', status: 'soon' },
 };
 const CLOUD_FEATURES = {
-  zoom: () => ['Imports Zoom cloud recordings and transcripts as meeting notes (Quorum Cloud)', 'Uses your own Zoom account; the transcripts download straight to this Mac', 'New recordings arrive when Zoom finishes them'],
+  zoom: () => ['Imports your Zoom AI Companion summaries and My Notes as meeting notes (Quorum Cloud)', 'Files transcripts too, only if you turn that on', 'Uses your own Zoom account; everything downloads straight to this Mac', 'New notes arrive when Zoom finishes them'],
 };
 const CLOUD_ABOUT = (n) => `${n} records your meetings in the cloud. Quorum imports those transcripts into your notes folder through your own ${n} account.`;
 
