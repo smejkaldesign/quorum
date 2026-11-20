@@ -86,7 +86,7 @@ export function BulkPlan({ ids, onClose, onApplied }: { ids: string[]; onClose: 
                 <ul>{xs.map((x) => <li key={`${label}${x.id}`}><strong>{x.title}</strong> {x.reason}</li>)}</ul>
               </details>
             ))}
-            <label className="bp-save"><input type="checkbox" checked={saveNote} onChange={(e) => setSaveNote(e.target.checked)} /> Save as a note in the vault</label>
+            <label className="bp-save"><input type="checkbox" checked={saveNote} onChange={(e) => setSaveNote(e.target.checked)} /> Save as a note in the Quorum folder</label>
           </>}
       {error && <p className="set-error" role="alert">{error}</p>}
       </div>

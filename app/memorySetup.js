@@ -21,6 +21,7 @@ import { aliasText, rewriteLinks, writeAtomic } from './relink.js';
 import { vaultPath, vaultTarget, walk } from './vault.js';
 import { sha } from './fixUndo.js';
 import { linkMentions } from './keeper.js';
+import { LEARNED_HEADER, moveFacts } from './cli/learned.mjs';
 import { parseNote } from './linkparse.js';
 import { RULE_LABELS, SETUP_RULES } from './rules/index.js';
 import { entityKinds, normName, PEOPLE_KEYS, PROJECT_KEYS } from './rules/entities.js';
@@ -29,7 +30,7 @@ import { bodyOf, DAY } from './rules/common.js';
 import { ENTITY_FOLDERS, entityId, folderKind, noteKind } from './graph/extract.js';
 
 // the ops this module runs for a finding item (main.js runOp hands them here)
-export const SETUP_OPS = new Set(['create', 'mention', 'alias', 'merge', 'split']);
+export const SETUP_OPS = new Set(['create', 'mention', 'alias', 'merge', 'split', 'movefacts']);
 export const FRESH_DAYS = 90;
 const noExt = (rel) => String(rel).replace(/\.md$/i, '');
 const base = (rel) => noExt(rel).split('/').pop();
@@ -196,6 +197,25 @@ export async function runSetupOp(item, o, { step, keep, vault, written = new Set
     }
     keep(o.rel);
     writeAtomic(vaultPath(vault, o.rel), text);
+  } else if (o.op === 'movefacts') {
+    // the keeper lines rule (rules/keeperLines.js): the facts file is read now, so a run of the keeper since the plan
+    // loses nothing, and a facts file the person made is never written
+    need(o.rel);
+    fresh(o.rel);
+    const toAbs = vaultTarget(vault, o.to);
+    if (!toAbs) throw new Error(`“${o.to}” is outside the vault`);
+    const cur = existsSync(toAbs) ? readFileSync(toAbs, 'utf8') : null;
+    if (cur != null && !cur.startsWith(LEARNED_HEADER)) throw new Error(`“${o.to}” is a note of yours, so Quorum did not move the facts into it`);
+    const m = moveFacts(read(o.rel), cur);
+    if (m.to != null) {
+      await step(`Moving ${m.moved} learned ${m.moved === 1 ? 'fact' : 'facts'} from ${o.rel} into ${o.to}`);
+      mkdirSync(path.dirname(toAbs), { recursive: true });
+      keep(o.to, cur == null);
+      writeAtomic(toAbs, m.to);
+    }
+    await step(`Taking the learned facts block out of ${o.rel}`);
+    keep(o.rel);
+    writeAtomic(vaultPath(vault, o.rel), m.from);
   } else throw new Error(`Quorum cannot run a ${o.op} step here`);
   vindex.sync();
 }

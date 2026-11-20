@@ -116,13 +116,11 @@ export type KeeperRun = { filed: number; skipped: number; changed: number; reaso
 // one upkeep job (app/plugins.js): owned by Quorum, or by the vault when a saved choice keeps it off
 export type PluginOwner = 'quorum' | 'vault';
 export type KeeperPlugin = { id: string; title: string; does: string; owner: PluginOwner };
-export type KeeperStatus = { on: boolean; editVault: boolean; meetingsIndex: boolean; facts: boolean; running: boolean; lastRunAt: string | null; filed: number; last: KeeperRun | null; folders: Partial<Record<'people' | 'projects' | 'daily' | 'meetings', string>>; model: boolean; held: KeeperHeld | null; plugins: KeeperPlugin[]; learned: KeeperLearned | null; errors: KeeperErrors };
-// where learned facts go and how much of the budget they use; errors are upkeep failures logged under Application Support
-// target is .quorum/learned.md or a vault note (note holds its path; linked says index.md links to it); budgetPick is the
-// budget select's value. claude says what CLAUDE.md holds: block is null, the copy, a pointer or a list (lines counts it)
-export type LearnedTarget = 'learned' | 'note';
-export type KeeperClaude = { on: boolean; editable: boolean; block: 'copy' | 'pointer' | 'list' | null; lines: number; generated: boolean; facts: number; budget: number };
-export type KeeperLearned = { target: LearnedTarget; pick: LearnedTarget; file: string; note: string; noteHeld: boolean; linked: boolean; indexGenerated: boolean; budget: number; budgetPick: number | 'auto'; defaultBudget: number; defaultMoves: number; chars: number; fileChars: number; claude: KeeperClaude };
+export type KeeperStatus = { on: boolean; meetingsIndex: boolean; facts: boolean; running: boolean; lastRunAt: string | null; filed: number; last: KeeperRun | null; folders: Partial<Record<'people' | 'projects' | 'daily' | 'meetings', string>>; model: boolean; held: KeeperHeld | null; plugins: KeeperPlugin[]; learned: KeeperLearned | null; errors: KeeperErrors; folder: string | null; changelog: string | null };
+// where learned facts go and how much of the budget they use; errors are upkeep failures logged under Application Support.
+// folder is the Quorum folder in the vault and file the facts file in it (linked says index.md links to it); budgetPick
+// is the budget select's value. changelog is the keeper's changelog in Quorum's data folder
+export type KeeperLearned = { file: string; linked: boolean; indexGenerated: boolean; budget: number; budgetPick: number | 'auto'; defaultBudget: number; defaultMoves: number; chars: number; fileChars: number };
 export type KeeperErrors = { count: number; last: { at: string; where: string; message: string } | null; file: string | null };
 // screen context: on-screen text as spelling hints; granted is the Screen Recording permission, null when unknown
 export type ScreenContextStatus = { available?: boolean; on: boolean; granted: boolean | null };
@@ -157,7 +155,7 @@ export type MemorySetupState = {
   done: boolean;
 };
 // keeperChoice: what the person chose for the keeper in setup, or null while they have not chosen (the card then offers it)
-export type MemorySetupStatus = MemorySetupState & { made: 'quorum' | null; keeper: { on: boolean; editVault: boolean }; keeperChoice: 'on' | 'off' | null; graph: boolean };
+export type MemorySetupStatus = MemorySetupState & { made: 'quorum' | null; keeper: { on: boolean }; keeperChoice: 'on' | 'off' | null; graph: boolean };
 export type Brain = { root: string; vault: string; name: string; made?: 'quorum' | null; markers: { agentOS: string | null; obsidian: boolean; safetyHooks: boolean } };
 // hosted edition: who is signed in, which organization they are in, and whether notes sync
 export type Role = 'owner' | 'admin' | 'member';
@@ -730,10 +728,10 @@ declare global {
       screenContextStatus(): Promise<ScreenContextStatus>;
       screenContextSet(on: boolean): Promise<ScreenContextStatus>;
       screenContextPrivacy(): Promise<void>;
-      keeperSet(patch: { on?: boolean; facts?: boolean; factsBudget?: number | 'auto'; factsTarget?: LearnedTarget; factsNote?: string; factsInClaude?: boolean; editVault?: boolean; meetingsIndex?: boolean }): Promise<KeeperStatus>;
-      keeperRemoveClaude(): Promise<KeeperStatus>;
+      keeperSet(patch: { on?: boolean; facts?: boolean; factsBudget?: number | 'auto'; folder?: string; meetingsIndex?: boolean }): Promise<KeeperStatus>;
       keeperRun(opts?: { allowCreate?: boolean }): Promise<KeeperRun>;
       keeperErrorsOpen(): Promise<void>;
+      keeperChangelogOpen(): Promise<void>;
       keeperErrorsClear(): Promise<KeeperStatus>;
       onKeeper?(cb: (r: KeeperRun) => void): Unsub;
       onboardingOpenPermission(which: 'microphone' | 'audio' | 'accessibility' | 'calendar'): Promise<void>;

@@ -246,7 +246,7 @@ describe('keeper writes keep versions', () => {
     const dir = tmp('mv-keeper-');
     writeStarter(dir, plan({ name: 'Studio', answers: { template: 'founder', role: 'Designer', goals: '', projects: ['Quorum'], people: ['Ada Lovelace'], organize: 'areas' } }));
     const { store } = setup({ auto: false });
-    const keeper = createKeeper({ brain: () => ({ root: dir, vault: dir }), settings: { brainMade: 'quorum' }, owner: () => 'Rick Bot', versions: store });
+    const keeper = createKeeper({ brain: () => ({ root: dir, vault: dir }), dataDir: `${dir}.data`, settings: { brainMade: 'quorum' }, owner: () => 'Rick Bot', versions: store });
     const note = '---\nquorum_id: 01X\ntitle: Quorum sync\ndate: 2026-11-10T15:00:00-08:00\nparticipants:\n  - Rick Bot (recorder)\n  - Ada Lovelace\nsource: quorum\n---\n\n# Quorum sync\n\nWe talked about Quorum.\n';
     writeFileSync(path.join(dir, '08-meetings', '2026-11-10-quorum-sync.md'), note);
     const r = await keeper.run({ reason: 'test', allowCreate: true });
