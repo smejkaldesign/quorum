@@ -273,3 +273,5 @@ button.trow:hover, button.trow.on { background: rgba(255, 255, 255, 0.05); }
 .err-detail .events th { text-align: left; color: var(--muted); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--line-2); }
 .err-detail .events td { padding: 6px 8px; border-bottom: 1px solid var(--line-2); white-space: nowrap; }
 .err-detail .events-wrap { overflow-x: auto; }
+.report-shots { display: flex; flex-wrap: wrap; gap: 10px; }
+.report-shots img { display: block; width: 220px; height: 140px; object-fit: cover; border: 1px solid var(--line-2); border-radius: 8px; background: rgba(255, 255, 255, 0.02); }

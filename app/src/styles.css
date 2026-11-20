@@ -2838,3 +2838,22 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
 .ms-gaps em { font-style: normal; color: var(--text); font-variant-numeric: tabular-nums; }
 /* the report lines carry counts, so they wrap here instead of cutting off */
 .ms-card .set-text span { white-space: normal; }
+
+/* Report issue (ReportIssue.tsx): the write and review steps */
+.modal.report-sheet { width: min(620px, calc(100vw - 32px)); max-height: calc(88vh - 16px); overflow-y: auto; }
+.report-label { display: block; margin: 14px 0 6px; color: var(--muted); font-size: 13px; }
+.report-area { min-height: 160px; }
+.report-drop { padding: 18px 16px; }
+.report-shots { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 10px; padding: 0; list-style: none; }
+.report-shots li { position: relative; width: 120px; height: 80px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line-2); background: rgba(255, 255, 255, 0.03); }
+.report-shots img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.report-shots .report-remove { position: absolute; top: 4px; right: 4px; }
+.report-remove { flex: none; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; background: rgba(0, 0, 0, 0.6); color: var(--text); border: 1px solid var(--line-2); }
+.report-remove:hover { border-color: rgba(255, 255, 255, 0.4); }
+.report-preview { margin: 0 0 14px; padding: 12px 14px; max-height: 260px; overflow: auto; border-radius: 10px; background: rgba(255, 255, 255, 0.04); border: 1px solid var(--line-2); font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.report-h { margin: 14px 0 6px; font-size: 13px; font-weight: 500; color: var(--muted); }
+.report-lines { margin: 0 0 10px; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; max-height: 200px; overflow-y: auto; }
+.report-lines li { display: flex; align-items: flex-start; gap: 8px; }
+.report-lines code { flex: 1; min-width: 0; font-size: 11.5px; line-height: 1.45; overflow-wrap: anywhere; color: var(--muted); }
+.report-switch { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 13.5px; }
+.crash-report { margin-top: 14px; }

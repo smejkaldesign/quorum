@@ -3,9 +3,11 @@
 // view, with the header and the Settings list still working, so another page is one click away; moving to another
 // page (resetKey) clears it. Reload view mounts the view again from scratch. A view that fails again within 5 seconds
 // of that fails on every draw (crash.ts): the page says so and offers Reload Quorum, which reloads the window's page
-// without quitting. Every crash is reported (errorReports.js in the main process, unless Settings turns reports off).
+// without quitting. Every crash is reported (errorReports.js in the main process, unless Settings turns reports off), and
+// Report as issue opens the Report issue sheet (ReportIssue.tsx) filled in from the crash, with the window captured.
 import { Component, Fragment, useEffect, useState, type ErrorInfo, type ReactNode } from 'react';
 import { STALE_BUNDLE, crashCopy, crashKind, failsEveryTime, type CrashKind } from './crash';
+import { crashReport, openReport } from './issueReport';
 
 export { STALE_BUNDLE };
 
@@ -66,6 +68,7 @@ function CrashPage({ error, view, kind, whole, onReload }: { error: Error; view:
       <div className="crash-actions">
         <button className="pill primary crash-reload" onClick={c.window ? reloadWindow : onReload}>{c.action}</button>
       </div>
+      {view !== 'popup' && <button className="link-btn crash-report" onClick={() => openReport({ context: crashReport(view, error, kind) })}>Report as issue</button>}
       <details className="crash-detail">
         <summary>Technical detail</summary>
         <code>{error.message}</code>
