@@ -3,7 +3,8 @@
 // Files stay the source of truth; this is a cache that rebuilds from disk.
 import { closeSync, openSync, readFileSync, readSync, statSync, watch } from 'node:fs';
 import path from 'node:path';
-import { createResolver, parseNote } from './linkparse.js';
+import { createResolver, noteAliases, parseNote } from './linkparse.js';
+import { createVaultPaths } from './vaultPaths.js';
 import { SKIP, graphConfig, noteDate, walk } from './vault.js';
 import { clusterAssign, clusterLabels, groupInfo, wrapperFolders } from './clusters.js';
 import { isGenerated, linkReport, reportLine } from './linkRules.js';
@@ -12,6 +13,7 @@ import { pairMoves } from './movePairs.js';
 // the folders walk() skips, as a test on a watcher path (the same list, so the two can never disagree)
 const IGNORED = new RegExp(`(^|/)(${[...SKIP].map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(/|$)`);
 const BATCH = 200;
+const PATHS_MS = 5 * 60000;
 // the only characters at or above U+0080 whose lowercase holds ASCII: U+0130 (to i plus a combining dot) and the Kelvin
 // sign U+212A (to k). The search test checks this list against every code point
 export const EXOTIC = /[\u0130\u212a]/;
@@ -58,13 +60,15 @@ export function readHead(abs, max = INDEX_MAX) {
   } finally { closeSync(fd); }
 }
 
+// root: the brain root when the vault is a folder inside it, so links can open its folders and files (vaultPaths.js);
+// onLinks hears when a read of those paths changed which links open nothing.
 // isExcludedPath keeps a file out by its path; isDeniedText keeps a note out by what its frontmatter says (a denied
 // key); isExcludedText flags and redacts opted-out lines but keeps the note. onPaths hears each batch the watcher
 // names before onChange. onMoves hears the notes a watcher batch moved ([{ from, to }], see movesIn) while the index
 // still holds their old paths; only the watcher reports moves. onIndexed hears the paths every sync, syncPaths or rebuild
 // changed, from the watcher or from a caller. renamed() gives the person's own names for
 // graph clusters, by cluster key; forget(keys) is told which of them no longer match a cluster
-export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => false, isExcludedText, redact, onChange, onPaths = () => {}, onMoves = null, onIndexed = () => {}, renamed = () => ({}), forget = () => {}, log = () => {} }) {
+export function createVaultIndex({ vault, root = null, onLinks = () => {}, isExcludedPath, isDeniedText = () => false, isExcludedText, redact, onChange, onPaths = () => {}, onMoves = null, onIndexed = () => {}, renamed = () => ({}), forget = () => {}, log = () => {} }) {
   const files = new Map(); // rel -> { mtime, size, note, text, flagged, t }
   // linkHealth's answer: the missing links scored against every note, worked out again only after the index changed,
   // since Notifications and Memory health ask for it on every refresh. Callers read it and never change it
@@ -76,6 +80,7 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
   let dirs = new Set(); // every folder rel that holds an indexed note, so a vanished path can be told from a file
   let watcher = null;
   let timer = null;
+  let pathTimer = null;
   let stopped = false;
   let built = false; // the whole vault has been read once, so a cluster that is missing is gone
 
@@ -101,11 +106,28 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
   }
 
   // a frontmatter name: counts as an alias, since auto-memory notes link to each other by that slug
-  function aliasesOf(rel) {
-    const n = files.get(rel)?.note;
-    if (!n) return [];
-    return typeof n.props.name === 'string' && n.props.name ? [...n.aliases, n.props.name] : n.aliases;
-  }
+  const aliasesOf = (rel) => noteAliases(files.get(rel)?.note);
+
+  // what a link opens that is not an indexed note: a skill folder, a folder or file named by its path, a note in a dot
+  // folder by its name: (vaultPaths.js). A link that opens one is not missing. The walk is asynchronous: the first one
+  // starts once the notes are read (start), the watcher's paths update it in place, and a full read runs
+  // after a rebuild, when the watcher names no paths, and at most once per PATHS_MS on a full sync (the brain root
+  // around the vault has no watcher). Each read that changes the answer relinks and tells onLinks
+  const paths = createVaultPaths({ vault, root, isExcluded: isExcludedPath, log, onChange: () => { if (stopped) return; relink(); try { onLinks(); } catch (e) { log('vault paths', String(e)); } } });
+  let pathsAt = 0;
+  // until the first read is done no link counts as missing: a link to a skill folder is unknown, not dead, so Memory
+  // health raises no dead link, the graph draws no ghost node and auto-apply has no dead link to act on. The first
+  // read relinks and tells onLinks
+  let linksReady = false;
+  const refreshPaths = () => {
+    pathsAt = Date.now();
+    return paths.refresh().then(() => {
+      if (linksReady || stopped) return;
+      linksReady = true;
+      relink();
+      try { onLinks(); } catch (e) { log('vault paths', String(e)); }
+    });
+  };
 
   function relink() {
     health = null;
@@ -120,7 +142,7 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
       for (const link of files.get(rel).note.links) {
         const to = resolve(link.target, rel);
         if (to && to !== rel) { out.push({ to, link }); (backward.get(to) ?? backward.set(to, []).get(to)).push({ from: rel, link }); }
-        else if (!to) missing.push(link);
+        else if (!to && linksReady && !paths.at(link.target, rel)) missing.push(link);
       }
       forward.set(rel, out);
       if (missing.length) unresolved.set(rel, missing);
@@ -140,6 +162,7 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
     }
     for (const rel of [...files.keys()]) if (!seen.has(rel)) { files.delete(rel); changed.push(rel); }
     if (changed.length) { relink(); rememberAll(); }
+    if (Date.now() - pathsAt >= PATHS_MS) void refreshPaths();
     built = true;
     return changed;
   }
@@ -229,12 +252,20 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
     relink();
     rememberAll();
     built = true;
+    // the link paths read in the background; once read, the links they open relink and onLinks hears
+    void refreshPaths();
     log(`indexed ${files.size} notes in ${Date.now() - t0}ms`);
     if (files.size) onChange([...files.keys()]);
     try {
       const pending = new Set();
       let everything = false;
+      const pathNames = new Set();
+      let pathsAll = false;
       watcher = watch(vault, { recursive: true }, (_ev, name) => {
+        // every path reaches the link paths, the dot folders the index skips too (.claude/skills)
+        if (name) pathNames.add(String(name).split(path.sep).join('/')); else pathsAll = true;
+        clearTimeout(pathTimer);
+        pathTimer = setTimeout(() => { const rels = [...pathNames]; const all = pathsAll; pathNames.clear(); pathsAll = false; if (stopped) return; if (all) void refreshPaths(); else void paths.update(rels); }, 300);
         if (name && IGNORED.test(String(name))) return;
         if (name) pending.add(String(name).split(path.sep).join('/')); else everything = true;
         clearTimeout(timer);
@@ -262,7 +293,7 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
     } catch (err) { log('vault watch failed', String(err)); }
   }
 
-  function stop() { stopped = true; watcher?.close(); clearTimeout(timer); }
+  function stop() { stopped = true; watcher?.close(); clearTimeout(timer); clearTimeout(pathTimer); }
 
   const titleOf = (rel) => files.get(rel)?.note.title ?? path.basename(rel, '.md');
   const lineOf = (rel, n) => { const t = files.get(rel)?.text; return t === undefined ? '' : nthLine(t, n).trim(); };
@@ -400,7 +431,7 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
       const lastAt = Math.max(0, ...[...sources].map((r) => files.get(r)?.mtime ?? 0)) || null;
       // each linking note's confidential mark, so a note written from them stays as private as they are
       const confidential = [...sources].map((r) => files.get(r)?.note.props.confidential).filter((v) => v != null && !(Array.isArray(v) && !v.length));
-      return { target, sources: [...sources], count: sources.size, links, lastAt, candidates, contexts, confidential };
+      return { target, sources: [...sources], count: sources.size, links, lastAt, candidates, contexts, confidential, at: at.map(({ rel, line }) => ({ rel, line })) };
     }).sort((a, b) => b.count - a.count || a.target.localeCompare(b.target));
   }
 
@@ -455,7 +486,7 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
   // the notes the new rules drop are reported too, so the readers beside the index (graph, search) let them go
   function rebuild() {
     const before = [...files.keys()];
-    health = null; files.clear(); forward = new Map(); backward = new Map(); unresolved = new Map();
+    health = null; files.clear(); forward = new Map(); backward = new Map(); unresolved = new Map(); void refreshPaths();
     const read = syncAll();
     const changed = [...read, ...before.filter((rel) => !files.has(rel))];
     report(changed);
@@ -465,6 +496,10 @@ export function createVaultIndex({ vault, isExcludedPath, isDeniedText = () => f
 
   return {
     start, stop, sync, syncPaths, movesIn, rebuild, graph, backlinks, outgoing, search, resolve: (target, from) => resolve(target, from),
+    // reads the link paths again (vaultPaths.js); resolves once the read is done
+    refreshPaths,
+    // whether the first read of the link paths is done, so a link that opens nothing counts as missing
+    linksReady: () => linksReady,
     note: (rel) => files.get(rel)?.note ?? null,
     // the note's text as indexed: opted-out lines already withheld, and only the head of a note past INDEX_MAX
     text: (rel) => files.get(rel)?.text ?? null,

@@ -95,3 +95,11 @@ export function createResolver(rels, aliasesOf) {
     return byAlias.get(t) ?? null;
   };
 }
+
+// every name a note goes by besides its file name: its aliases, and its frontmatter name: (auto-memory notes link to
+// each other by that slug). The vault index, the memory engine and the resolver read the same list
+export function noteAliases(note) {
+  if (!note) return [];
+  const own = note.aliases ?? [];
+  return typeof note.props?.name === 'string' && note.props.name ? [...own, note.props.name] : own;
+}

@@ -15,7 +15,7 @@
 // The fixes run through the fix run machinery like every other finding (main.js runOp, batchPlan.js, versions, Undo);
 // this module holds the steps of the ops the setup rules added (create, mention, alias, merge, split), and, after a
 // batch, the person-provenance edges its approved connections record in the graph store.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { aliasText, rewriteLinks, writeAtomic } from './relink.js';
 import { vaultPath, vaultTarget, walk } from './vault.js';
@@ -26,7 +26,7 @@ import { parseNote } from './linkparse.js';
 import { RULE_LABELS, SETUP_RULES } from './rules/index.js';
 import { entityKinds, normName, PEOPLE_KEYS, PROJECT_KEYS } from './rules/entities.js';
 import { BUDGET, INSTRUCTION_NAME } from './rules/instructions.js';
-import { bodyOf, DAY } from './rules/common.js';
+import { bodyOf, DAY, meetingInstance } from './rules/common.js';
 import { ENTITY_FOLDERS, entityId, folderKind, noteKind } from './graph/extract.js';
 
 // the ops this module runs for a finding item (main.js runOp hands them here)
@@ -163,6 +163,8 @@ export async function runSetupOp(item, o, { step, keep, vault, written = new Set
     writeAtomic(vaultPath(vault, o.rel), aliasText(read(o.rel), o.alias));
   } else if (o.op === 'merge') {
     need(o.rel); need(o.drop);
+    // a dated meeting note is one instance of a series and never goes to the Trash (rules/common.js meetingInstance)
+    if (meetingInstance(o.drop, vindex.note?.(o.drop)?.props ?? parseNote(o.drop, read(o.drop)).props)) throw new Error(`“${o.drop}” is a dated meeting note, so Quorum did not merge it. Each meeting in a series keeps its own note`);
     fresh(o.rel); fresh(o.drop);
     const hidden = unindexedLinkers(vault, o.drop, new Set(vindex.rels()));
     if (hidden.length) throw new Error(`${hidden.length === 1 ? 'A note' : `${hidden.length} notes`} Quorum does not read ${hidden.length === 1 ? 'links' : 'link'} to “${o.drop}”, so Quorum did not merge it. Their links would open nothing`);
@@ -338,6 +340,29 @@ export function outsideInstructions({ root, vault, resolve = () => null }) {
     if (!INSTRUCTION_NAME.test(noExt(name))) continue;
     const dead = [...new Set(parseNote(name, text).links.filter((l) => !l.embed && l.kind === 'wiki' && !resolve(l.target, '')).map((l) => noExt(l.target)))];
     out.push({ file: name, chars: text.length, budget: BUDGET, over: text.length > BUDGET, dead });
+  }
+  return out;
+}
+
+// The text of the instruction files the vault index leaves out: CLAUDE.md, AGENTS.md and GEMINI.md at the brain root
+// and in .claude, and each skill's SKILL.md under .claude/skills, in the vault and at the brain root. The placement rule
+// reads them for the notes a scheduled skill or the instructions name (rules/unplaced.js namedIn). At most MAX_SKILLS
+// skills and the first 64 KB of each file
+export const MAX_SKILLS = 200;
+export function instructionTexts({ root, vault }) {
+  const out = [];
+  const read = (abs) => { try { out.push(readFileSync(abs, 'utf8').slice(0, 65536)); } catch { /* not there */ } };
+  const dirs = [...new Set([root, vault].filter(Boolean).map((d) => path.resolve(d)))];
+  let skills = 0;
+  for (const d of dirs) {
+    for (const name of ['CLAUDE.md', 'AGENTS.md', 'GEMINI.md']) { if (d !== path.resolve(vault ?? '')) read(path.join(d, name)); read(path.join(d, '.claude', name)); }
+    let entries;
+    try { entries = readdirSync(path.join(d, '.claude', 'skills'), { withFileTypes: true }); } catch { continue; }
+    for (const e of entries) {
+      if (!e.isDirectory() || skills >= MAX_SKILLS) continue;
+      skills++;
+      read(path.join(d, '.claude', 'skills', e.name, 'SKILL.md'));
+    }
   }
   return out;
 }

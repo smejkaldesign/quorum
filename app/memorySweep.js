@@ -10,12 +10,15 @@
 import { closeSync, openSync, readFileSync, readSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseFrontmatter } from './linkparse.js';
-import { mergeFindings, runRules } from './rules/index.js';
+import { RULES, mergeFindings, runRules } from './rules/index.js';
 
 export const INCREMENTAL_EVERY = 3.5 * 3600000;
 export const FULL_EVERY = 24 * 3600000;
 export const IDLE_FOR = 10 * 60000;
 const HEAD = 8192;
+const VERSIONS = Object.fromEntries(RULES.map((r) => [r.rule.id, r.rule.version]));
+// a finding a rule of another version raised: the rule changed, so the next check runs it over the whole vault
+export const staleFinding = (f) => f.ruleId in VERSIONS && f.ruleVersion !== VERSIONS[f.ruleId];
 
 // which sweep is due now, or null. idleMs: how long the keyboard and mouse have been still; recording: a meeting is
 // being recorded or listened to
@@ -77,9 +80,10 @@ export function createMemorySweep({ file, now = () => Date.now() }) {
     const s = load()[vault] ?? (load()[vault] = { findings: [], lastFull: 0, lastIncremental: 0 });
     const live = new Set([...ctx.notes.map((n) => n.rel), ...(ctx.tags ?? []).map((t) => t.rel)]);
     const since = s.lastIncremental || s.lastFull || 0;
-    const scope = kind === 'save' ? only : kind === 'incremental' ? ctx.notes.filter((n) => n.mtime > since).map((n) => n.rel) : null;
     // a finding on a note that is gone goes with it
     const prev = s.findings.filter((f) => f.notes.every((rel) => live.has(rel)));
+    // findings a rule raised before it changed are checked again everywhere, so the ones it no longer raises go
+    const scope = prev.some(staleFinding) ? null : kind === 'save' ? only : kind === 'incremental' ? ctx.notes.filter((n) => n.mtime > since).map((n) => n.rel) : null;
     const { findings, ms, whole = [] } = scope && !scope.length ? { findings: [], ms: {} } : runRules(ctx, { only: scope });
     const seen = new Map(prev.map((f) => [f.key, f]));
     const at = now();
@@ -95,4 +99,22 @@ export function createMemorySweep({ file, now = () => Date.now() }) {
   // memory only, since the process that ran the sweep saved it
   const put = (vault, s) => { load()[vault] = s; };
   return { run, state, put, findings: (vault) => state(vault)?.findings ?? [] };
+}
+
+// A whole-vault check a settings change asks for (the suggestions Settings > Memory turns on or off): one check for any
+// number of asks within delay ms, and none while blocked() (sweeps paused, a meeting recorded); the ask waits, and
+// tick() (the sweep timer) runs it once nothing blocks it. run() is the check; it applies no fixes on its own
+export function createRerun({ run, blocked = () => false, delay = 1000 }) {
+  let asked = false;
+  let timer = null;
+  const tick = () => {
+    clearTimeout(timer);
+    timer = null;
+    if (!asked || blocked()) return false;
+    asked = false;
+    run();
+    return true;
+  };
+  const ask = () => { asked = true; clearTimeout(timer); timer = setTimeout(tick, delay); timer.unref?.(); };
+  return { ask, tick, waiting: () => asked };
 }

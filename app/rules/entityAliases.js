@@ -3,11 +3,12 @@
 // and a name the notes mention that matches a person or project note this way. From the graph's nodes and aliases when
 // it is built, else from the notes and their frontmatter. Approve merges two notes into the one more notes link to
 // (the other's name becomes an alias, its links point at the kept note, and it goes to the Trash), or adds the
-// mentioned name as an alias of the note.
-import { ENTRY_NAME, baseOf, dirOf, finding, quote } from './common.js';
+// mentioned name as an alias of the note. A dated meeting note is never merged (common.js meetingInstance): two
+// instances of one series under one title are two notes.
+import { ENTRY_NAME, baseOf, dirOf, finding, isInstance, quote } from './common.js';
 import { cleanName, confidentialSet, entityKinds, folderKind, frontmatterNames, isName, live, namesOf, normName } from './entities.js';
 
-export const rule = { id: 'note.entity-alias', version: 2, label: 'People and projects under two names' };
+export const rule = { id: 'note.entity-alias', version: 3, label: 'People and projects under two names' };
 
 // whether two names are one: equal once normalized, or, for people, first name plus last initial against a first and
 // last name made of letters ("Ana R." and "Ana Ruiz"; "Project A" and "Project A26" stay apart)
@@ -54,6 +55,8 @@ export function run(ctx) {
     const [a, b] = [group[i], group[j]];
     // the same file name in two folders is a path link's job (projects/alpha/overview.md, projects/beta/overview.md)
     if (sameFile(a, b)) continue;
+    // two dated instances of one series are two notes, and a merge would send one to the Trash
+    if (isInstance(a) || isInstance(b)) continue;
     // two folder notes nothing names as a person or project are two notes (a spec and its copy are the duplicate rule's)
     if (!read(a) && !read(b)) continue;
     const pair = names(a).flatMap((x) => names(b).map((y) => [x, y])).find(([x, y]) => sameEntity(x, y, { initials: kindOf(a) === 'person' }) || normName(x) === normName(y));

@@ -125,10 +125,12 @@ describe('approvePastFix: remove what the fix left', () => {
 
 describe('approveFinding', () => {
   const f = (ruleId, extra = {}) => ({ ruleId, key: `${ruleId}:notes/x.md`, rel: 'notes/x.md', facts: [], ...extra });
-  it('adds missing frontmatter keys, with a value Quorum can tell or an empty one', () => {
+  it('adds missing frontmatter keys with a value Quorum can tell, and never an empty one', () => {
     const a = approveFinding(f('note.frontmatter', { rel: 'log/2026-03-04 call.md', facts: ['missing:date', 'missing:owner', 'type:status'] }), { title: () => 'Call' });
-    expect(a.ops).toEqual([{ op: 'setkey', rel: 'log/2026-03-04 call.md', key: 'date', value: '2026-03-04' }, { op: 'setkey', rel: 'log/2026-03-04 call.md', key: 'owner', value: '""' }]);
-    expect(a.says).toBe('Add “date” (2026-03-04) and “owner” with an empty value.');
+    expect(a.ops).toEqual([{ op: 'setkey', rel: 'log/2026-03-04 call.md', key: 'date', value: '2026-03-04' }]);
+    expect(a.says).toBe('Add “date” (2026-03-04).');
+    // a finding an older version raised with only keys Quorum cannot fill changes nothing
+    expect(approveFinding(f('note.frontmatter', { facts: ['missing:owner'] })).kind).toBe('keep');
     expect(approveFinding(f('note.frontmatter', { facts: ['twice:tags'] })).kind).toBe('keep');
   });
 

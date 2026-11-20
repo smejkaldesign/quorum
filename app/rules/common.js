@@ -44,6 +44,22 @@ export const quote = (t) => `“${t}”`;
 export const ENTRY_NAME = /^(index|_index|readme|_readme|claude|agents|log|changelog|home|start|moc)$/i;
 // a note named by its date: a daily note or a session log, reached by date and written as a log
 export const DATED = /\d{4}-\d{2}-\d{2}/;
+// One dated instance of a recurring note: a note named by its date (or undated-, as a notetaker files a meeting with no
+// date), or a meeting note (a meetings, meeting notes, 1:1s, one-on-ones or standups folder; type meeting,
+// meeting-note, meeting_notes, 1:1 or standup; or attendees in its frontmatter). Two instances of one series (the
+// same monthly all-hands on two dates, two 1:1s with the same person) are separate notes: no rule proposes merging one
+// into another or sending it to the Trash, and the merge steps refuse to (memorySetup.js runSetupOp, reviewItems.js
+// findingItem, memoryDraft.js). The duplicate rules leave them out, byte-identical copies too: a copy of one meeting is
+// for a person to sort out, and Quorum offers no fix that could remove a meeting note
+const MEETING_DIR = /(^|\/)(\d+[-_ ]*)?(meetings?|meeting[-_ ]?notes?|1[-_:]?(on[-_ ]?)?1s?|one[-_ ]?on[-_ ]?ones?|standups?)(\/|$)/i;
+const MEETING_TYPE = /^(meetings?|meeting[-_ ]?notes?|1[-_:]?(on[-_ ]?)?1|one[-_ ]?on[-_ ]?one|standup)$/i;
+export function meetingInstance(rel, props = {}) {
+  if (DATED.test(baseOf(rel)) || /^undated-/i.test(baseOf(rel)) || MEETING_DIR.test(dirOf(rel))) return true;
+  const type = String(Array.isArray(props?.type) ? props.type[0] : props?.type ?? '').trim();
+  if (MEETING_TYPE.test(type)) return true;
+  return ['attendees', 'participants'].some((k) => (Array.isArray(props?.[k]) ? props[k].length : String(props?.[k] ?? '').trim()));
+}
+export const isInstance = (n) => !!n && meetingInstance(n.rel, n.note?.props ?? {});
 
 // the frontmatter block as raw lines, without the --- fences, or null when the note has none
 export function frontmatterLines(text) {

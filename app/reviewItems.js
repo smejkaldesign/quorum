@@ -1,6 +1,8 @@
 // The review items of Needs review as the batch planner reads them (batchPlan.js): a missing link's fix, a corrective
 // past fix, and a review rule's fix. Plain Node with no Electron, so main and the read-only plan script build the same
 // items. An item's id is its row id in Notifications.
+import { meetingInstance } from './rules/common.js';
+
 export const ROW = { link: 'r:link:', pastfix: 'r:pastfix:', finding: 'r:find:' };
 // the title of a past fix an agent can improve (reviewApprove.js retroOf)
 export const RETRO_TITLE = 'Retroactive improvement';
@@ -22,10 +24,12 @@ export function linkItem(issue, { noteOf = () => null } = {}) {
   const c = issue.candidate;
   // how well the name matched the note Quorum picked, for the quality gate (qualityGate.js weakLink)
   const match = c ? { exact: !!c.exact, score: Number(c.score ?? 0) } : null;
-  const base = { id: `${ROW.link}${issue.key}`, kind: 'link', key: issue.key, target: issue.target, title: issue.target, sources: issue.sources ?? [], autoFix: !issue.reviewOnly && issue.action !== 'leave', reviewOnly: !!issue.reviewOnly, match };
+  const base = { id: `${ROW.link}${issue.key}`, kind: 'link', key: issue.key, target: issue.target, title: issue.group ? `${issue.group.rel}, line ${issue.group.line + 1}` : issue.target, ...(issue.group ? { line: issue.group } : {}), sources: issue.sources ?? [], autoFix: !issue.reviewOnly && issue.action !== 'leave', reviewOnly: !!issue.reviewOnly, match };
   const lines = () => linkLines(noteOf, issue.sources, issue.target);
   if (issue.action === 'alias' && c) return { ...base, ops: [{ op: 'alias', rel: c.rel, alias: issue.target }] };
   if (issue.action === 'relink' && c) return { ...base, ops: [{ op: 'relink', target: issue.target, to: c.rel, sources: issue.sources, lines: lines(), links: issue.links }] };
+  // a line that links several missing notes (memoryHealth.js groupByLine): one unlink per name, on that line's note
+  if (issue.action === 'unlink' && issue.group) return { ...base, direct: true, ops: issue.group.targets.map((t) => ({ op: 'unlink', target: t, sources: [issue.group.rel], lines: linkLines(noteOf, [issue.group.rel], t), links: 1 })) };
   if (issue.action === 'unlink') return { ...base, ops: [{ op: 'unlink', target: issue.target, sources: issue.sources, lines: lines(), links: issue.links }] };
   if (issue.action === 'create') {
     const name = String(issue.target).split('/').pop();
@@ -57,7 +61,8 @@ export function pastFixItem({ run, res, plan }) {
 // link two notes; rules/contradictions.js: add a marker to one line; rules/hygiene.js: trash litter folders, compact a
 // note, commit notes; the Memory setup rules and duplicates and oversized: their ops as they are, kind 'ops'), else the change Approve makes for its rule (reviewApprove.js approveFinding, kept on the finding as
 // approve), else keep as is
-export function findingItem(f) {
+// propsOf(rel): a note's frontmatter, so a merge that would drop a meeting note is held by its type and attendees too
+export function findingItem(f, { propsOf = () => ({}) } = {}) {
   // a finding on the vault as a whole (rules/hygiene.js litter and uncommitted notes) has no note and goes by its title
   const base = { id: `${ROW.finding}${f.key}`, kind: 'finding', key: f.key, target: f.key, title: f.rel ?? f.title, ruleId: f.ruleId, notes: f.notes, autoFix: !!f.autoFix, reviewOnly: false };
   const x = f.fix;
@@ -65,6 +70,8 @@ export function findingItem(f) {
     const a = f.approve ?? { kind: 'keep', ops: [{ op: 'keep' }] };
     return { ...base, autoFix: false, group: a.kind === 'keep' ? 'keep' : undefined, keep: a.kind === 'keep', ops: a.ops };
   }
+  // a merge never sends a dated meeting note to the Trash (rules/common.js meetingInstance)
+  if (x.kind === 'ops' && x.ops.some((o) => o.op === 'merge' && meetingInstance(o.drop, propsOf(o.drop) ?? {}))) return { ...base, autoFix: false, hold: 'It would send a dated meeting note to the Trash. Each meeting in a series keeps its own note.', ops: [] };
   if (x.kind === 'ops') return { ...base, ...(x.group ? { group: x.group } : {}), ops: x.ops.map((o) => ({ ...o })) };
   const ops = [];
   if (x.kind === 'link') ops.push({ op: 'link', rel: f.rel, to: x.to });
@@ -107,6 +114,7 @@ export function itemLine(item) {
   }
   if (o.op === 'alias') return `Add ${q(o.alias)} as an alias of ${q(o.rel)}`;
   if (o.op === 'relink') return `Point the links to ${q(o.target)} at ${q(o.to)}`;
+  if (o.op === 'unlink' && item.kind === 'link' && item.line) return `Remove the ${item.ops.length} dead links on line ${item.line.line + 1} of ${q(item.line.rel)}`;
   if (o.op === 'unlink') return `Remove the dead links to ${q(o.target)}`;
   if (o.op === 'create') return `Write ${q(o.rel)}${o.text ? ' as the agent drafted it' : ''}`;
   if (o.op === 'link') return `Link ${q(o.rel)} to ${q(o.to)}`;
@@ -121,3 +129,7 @@ export function itemLine(item) {
   if (o.op === 'commit') return `Commit ${o.paths.length} ${o.paths.length === 1 ? 'note' : 'notes'} on ${o.branch} with the message ${q(o.message)}`;
   return item.title;
 }
+
+// the items Apply memory fixes on its own may run: never a missing link's fix while the link paths are still loading
+// (vindex.js linksReady), since a link that opens nothing then may open a skill folder once they are read
+export const autoApplyable = (items, { linksReady = true } = {}) => items.filter((i) => linksReady || i.kind !== 'link');

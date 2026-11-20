@@ -72,7 +72,7 @@ describe('the setup rules', () => {
     const ids = RULES.map((r) => r.rule.id);
     for (const id of SETUP_RULES) expect(ids).toContain(id);
     const notes = [meeting(1, ['Ana Ruiz']), meeting(2, ['Ana Ruiz']), meeting(3, ['Ana Ruiz'])];
-    const { findings } = runRules(ctx(notes));
+    const { findings } = runRules(ctx(notes, { optIn: { entityNotes: true } }));
     expect(findings.some((f) => f.ruleId === 'note.missing-entity')).toBe(true);
     expect(findings.every((f) => f.autoFix === false)).toBe(true);
   });
@@ -100,13 +100,13 @@ describe('note.missing-entity', () => {
   });
   it('leaves out the vault owner, and drops a trailing period from the file name', () => {
     const notes = [1, 2, 3].map((i) => meeting(i, ['Rae Owner', 'Blaze M.']));
-    const fs = missingEntity.run(ctx(notes, { owner: 'Rae Owner' }));
+    const fs = missingEntity.run(ctx(notes, { owner: 'Rae Owner', optIn: { entityNotes: true } }));
     expect(fs.map((f) => f.target)).toEqual(['Blaze M.md']);
   });
   it('reads names from the graph when it is built', () => {
     const notes = [1, 2, 3].map((i) => note(`n${i}.md`, `# N${i}\n`));
     const store = fakeStore({ nodes: [{ id: 'project:atlas', kind: 'project', name: 'Atlas', rel: null }], edges: notes.map((n) => ({ src: `note:${n.rel}`, dst: 'project:atlas', kind: 'mentions', source_rel: n.rel })) });
-    const [f] = missingEntity.run(ctx(notes, { graph: ruleGraph(store) }));
+    const [f] = missingEntity.run(ctx(notes, { graph: ruleGraph(store), optIn: { entityNotes: true } }));
     expect(f.target).toBe('Atlas.md');
     expect(f.evidence).toContain('Found in the memory graph');
   });
@@ -169,7 +169,7 @@ describe('note.entity-type and note.unplaced', () => {
       note('projects/a.md', '# A'), note('projects/b.md', '# B'), note('projects/c.md', '# C'),
       note('Roadmap.md', '# Roadmap\n\n[[a]] [[b]] [[c]]\n'),
     ];
-    expect(unplaced.run(ctx(notes)).map((f) => f.fix.ops[0])).toEqual([{ op: 'move', rel: 'Ben.md', to: 'people/Ben.md' }, { op: 'move', rel: 'Roadmap.md', to: 'projects/Roadmap.md' }]);
+    expect(unplaced.run(ctx(notes, { optIn: { placement: true } })).map((f) => f.fix.ops[0])).toEqual([{ op: 'move', rel: 'Ben.md', to: 'people/Ben.md' }, { op: 'move', rel: 'Roadmap.md', to: 'projects/Roadmap.md' }]);
   });
 });
 
@@ -225,7 +225,7 @@ describe('graph reads in the existing rules', () => {
 describe('review items and the plan', () => {
   it('turn a setup finding into one item whose note is written before its mentions are linked', () => {
     const notes = [meeting(1, ['Ana Ruiz']), meeting(2, ['Ana Ruiz']), meeting(3, ['Ana Ruiz'])];
-    const item = findingItem(missingEntity.run(ctx(notes))[0]);
+    const item = findingItem(missingEntity.run(ctx(notes, { optIn: { entityNotes: true } }))[0]);
     expect(itemLine(item)).toBe('Write “Ana Ruiz.md” and link 3 mentions to it');
     const plan = buildPlan([item]);
     expect(plan.ok).toEqual([item.id]);
@@ -562,7 +562,7 @@ describe('false positives', () => {
   it('confidential notes are never moved or merged across the confidential line', () => {
     const notes = [note('private/Ben.md', `${fm({ type: 'person' })}# Ben`), note('people/a.md', `${fm({ type: 'person' })}# A`)];
     expect(unplaced.run(ctx(notes, { folders: { private: 'confidential' } }))).toEqual([]);
-    expect(unplaced.run(ctx(notes)).map((f) => f.fix.ops[0].to)).toEqual(['people/Ben.md']);
+    expect(unplaced.run(ctx(notes, { optIn: { placement: true } })).map((f) => f.fix.ops[0].to)).toEqual(['people/Ben.md']);
     const body = 'Shared body text that is long enough to count as a duplicate of the other note. '.repeat(4);
     const twins = [note('x/one.md', `${fm({ confidential: 'client' })}${body}`), note('y/two.md', body)];
     expect(duplicates.run(ctx(twins))).toEqual([]);

@@ -7,12 +7,13 @@
 // to the copy point at it, and the copy goes to the Trash. With the memory graph built, two notes that go by the same
 // name are listed too, when that name is an alias one of them sets in its frontmatter and their bodies share enough
 // words: a link by that name reaches only one. Two notes that only share a title (two "Weekly sync" meetings, two
-// "Notes") are separate notes. Notes whose confidentiality differs never merge: the merge would copy a confidential
-// body into a note that is not.
-import { DATED, baseOf, bodyOf, dirOf, finding, plural, quote, skipped } from './common.js';
+// "Notes") are separate notes, and so are dated meeting notes with the same text (common.js meetingInstance): a merge
+// would send an instance of a series to the Trash. Notes whose confidentiality differs never merge: the merge would copy
+// a confidential body into a note that is not.
+import { DATED, baseOf, bodyOf, dirOf, finding, isInstance, plural, quote, skipped } from './common.js';
 import { confidentialSet, entityKinds, kindOf, namesOf, normName } from './entities.js';
 
-export const rule = { id: 'note.duplicate', version: 2, label: 'Duplicate notes' };
+export const rule = { id: 'note.duplicate', version: 3, label: 'Duplicate notes' };
 const MIN_BODY = 200;
 const TEMPLATE_REPEAT = 3;
 const MIRROR_PAIRS = 5;
@@ -55,6 +56,7 @@ export function run(ctx) {
   }
   const groups = new Map();
   for (const n of live) {
+    if (isInstance(n)) continue;
     const rep = repeats.get(dirOf(n.rel));
     const body = linesOf.get(n.rel).filter((l) => (rep.get(l) ?? 0) < TEMPLATE_REPEAT).join('\n');
     if (body.length < MIN_BODY) continue;
@@ -113,7 +115,7 @@ const mergeFix = (kept, rels, notes) => ({ kind: 'ops', group: 'merge-copies', o
 // design and are left out
 function aliasDuplicates(live, graph, secret, entity) {
   const owners = new Map();
-  const pool = live.filter((n) => !DATED.test(baseOf(n.rel)) && kindOf(n) !== 'meeting' && kindOf(n) !== 'decision');
+  const pool = live.filter((n) => !DATED.test(baseOf(n.rel)) && !isInstance(n) && kindOf(n) !== 'meeting' && kindOf(n) !== 'decision');
   for (const n of pool) for (const name of new Set([...namesOf(n), ...graph.aliasesOf(n.rel)].map(normName).filter((x) => x.length >= 3))) (owners.get(name) ?? owners.set(name, new Set()).get(name)).add(n.rel);
   const explicit = (n, name) => (n.note?.aliases ?? []).some((a) => normName(a) === name);
   const out = [];

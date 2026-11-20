@@ -94,7 +94,14 @@ describe('frontmatter schema', () => {
     const notes = [...folder(5, { status: 'draft', date: '2026-01-02' }), note('specs/odd.md', `${fm({ date: 'soon' })}# Odd`)];
     const [f] = frontmatter.run(ctx(notes));
     expect(f.notes).toEqual(['specs/odd.md']);
-    expect(f.evidence.join(' ')).toMatch(/Missing “status”.*“date” is text; the notes in specs use date/);
+    expect(f.evidence.join(' ')).toMatch(/“date” is text; the notes in specs use date/);
+  });
+  it('never proposes a key it could only add with an empty value', () => {
+    // status has no value Quorum can tell from the note: no item. title and a dated file's date it can fill
+    expect(frontmatter.run(ctx([...folder(5, { status: 'draft' }), note('specs/bare.md', '# Bare')]))).toEqual([]);
+    const [f] = frontmatter.run(ctx([...folder(5, { status: 'draft', date: '2026-01-02' }), note('specs/2026-03-04-bare.md', '# Bare')]));
+    expect(f.evidence).toEqual(['Missing “date”, which 83% of the 6 notes in specs have']);
+    expect(f.facts).toEqual(['missing:date']);
   });
   it('flags a key written twice', () => {
     const [f] = frontmatter.run(ctx([note('a/x.md', '---\nsummary: one\nsummary: two\n---\n# X')]));

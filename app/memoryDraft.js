@@ -29,6 +29,8 @@ import { FRONT, frontBlock } from './frontmatter.js';
 import { aliasText } from './relink.js';
 import { sha } from './fixUndo.js';
 import { RETRO_ACTIONS, retargetText, retroOps } from './reviewApprove.js';
+import { parseFrontmatter } from './linkparse.js';
+import { meetingInstance } from './rules/common.js';
 
 export const DAILY_CAP = 40;
 export const QUIET_MS = 2 * 60000;
@@ -242,6 +244,8 @@ export function withDraft(item, draft, textOf, aliasesOf = () => []) {
   if (draft.kind === 'merge') {
     const keepText = textOf(draft.keep);
     if (keepText == null || textOf(draft.drop) == null) return { ...out, ops: [], hold: 'A note in the draft is gone.' };
+    // a dated meeting note is one instance of a series and never goes to the Trash (rules/common.js meetingInstance)
+    if (meetingInstance(draft.drop, parseFrontmatter(textOf(draft.drop)).props)) return { ...out, ops: [], hold: 'It would send a dated meeting note to the Trash. Each meeting in a series keeps its own note.' };
     const have = new Set([baseOf(draft.keep), ...aliasesOf(draft.keep)].map((a) => String(a).toLowerCase()));
     const add = [...new Set([baseOf(draft.drop), ...aliasesOf(draft.drop)].map(String))].filter((a) => a && !have.has(a.toLowerCase()) && have.add(a.toLowerCase()));
     const merged = add.reduce(aliasText, withFront(keepText, draft.text));
