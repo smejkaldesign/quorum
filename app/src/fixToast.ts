@@ -4,6 +4,8 @@ import { toast } from './Toasts';
 // resolves with an approved link's fix run once it has finished
 // one link's outcome in a run: a batch reports each item, and an item it skipped fails while the batch succeeds
 const linkOf = (r: FixRun, key: string) => (r.kind === 'batch' ? r.items?.find((i) => i.kind === 'link' && i.key === key) : undefined);
+// whether a run holds this link: a fix by its key, a batch as one of its items
+export const holdsLink = (r: FixRun, key: string) => r.key === key.toLowerCase() || !!linkOf(r, key.toLowerCase());
 export const outcomeOf = (r: FixRun, key: string): { ok: boolean; error: string | null } => {
   const it = linkOf(r, key.toLowerCase());
   if (r.status !== 'success') return { ok: false, error: r.error };
@@ -17,8 +19,7 @@ export function waitFix(key: string): Promise<FixRun> & { off: () => void } {
   let off = () => {};
   const done = new Promise<FixRun>((resolve) => {
     // a link the agent fixes on Approve runs as a batch of one (main.js startFixes), so its run holds it as an item
-    const mine = (r: FixRun) => r.key === k || !!linkOf(r, k);
-    off = window.quorum.onFixRun((r) => { if (mine(r) && (r.status === 'success' || r.status === 'error') && (r.endedAt ?? 0) >= since) { off(); resolve(r); } });
+    off = window.quorum.onFixRun((r) => { if (holdsLink(r, k) && (r.status === 'success' || r.status === 'error') && (r.endedAt ?? 0) >= since) { off(); resolve(r); } });
   });
   return Object.assign(done, { off: () => off() });
 }

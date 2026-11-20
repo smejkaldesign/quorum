@@ -53,6 +53,10 @@ export type GuardrailRule = { id: string; kind: GuardrailKind; label: string; va
 export type GuardrailDenial = { id: string; t: string; path: string; tool: string; surface: 'agent' | 'keeper'; reason: string; guard: string; guardLabel: string };
 export type GuardrailsState = { rules: GuardrailRule[]; skipped: { name: string; reason: string }[]; scanned: { notes: number; at: number | null; truncated: boolean }; denials: GuardrailDenial[]; summary: { on: number; toReview: number; denyDirs: number; terms: number } };
 // in-app updates (app/updater.js): off means this build has no feed (a development copy, or a Cloud build without one)
+// Report issue (issueReports.js): the masked diagnostics prepare() returns, and the draft the sheet sends
+export type IssueReportPrep = { install: string; version: string; edition: 'local' | 'cloud'; os: string; view: string; runId: string | null; message: string; lines: string[]; linesWithPaths: string[]; screenshot: string | null; account: { email: string } | null };
+export type IssueReportDraft = { at: string; view: string; title: string; description: string; logLines: string[]; runId: string | null; screenshots: string[]; attachAccount: boolean };
+
 export type UpdateState = { status: 'off' | 'idle' | 'checking' | 'downloading' | 'ready' | 'failed'; current: string; version: string | null; percent: number; notes: string | null; checkedAt: number | null; error: string | null };
 // a personal OAuth connector (sources/accounts.js); configured is false when this build has no client id for it
 export type OAuthAccount = { id: string; name: string; configured: boolean; connected: boolean; account: string | null; connectedAt: string | null; scope: string; manageUrl: string | null; error: string | null };
@@ -296,10 +300,10 @@ export type FeedTab = 'all' | 'unread' | 'archived';
 export type FeedSort = 'unread' | 'recent' | 'az';
 export type FeedSummary = { line: string; sub: string | null; ask?: { question: string; suggest: 'approve' | 'reject'; why: string; problem: string; solution: string; value: string; recommendation: string }; problem?: string; solution?: string; value?: string; recommendation?: string };
 export type FixStep = { label: string; at: number; endedAt: number | null };
-export type FixRun = { id: string; key: string; target: string; title: string; rel: string; status: 'queued' | 'running' | 'success' | 'error'; queuedAt: number; startedAt: number | null; endedAt: number | null; steps: FixStep[]; outcome: string | null; error: string | null; dismissedAt: number | null; batch?: string | null; undoable?: boolean; undoneAt?: number | null; problem?: string; solution?: string; value?: string; recommendation?: string; meta?: [string, string][]; showBanner?: boolean; kind?: 'batch'; auto?: boolean; actor?: string; by?: string; items?: BatchItem[]; groups?: { id: string; label: string; count: number }[]; rolledBack?: boolean };
+export type FixRun = { id: string; key: string; target: string; title: string; rel: string; status: 'queued' | 'running' | 'success' | 'error'; queuedAt: number; startedAt: number | null; endedAt: number | null; steps: FixStep[]; outcome: string | null; error: string | null; dismissedAt: number | null; batch?: string | null; undoable?: boolean; undoneAt?: number | null; problem?: string; solution?: string; value?: string; recommendation?: string; meta?: [string, string][]; showBanner?: boolean; kind?: 'batch'; auto?: boolean; actor?: string; by?: string; items?: BatchItem[]; groups?: { id: string; label: string; count: number }[]; rolledBack?: boolean; cancelled?: boolean; interrupted?: boolean };
 // one item of a batch run, with its own state while the batch works
 // error: why the item failed on its own; rolledBack: it was fixed, then put back when the whole batch rolled back
-export type BatchItem = { id: string; kind: 'link' | 'pastfix' | 'finding'; key: string; link: string | null; title: string; line: string; status: 'queued' | 'running' | 'success' | 'error'; error?: string | null; skipped?: boolean; rolledBack?: boolean };
+export type BatchItem = { id: string; kind: 'link' | 'pastfix' | 'finding'; key: string; link: string | null; title: string; line: string; status: 'queued' | 'running' | 'success' | 'error'; error?: string | null; skipped?: boolean; rolledBack?: boolean; cause?: boolean };
 // the bulk plan sheet: groups of what the batch will do, each item ticked or not, and what was merged, skipped or held back
 export type PlanItem = { id: string; title: string; kind: string; notes: string[]; line: string; on: boolean; draft?: MemoryDraft | null };
 // a fix the agent drafted (memoryDraft.js); every quote was checked against the line it names
@@ -530,7 +534,8 @@ declare global {
       vaultLinkDecide(key: string, verdict: 'approve' | 'dismiss'): Promise<string>;
       fixStart(keys: string[]): Promise<FixRun[]>;
       // stops a bulk Approve: drops its queued fixes and stops the running one before its next step; answers how many
-      fixCancel(batch: string): Promise<number>;
+      // a bulk Approve's batch id, or one run's id
+      fixCancel(id: string): Promise<number>;
       memoryFindings(): Promise<{ findings: MemoryFinding[]; last: MemorySweepInfo | null; lastFull: number; paused: boolean; labels: Record<string, string>; drafts?: Record<string, MemoryDraft>; checking?: boolean; engineError?: string | null }>;
       memoryGate(): Promise<{ checking: boolean; stopped: boolean; at: number }>;
       memoryRuleRecords(): Promise<RuleRecord[]>;
@@ -857,6 +862,10 @@ declare global {
       reportError(r: { view: string; message: string; stack: string; componentStack: string; repeat: boolean }): Promise<boolean>;
       // reloads the window's page without quitting Quorum
       reloadWindow(): Promise<void>;
+      // Report issue (issueReports.js): what a report could carry, with the window captured first when asked; then the
+      // send of what the person kept
+      reportIssuePrepare(ctx: { view?: string; action?: string | null; runId?: string | null; message?: string | null; capture?: boolean }): Promise<IssueReportPrep>;
+      reportIssueSend(draft: IssueReportDraft): Promise<{ ok: boolean; error?: string }>;
     };
   }
 }

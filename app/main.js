@@ -13,7 +13,8 @@ import { SKIP as TREE_SKIP, createFolder, createNote, duplicateItem, moveItem, r
 import { createVaultIndex } from './vindex.js';
 import { createMemoryGraph } from './graph/index.js';
 import { applyUndo, sha, undoRecord } from './fixUndo.js';
-import { changedSince, createFixJournal, createNoteHashes, fixCheck, hashNotes, noteMemo, recoveryReason, rollback } from './fixJournal.js';
+import { changedSince, createFixJournal, createNoteHashes, fixCheck, hashNotes, noteMemo, recoveryReason, rollback, writeCheckedNote } from './fixJournal.js';
+import { cancelError, cancelRuns, endFailed, holdFailed } from './fixFailures.js';
 import { createGateStore, gatePasses, gateTriggers, verdictOf } from './gateRun.js';
 import { addAlias, linkSources, relinkMoved, retargetLinks, rewriteLinks, unlinkTarget, writeAtomic } from './relink.js';
 import store from './store/index.js';
@@ -28,6 +29,7 @@ import { fromActionHandlers, runMemoryTool, withholdAnswer } from './cli/memoryT
 import { CONNECTOR_SERVER } from './cli/connectorTools.mjs';
 import { httpUrl, relayFetch, relayUrl } from './relayUrl.js';
 import { createErrorReports } from './errorReports.js';
+import { createIssueReports, createLogTail, encodeCapture } from './issueReports.js';
 import { createViews } from './views.js';
 import { registerOnboarding } from './onboarding.js';
 import { gateOn, registerBeta } from './beta.js';
@@ -374,13 +376,14 @@ const asset = (name) => path.join(here, 'assets', name);
 // a meeting can have several capture segments (STOP, GO, STOP...); STOP deletes all of them
 const meeting = { armed: false, capturing: false, id: null, dirs: [], dir: null, transcript: [], title: '', participants: 0, people: new Set(), terms: [], startedAt: null, endedAt: null, notes: null, summary: emptyState(), summaryAt: 0, privateNotes: '', invitees: [], saved: null };
 
-const log = (...a) => console.log('[quorum]', ...a);
+// the newest log lines stay in memory too, so Report issue can offer the ones for the action that failed (issueReports.js)
+const logTail = createLogTail();
+const log = (...a) => { console.log('[quorum]', ...a); logTail.push(a); };
 // the handlers AI tools call over the control socket (appActions.js): the same functions the app's buttons call
 const actionHandlers = new Map();
 const handleAction = (name, fn) => { const run = feedNotify(name, fn); actionHandlers.set(name, feedTouched(name, run)); ipcMain.handle(name, run); };
 // a fix an AI tool approved keeps its name, so Memory health and Notifications show who approved it
 // the error a cancelled batch ends with; the window finds it by its ending
-const cancelText = (run) => `${run.cancelBy ?? 'You'} cancelled the batch`;
 const byOf = (actor) => (actor && actor !== 'you' && actor !== 'auto' ? { actor, by: actorLabel(actor) } : {});
 // the notetaker flags (notetaker.js). The gates are worked out once from the resolved flags and kept until the flags
 // change (registerFlags' emit below), so a change from the admin app applies without a restart. Until registerFlags
@@ -3204,7 +3207,7 @@ async function decideLink(key, verdict, step = async () => {}, keep = () => {}, 
     await step('Updating the vault index');
     vindex.sync();
     await recheck({ toRel: c.rel });
-    log('memory health', 'added alias', issue.target, 'to', c.rel);
+    log('memory health', 'added alias to', c.rel);
     return `Added “${issue.target}” as an alias of ${c.name ?? c.title}, so ${issue.links} ${issue.links === 1 ? 'link now works' : 'links now work'}`;
   }
   if (issue.action === 'relink' && c) {
@@ -3217,7 +3220,7 @@ async function decideLink(key, verdict, step = async () => {}, keep = () => {}, 
     await step('Updating the vault index');
     vindex.sync();
     await recheck({ toRel: c.rel });
-    log('memory health', 'fixed link', entry.target, '->', c.rel);
+    log('memory health', 'fixed link to', c.rel);
     return `Fixed ${done.links} ${done.links === 1 ? 'link' : 'links'} in ${done.files} ${done.files === 1 ? 'note' : 'notes'}`;
   }
   if (issue.action === 'unlink') {
@@ -3247,12 +3250,13 @@ async function decideLink(key, verdict, step = async () => {}, keep = () => {}, 
   await finder?.refresh();
   const hit = finder?.find(name);
   if (hit) throw new Error(`${hit.kind === 'branch' ? `A note with that name is on the branch ${hit.branch}` : `A ${hit.kind} with that name is at ${hit.where}`}, so Quorum did not write a note`);
-  await step(`Writing ${folder ? `${folder}/` : ''}${name}.md from ${draft?.text ? 'the agent\'s draft' : 'what the linking notes say'}`);
-  guard();
-  const rel = createNote(b.vault, folder, name);
-  keep(rel, true);
-  // a drafted note keeps the frontmatter Quorum writes (the confidential mark of its sources) above the draft's text
-  writeAtomic(path.join(b.vault, rel), `${frontBlock(contextNote(issue))}${draft.text.trim()}\n`);
+  // a drafted note keeps the frontmatter Quorum writes (the confidential mark of its sources) above the draft's text. The
+  // text is checked before the note exists: a link in it that opens nothing fails the fix, which writes nothing
+  await step('Checking the links in the draft');
+  const rel = await writeCheckedNote({
+    vault: b.vault, folder, name, text: `${frontBlock(contextNote(issue))}${draft.text.trim()}\n`, resolve: vindex.resolve, keep,
+    before: async () => { await step(`Writing ${folder ? `${folder}/` : ''}${name}.md from ${draft?.text ? 'the agent\'s draft' : 'what the linking notes say'}`); guard(); },
+  });
   await step('Updating the vault index');
   vindex.sync();
   await recheck({ made: rel });
@@ -3273,7 +3277,7 @@ const fixRunList = () => {
     // a fix still waiting or working when Quorum last quit never finished: it is marked Failed, the notes it wrote go
     // back from its undo record, and its issue is back in review
     const cut = fixRuns.filter((r) => r.status === 'queued' || r.status === 'running');
-    for (const r of cut) Object.assign(r, { status: 'error', error: 'Quorum quit before this fix finished. Approve it again to fix it.', endedAt: r.endedAt ?? Date.now() });
+    for (const r of cut) Object.assign(r, { status: 'error', error: 'Quorum quit before this fix finished. Approve it again to fix it.', interrupted: true, endedAt: r.endedAt ?? Date.now() });
     if (cut.length) setTimeout(() => { recoverRuns(cut).catch((e) => log('fix recover', e?.message)); }, 0);
   }
   return fixRuns;
@@ -3374,7 +3378,7 @@ async function pumpFixes() {
     // a note that still reads as the fix left it, and leaves one the person edited before the next start
     const stamp = () => { const h = hashNotes(run.vault, kept.map((k) => k.rel)); writeUndo(run, kept.map((k) => ({ ...k, after: h[k.rel] }))); };
     const step = async (label) => {
-      if (run.cancel) throw new Error(cancelText(run));
+      if (run.cancel) throw cancelError(run);
       if (work) work.progress((run.items ?? []).filter((i) => i.status === 'success').length, (run.items ?? []).length, label);
       if (kept.length) stamp();
       fixJournal.append(run.id, { step: 'step', label });
@@ -3404,8 +3408,7 @@ async function pumpFixes() {
       run.undoable = saveUndo(run, kept) || (run.kind === 'batch' && !!run.done?.length);
       if (run.kind === 'batch') afterBatch(run, kept);
     } catch (e) {
-      run.status = 'error';
-      run.error = e?.message ?? String(e);
+      endFailed(run, e);
       // a failure the batch could not keep to one item puts every item back: one it had fixed is marked rolled back, one
       // that failed on its own keeps its reason
       if (run.kind === 'batch') rollBackItems(run.items);
@@ -3442,29 +3445,17 @@ async function pumpFixes() {
   fixWorking = false;
 }
 ipcMain.handle('fix-start', (_e, keys) => startFixes(Array.isArray(keys) ? keys : []));
-// Cancel on a bulk Approve: its queued fixes end without running, so their issues stay in Needs review, and the running
-// one stops before its next step, where its rollback puts back every note it changed
+// Cancel on a bulk Approve, or on one fix by its run id (Stop on its row or the Fixing line): queued fixes end without
+// running, so their issues stay in Needs review, and the running one stops before its next step, where its rollback
+// puts back every note it changed
 handleAction('fix-cancel', (_e, batch) => {
   const id = String(batch ?? '');
   if (!id) return 0;
-  let n = 0;
   const by = currentActor() === 'you' ? null : actorLabel(currentActor());
-  for (const r of fixRunList()) {
-    if (r.batch !== id) continue;
-    if (by && (r.status === 'queued' || r.status === 'running')) r.cancelBy = by;
-    if (r.status === 'queued') {
-      const at = fixQueue.indexOf(r);
-      if (at >= 0) fixQueue.splice(at, 1);
-      r.status = 'error';
-      r.error = cancelText(r);
-      r.endedAt = Date.now();
-      for (const it of r.items ?? []) it.status = 'error';
-      batchPlans.delete(r.id);
-      fixJournal.append(r.id, { step: 'ended', status: r.status, error: r.error });
-      fixEmit(r);
-      n++;
-    } else if (r.status === 'running') { r.cancel = true; r.agentAbort?.abort(); n++; }
-  }
+  const n = cancelRuns(fixRunList(), id, {
+    queue: fixQueue, by,
+    ended: (r) => { batchPlans.delete(r.id); fixJournal.append(r.id, { step: 'ended', status: r.status, error: r.error }); fixEmit(r); },
+  });
   if (n) { fixRunsSave(); toUI('memory-updates', null); }
   return n;
 });
@@ -3814,13 +3805,13 @@ async function agentResolve(item, run, step) {
     // a contradiction call that already runs finishes first, so the agent makes one model call at a time. Neither the
     // drafter nor the contradiction agent starts a new call while this batch runs (their busy)
     while (contradictionAbort && !run.cancel) await new Promise((r) => setTimeout(r, 250));
-    if (run.cancel) throw new Error(cancelText(run));
+    if (run.cancel) throw cancelError(run);
     const ctl = new AbortController();
     run.agentAbort = ctl;
     let res;
     try { res = await drafter.onDemand(base, notes, { signal: ctl.signal }); } finally { run.agentAbort = null; }
     gateRuns.fallback(res);
-    if (res.cancelled || run.cancel) throw new Error(cancelText(run));
+    if (res.cancelled || run.cancel) throw cancelError(run);
     if (!res.draft) return res;
     draft = res.draft;
   }
@@ -4510,7 +4501,8 @@ function autoApply() {
   if (fixRunList().some((r) => r.vault === b.vault && (r.status === 'queued' || r.status === 'running'))) return null;
   // the gate's shown items only, and never a kind the live precision guard demoted
   const down = demotions(decisionLog.list(b.vault));
-  const items = gatedItems().filter((i) => i.autoFix && !i.hold && !i.reviewOnly && !i.agent && !i.fallback && i.gate.bucket === 'show' && !down[kindOf(i)]);
+  // an item whose last fix failed or was cancelled waits for the person: it never runs again on its own
+  const items = holdFailed(gatedItems().filter((i) => i.autoFix && !i.hold && !i.reviewOnly && !i.agent && !i.fallback && i.gate.bucket === 'show' && !down[kindOf(i)]), fixRunList().filter((r) => r.vault === b.vault));
   if (!items.length) return null;
   const plan = buildPlan(items);
   if (!plan.ok.length) return null;
@@ -4637,7 +4629,7 @@ ipcMain.handle('vault-add-alias', (_e, rel, alias) => {
   if (!abs || !name || /[\n\r[\]]/.test(name)) throw new Error("Can't add that alias");
   addAlias(abs, name);
   vindex.sync();
-  log('added alias', name, 'to', rel);
+  log('added alias to', rel);
   return true;
 });
 ipcMain.handle('vault-backlinks', (_e, rel) => vindex?.backlinks(String(rel)) ?? []);
@@ -4996,6 +4988,34 @@ const errorReports = createErrorReports({
   send: (body) => relayFetch('/v1/errors', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, { source: relaySource() }),
 });
 ipcMain.handle('report-error', (_e, r) => errorReports.report(r));
+// Report issue (issueReports.js): prepare gathers what a report could carry and captures the window when asked, before the
+// sheet covers it; send posts only what the person kept on the sheet to the relay's /v1/reports, a private inbox
+const issueReports = createIssueReports({
+  installId: () => errorReports.installId(), version: app.getVersion(), edition: EDITION, os: `macOS ${process.getSystemVersion?.() ?? release()} ${process.arch}`, appRoot: here, home: homedir(),
+  tail: logTail, log,
+  // the vault's own names, so log lines that name a note without brackets or .md are masked too
+  names: () => {
+    if (!vindex) return [];
+    const out = new Set();
+    for (const rel of vindex.rels()) {
+      out.add(path.basename(rel, '.md'));
+      const n = vindex.note(rel);
+      for (const a of n?.aliases ?? []) out.add(String(a));
+      if (typeof n?.props?.name === 'string') out.add(n.props.name);
+      for (const t of vindex.unresolved(rel)) { const name = String(t).replace(/\.md$/i, ''); out.add(name); out.add(path.basename(name)); }
+    }
+    return [...out];
+  },
+  session: async () => {
+    const c = EDITION === 'cloud' ? account.client?.() : null;
+    if (!c) return null;
+    const { data } = await c.auth.getSession();
+    return data?.session ? { token: data.session.access_token, email: data.session.user?.email ?? null } : null;
+  },
+  send: (body, headers) => relayFetch('/v1/reports', { method: 'POST', headers, body }, { source: relaySource() }),
+});
+ipcMain.handle('report-issue-prepare', (e, ctx) => issueReports.prepare(ctx ?? {}, { capture: async () => encodeCapture(await e.sender.capturePage()) }));
+ipcMain.handle('report-issue-send', (_e, draft) => issueReports.send(draft ?? {}));
 // Reload Quorum on a crash page: the window's page loads again; recording, sync and the tray keep running
 ipcMain.handle('reload-window', (e) => { e.sender.reloadIgnoringCache(); });
 ipcMain.handle('calendar', async () => {
