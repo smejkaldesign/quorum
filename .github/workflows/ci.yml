@@ -100,7 +100,8 @@ jobs:
   # the database's row level security, RPCs and triggers (supabase/tests): a local stack with every migration applied,
   # and each test file in its own rolled-back transaction (supabase/tests/run.sh, which also fails on a pgTAP "not ok").
   # Storage and its gateway stay up because the CLI creates the configured buckets through them. No secrets: the
-  # stack's keys are the CLI's fixed local ones
+  # stack's keys are the CLI's fixed local ones. The -x names are the CLI's container names (`supabase-go start --help`);
+  # an unknown name only prints a warning and that image is still pulled
   database:
     runs-on: ubuntu-latest
     steps:
@@ -111,7 +112,7 @@ jobs:
         with:
           node-version: 22
       - name: Start the database with every migration
-        run: npx --yes supabase@2.105.0 start -x analytics,edge-runtime,imgproxy,inbucket,meta,realtime,studio,vector
+        run: npx --yes supabase@2.105.0 start -x edge-runtime,imgproxy,logflare,mailpit,postgres-meta,realtime,studio,vector
       - name: Database tests
         run: supabase/tests/run.sh
 
