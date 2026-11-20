@@ -101,7 +101,7 @@ export type Settings = {
   // which of Quorum's in-app notifications show in the bell's list and dot; each is on when missing
   notifications?: { noteUpdates?: boolean; memoryChanges?: boolean; reviews?: boolean; guardrails?: boolean };
   // connector ids whose provider MCP the person disconnected from Quorum (Settings > Connectors)
-  mcpIgnored?: string[]; meetingProviders?: Record<string, { enabled: boolean }>; autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; providers?: Providers; connectors?: ProviderConnectors; suggestions: boolean; meetingPrep?: MeetingPrepSettings; access?: 'read' | 'write'; userName?: string; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription; notes?: { refs?: boolean; transcription?: boolean }; meetingsKb?: { autoSave?: boolean }; managedModels?: boolean; screenContext?: boolean; memoryAutoApprove?: boolean; memoryDotDays?: number; memoryHighlight?: boolean; memorySweeps?: boolean; memoryAutoApply?: boolean; memoryDrafts?: boolean; memoryDraftCap?: number; memoryDraftConfidential?: boolean; memoryCatchupParallel?: number; memoryAgentActions?: boolean; memoryEntityNotes?: boolean; memoryPlacement?: boolean; memoryCatchupNudged?: boolean };
+  mcpIgnored?: string[]; meetingProviders?: Record<string, { enabled: boolean }>; autoListen: boolean; model: 'opus' | 'sonnet' | 'haiku'; modelSource?: ModelSource; localModel?: string; providers?: Providers; connectors?: ProviderConnectors; suggestions: boolean; meetingPrep?: MeetingPrepSettings; access?: 'read' | 'write'; userName?: string; profile?: Profile; workspace?: Workspace; voice?: Voice; transcription?: Transcription; notes?: { refs?: boolean; transcription?: boolean }; meetingsKb?: { autoSave?: boolean }; managedModels?: boolean; screenContext?: boolean; memoryAutoApprove?: boolean; memoryDotDays?: number; memoryHighlight?: boolean; memorySweeps?: boolean; memoryAutoApply?: boolean; memoryDrafts?: boolean; memoryDraftCap?: number; memoryDraftConfidential?: boolean; memoryCatchupParallel?: number; memoryAgentActions?: boolean; memoryEntityNotes?: boolean; memoryPlacement?: boolean; memoryCatchupNudged?: boolean; memoryTopicModel?: boolean };
 export type OnboardingStatus = { firstRun: boolean; defaultVaultDir: string };
 export type OnboardingChecks = { permissions: { microphone: string; audio: string; accessibility: string; calendar: string }; claude: { installed: boolean; loggedIn?: boolean; email?: string; org?: string; plan?: string; version?: string; pending?: boolean }; model?: ModelSourceStatus | null };
 // the setup interview: a template plus a few answers that shape a Quorum-built Agent OS (starter.js)
@@ -143,7 +143,18 @@ export type MemorySetupReport = {
   freshness: { days: number; confirmed: number | null; basis: 'facts' | 'notes'; contradictions: number; staleSummaries: number };
   outside: { file: string; chars: number; budget: number; over: boolean; dead: string[] }[];
   keeper: { on: boolean; made: boolean } | null;
-  model: { available: boolean };
+  model: { available: boolean; on?: boolean; read?: number; edges?: number; waiting?: number };
+};
+// the model pass (memoryModelPass.js): its estimate from the vault, its state and what it holds in the graph
+export type ModelPassCost = { kind: 'none' | 'free' | 'usd' | 'subscription' | 'provider'; usd: number | null; label: string };
+export type ModelPassEstimate = { source?: string | null; notes: number; chars: number; cut: number; small: number; withheld: number; calls: number; inputTokens: number; outputTokens: number; tokens: number; seconds: number; runs: number; cap: number; cost: ModelPassCost };
+export type ModelPassStatus = {
+  on: boolean; cap: number; provider: string | null; running: boolean;
+  phase: 'idle' | 'running' | 'paused' | 'cancelled' | 'capped' | 'done' | 'failed' | 'off' | 'stopped' | 'source-changed';
+  source: string | null; sourceNow: string | null; sourceChanged: boolean;
+  done: number; total: number; tokens: number; edges: number; proposals: number; error: string | null; startedAt: number | null; endedAt: number | null;
+  counts: { read: number; edges: number; waiting: number; approved: number; declined: number } | null;
+  estimate?: ModelPassEstimate | null;
 };
 export type MemorySetupState = {
   running: boolean;
@@ -417,7 +428,13 @@ export type MemoryTruncated = { shown: number; total: number; budgetNeeded: numb
 export type MemoryGraphStatus = { phase: 'off' | 'idle' | 'building' | 'ready' | 'closed'; done?: number; total?: number; ms?: number | null; builtAt?: number | null; notes?: number; nodes?: number; edges?: number; byKind?: { nodes: Record<string, number>; edges: Record<string, number> } };
 export type MemoryDecision = { id: string; text: string; date: number | null; rel: string | null; line: number | null; about: { id: string; name: string }[]; decidedIn: { id: string; name: string } | null; supersededBy: { id: string; text: string } | null };
 export type MemoryDated = MemoryNodeBrief & { date: number | null; via: MemoryEdgeKind };
-export type MemoryEntity = { node: MemoryNodeBrief; rel: string | null; aliases: string[]; status: string | null; decisions: MemoryDecision[]; meetings: MemoryDated[]; people: MemoryDated[]; projects: MemoryDated[]; notes: MemoryDated[]; truncated: MemoryTruncated & { sections: Record<string, { shown: number; total: number }> } };
+export type MemoryEntity = { node: MemoryNodeBrief; rel: string | null; aliases: string[]; status: string | null; community: MemoryCommunityRef | null; decisions: MemoryDecision[]; meetings: MemoryDated[]; people: MemoryDated[]; projects: MemoryDated[]; notes: MemoryDated[]; truncated: MemoryTruncated & { sections: Record<string, { shown: number; total: number }> } };
+// communities and hubs (app/graph/communities.js, graph/topics.js)
+export type MemoryCommunityRef = { community: string; rank: number; name: string | null; size: number | null };
+export type MemoryHub = MemoryNodeBrief & { degree: number; edges: number; community: string | null; communityName?: string | null; rank?: number };
+export type MemoryCommunity = { id: string; name: string; namedBy: 'rule' | 'model'; size: number; rank: number; hub: MemoryHub | null; tags: string[]; folder: string | null; top: (MemoryNodeBrief & { rank: number })[] };
+export type MemoryTopicsStatus = { phase: 'idle' | 'running' | 'ready' | 'error'; at: number | null; ms: number | null; count: number; modularity: number | null; error: string | null; model: { on: boolean; ready: boolean; running: boolean; at: number | null; error: string | null } };
+export type MemoryTopicsEstimate = { calls: number; names: number; summaries: number; inputTokens: number; outputTokens: number; cost: number; costLabel: string | null; left: number };
 // a name that matches several nodes is refused with the candidates; a name with no match says so
 export type MemoryGraphResult<T> = T | { ambiguous: MemoryNodeBrief[]; for?: 'a' | 'b' } | { notFound: string } | { error: string } | null;
 
@@ -528,9 +545,14 @@ declare global {
       // memory graph reads (app/graph/); null when no vault is connected
       memoryGraphStatus(): Promise<MemoryGraphStatus>;
       memoryGraphQuery(args: { q?: string; seeds?: string[]; budget?: number; depth?: number; kinds?: MemoryEdgeKind[]; current?: boolean }): Promise<MemoryGraphResult<{ seeds: string[]; nodes: (MemoryNodeBrief & { score: number; depth: number })[]; edges: MemoryEdge[]; truncated: MemoryTruncated & { edgesShown: number; edgesTotal: number } }>>;
-      memoryGraphExplain(ref: string, opts?: { budget?: number }): Promise<MemoryGraphResult<{ node: MemoryNode; source: { rel: string } | null; aliases: string[]; community: { community: string; rank: number } | null; out: MemoryEdge[]; in: MemoryEdge[]; history: (MemoryEdge & { supersededBy: MemoryEdge | null })[]; truncated: { shown: number; total: number; budgetNeeded: number; sections: Record<'out' | 'in' | 'history', { shown: number; total: number }> } }>>;
+      memoryGraphExplain(ref: string, opts?: { budget?: number }): Promise<MemoryGraphResult<{ node: MemoryNode; source: { rel: string } | null; aliases: string[]; community: MemoryCommunityRef | null; out: MemoryEdge[]; in: MemoryEdge[]; history: (MemoryEdge & { supersededBy: MemoryEdge | null })[]; truncated: { shown: number; total: number; budgetNeeded: number; sections: Record<'out' | 'in' | 'history', { shown: number; total: number }> } }>>;
       memoryGraphEntity(name: string, opts?: { budget?: number }): Promise<MemoryGraphResult<MemoryEntity>>;
       memoryGraphDecisions(args: { about?: string; since?: string | number; current?: boolean; budget?: number }): Promise<MemoryGraphResult<{ about: MemoryNodeBrief | null; decisions: MemoryDecision[]; truncated: MemoryTruncated }>>;
+      memoryGraphCommunities(args?: { id?: string; min?: number; budget?: number }): Promise<MemoryGraphResult<{ communities: MemoryCommunity[]; computedAt: number | null; modularity: number | null; truncated: MemoryTruncated } | { community: MemoryCommunity; members: MemoryHub[]; truncated: MemoryTruncated }>>;
+      memoryGraphHubs(args?: { community?: string; budget?: number }): Promise<MemoryGraphResult<{ community?: { id: string; name: string; size: number }; hubs: MemoryHub[]; truncated: MemoryTruncated }>>;
+      memoryTopicsStatus(): Promise<MemoryTopicsStatus | null>;
+      memoryTopicsEstimate(): Promise<MemoryTopicsEstimate | null>;
+      onMemoryTopics(cb: (s: MemoryTopicsStatus | null) => void): Unsub;
       memoryGraphPath(a: string, b: string, opts?: { undirected?: boolean; kinds?: MemoryEdgeKind[]; current?: boolean; maxDepth?: number }): Promise<MemoryGraphResult<{ path: MemoryNodeBrief[] | null; edges: MemoryEdge[] }>>;
       onMemoryGraph(fn: (s: MemoryGraphStatus) => void): () => void;
       vaultLinkHealth(fresh?: boolean): Promise<MissingLink[]>;
@@ -732,6 +754,11 @@ declare global {
       memorySetupRun(opts?: { keeper?: boolean }): Promise<MemorySetupStatus | null>;
       // the keeper choice from the setup card; offer: true (finishing onboarding) records it only when none was made
       memorySetupKeeper(opts: { on: boolean; offer?: boolean }): Promise<MemorySetupStatus | null>;
+      memoryModelStatus(): Promise<ModelPassStatus>;
+      memoryModelSet(opts: { on?: boolean; cap?: number }): Promise<ModelPassStatus>;
+      memoryModelRun(): Promise<ModelPassStatus>;
+      memoryModelCancel(): Promise<ModelPassStatus>;
+      onMemoryModel(cb: (s: ModelPassStatus) => void): () => void;
       onMemorySetup(cb: (s: MemorySetupState) => void): Unsub;
       screenContextStatus(): Promise<ScreenContextStatus>;
       screenContextSet(on: boolean): Promise<ScreenContextStatus>;

@@ -17,7 +17,10 @@ export const vaultHash = (vault) => createHash('sha256').update(path.resolve(vau
 export const storeFile = (dir, vault) => path.join(dir, vaultHash(vault), 'memory.db');
 export const norm = (s) => String(s ?? '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
 
-const TABLES = ['files', 'nodes', 'aliases', 'edges', 'communities'];
+// a rebuild drops the model pass's read marks with the edges it wrote, so it reads those notes again; model_proposals
+// stays, so a connection the person approved or declined keeps that answer
+const TABLES = ['files', 'nodes', 'aliases', 'edges', 'communities', 'community_info', 'model_files'];
+export const PROPOSAL_STATUS = ['pending', 'approved', 'declined'];
 const SCHEMA = `
 create table if not exists meta(key text primary key, value text);
 create table if not exists files(rel text primary key, hash text, mtime real, size int, indexed_at real);
@@ -32,11 +35,17 @@ create index if not exists edges_by_dst on edges(dst, kind);
 create index if not exists edges_by_kind on edges(kind);
 create index if not exists edges_by_source on edges(source_rel);
 create table if not exists communities(node text primary key, community text, rank real);
+create index if not exists communities_by_id on communities(community);
+create table if not exists community_info(id text primary key, name text, named_by text, size int, rank real, hub text, props text, updated_at real);
+create table if not exists model_files(rel text primary key, hash text, read_at real, tokens int);
+create table if not exists model_proposals(id integer primary key, key text unique not null, rel text, line int, kind text, src text, dst text, confidence real, props text, status text not null, edges text, recorded_at real, decided_at real);
+create index if not exists model_proposals_by_rel on model_proposals(rel, status);
 `;
 
 const parse = (s) => { if (!s) return {}; try { return JSON.parse(s); } catch { return {}; } };
 const nodeRow = (r) => (r ? { id: r.id, kind: r.kind, name: r.name, rel: r.rel, props: parse(r.props), created_at: r.created_at, updated_at: r.updated_at } : null);
 const edgeRow = (r) => (r ? { ...r, props: parse(r.props) } : null);
+const proposalRow = (r) => (r ? { ...r, props: parse(r.props), edges: r.edges ? JSON.parse(r.edges) : null } : null);
 
 export function openStore({ dir, vault, log = () => {}, now = Date.now, readOnly = false }) {
   const file = storeFile(dir, vault);
@@ -101,7 +110,19 @@ export function openStore({ dir, vault, log = () => {}, now = Date.now, readOnly
     moveSource: q('update edges set source_rel = ? where source_rel = ?'),
     moveFileRow: q('update files set rel = ? where rel = ?'),
     count: (t) => q(`select count(*) as n from ${t}`),
+    communityRows: q('select * from community_info order by rank'),
+    communityRow: q('select * from community_info where id = ?'),
+    communityMembers: q('select node, rank from communities where community = ? order by rank desc, node'),
+    putCommunity: q('insert or replace into community_info(id, name, named_by, size, rank, hub, props, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?)'),
+    nameCommunity: q('update community_info set name = ?, named_by = ?, props = ?, updated_at = ? where id = ?'),
+    // a node that goes leaves its community at once, and a community it was the hub of goes until detection runs again
+    dropFromCommunities: q('delete from communities where node = ?1 or community = (select id from community_info where hub = ?1)'),
+    dropCommunityOf: q('delete from community_info where hub = ?'),
   };
+  // the model pass (memoryModelPass.js): which notes it read at which hash, and the connections it proposed that wait
+  // for a person. Prepared on first use, so a reader that never asks for them works on a database built before them
+  const mq = new Map();
+  const m = (sql) => mq.get(sql) ?? mq.set(sql, db.prepare(sql)).get(sql);
   const counts = { files: s.count('files'), nodes: s.count('nodes'), edges: s.count('edges') };
   const nodeKinds = q('select kind, count(*) as n from nodes group by kind');
   const edgeKinds = q('select kind, count(*) as n from edges where superseded_by is null group by kind');
@@ -147,7 +168,7 @@ export function openStore({ dir, vault, log = () => {}, now = Date.now, readOnly
     for (const id of ids) {
       const n = s.getNode.get(id);
       if (!n || n.rel) continue;
-      if (NOTE_IDENTITY.has(n.kind) || !s.degree.get(id).n) { s.delNode.run(id); s.delAliases.run(id); }
+      if (NOTE_IDENTITY.has(n.kind) || !s.degree.get(id).n) { s.delNode.run(id); s.delAliases.run(id); s.dropFromCommunities.run(id); s.dropCommunityOf.run(id); }
     }
   }
 
@@ -156,6 +177,8 @@ export function openStore({ dir, vault, log = () => {}, now = Date.now, readOnly
     for (const e of s.touching.all(id, id)) { touched.add(e.src); touched.add(e.dst); removeEdge(e.id); }
     s.delNode.run(id);
     s.delAliases.run(id);
+    s.dropFromCommunities.run(id);
+    s.dropCommunityOf.run(id);
     touched.delete(id);
     return touched;
   }
@@ -237,6 +260,35 @@ export function openStore({ dir, vault, log = () => {}, now = Date.now, readOnly
     return keep([...s.findPrefix.all(like), ...s.findAliasPrefix.all(like)]).map((r) => ({ ...r, prefix: true }));
   }
 
+  const infoRow = (r) => (r ? { id: r.id, name: r.name, namedBy: r.named_by, size: r.size, rank: r.rank, hub: r.hub, props: parse(r.props), updated_at: r.updated_at } : null);
+  // a new set of communities (graph/communities.js) replaces the old one. A name the person's model gave stays while
+  // the community's strongest members (props.nameSig) are the same, and a summary draft stays for the rule to check
+  function setCommunities(list) {
+    tx(() => {
+      const old = new Map(s.communityRows.all().map((r) => [r.id, infoRow(r)]));
+      db.exec('delete from communities; delete from community_info;');
+      const put = db.prepare('insert or replace into communities(node, community, rank) values (?, ?, ?)');
+      const t = now();
+      list.forEach((c, i) => {
+        for (const m of c.members) put.run(m.id, c.id, m.rank);
+        const was = old.get(c.id);
+        const same = was?.props?.nameSig === c.props?.nameSig;
+        // what was asked of the model stays with the community: a draft and the sources a draft was tried for, and the
+        // members a name was tried for while they hold
+        const carried = { draft: was?.props?.draft, draftTriedSig: was?.props?.draftTriedSig, nameTriedSig: same ? was?.props?.nameTriedSig : undefined };
+        const keep = was?.namedBy === 'model' && same;
+        const props = { ...c.props, ...Object.fromEntries(Object.entries(carried).filter(([, v]) => v !== undefined)), ...(keep ? { ruleName: c.name } : {}) };
+        s.putCommunity.run(c.id, keep ? was.name : c.name, keep ? 'model' : 'rule', c.size, i + 1, c.hub, JSON.stringify(props), t);
+      });
+    });
+  }
+  function updateCommunity(id, { name = undefined, namedBy = undefined, props = {} } = {}) {
+    const cur = infoRow(s.communityRow.get(id));
+    if (!cur) return false;
+    s.nameCommunity.run(name ?? cur.name, namedBy ?? cur.namedBy, JSON.stringify({ ...cur.props, ...props }), now(), id);
+    return true;
+  }
+
   function stats() {
     return {
       files: counts.files.get().n, nodes: counts.nodes.get().n, edges: counts.edges.get().n,
@@ -287,12 +339,38 @@ export function openStore({ dir, vault, log = () => {}, now = Date.now, readOnly
     },
     edgesOf,
     community: (id) => s.community.get(id) ?? null,
+    // communities biggest first (rank 1), their names and members strongest first
+    communities: () => s.communityRows.all().map(infoRow),
+    communityInfo: (id) => infoRow(s.communityRow.get(id)),
+    communityMembers: (id) => s.communityMembers.all(id),
+    setCommunities,
+    updateCommunity,
     stats,
     meta: (key, value) => {
       if (value === undefined) return db.prepare('select value from meta where key = ?').get(key)?.value ?? null;
       db.prepare('insert or replace into meta(key, value) values (?, ?)').run(key, String(value));
       return value;
     },
+    // ---- model pass ----
+    modelFile: (rel) => m('select hash from model_files where rel = ?').get(rel)?.hash ?? null,
+    modelFiles: () => new Map(m('select rel, hash from model_files').all().map((r) => [r.rel, r.hash])),
+    putModelFile: (rel, hash, tokens = null) => { m('insert or replace into model_files(rel, hash, read_at, tokens) values (?, ?, ?, ?)').run(rel, hash, now(), tokens); },
+    dropModelFile: (rel) => { m('delete from model_files where rel = ?').run(rel); },
+    // a proposal by its key keeps the answer a person gave it: only a pending one is written over
+    putProposal: ({ key, rel, line = null, kind, src = null, dst = null, confidence = null, props = null }) => {
+      const cur = m('select status from model_proposals where key = ?').get(key);
+      if (cur && cur.status !== 'pending') return false;
+      m('insert into model_proposals(key, rel, line, kind, src, dst, confidence, props, status, recorded_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict(key) do update set rel = excluded.rel, line = excluded.line, kind = excluded.kind, src = excluded.src, dst = excluded.dst, confidence = excluded.confidence, props = excluded.props, recorded_at = excluded.recorded_at')
+        .run(key, rel, line, kind, src, dst, confidence, props ? JSON.stringify(props) : null, 'pending', now());
+      return true;
+    },
+    proposal: (key) => proposalRow(m('select * from model_proposals where key = ?').get(key)),
+    proposals: ({ rel = null, status = null } = {}) => m('select * from model_proposals where (?1 is null or rel = ?1) and (?2 is null or status = ?2) order by id').all(rel, status).map(proposalRow),
+    setProposal: (key, { status, edges = null }) => { m('update model_proposals set status = ?, edges = ?, decided_at = ? where key = ?').run(status, edges ? JSON.stringify(edges) : null, now(), key); },
+    // a reading of a moved note under its new key and path; a key already taken keeps the row it has
+    rekeyProposal: (key, { key: next, rel, src = null, dst = null, props = null }) => { m('update or ignore model_proposals set key = ?, rel = ?, src = ?, dst = ?, props = ? where key = ?').run(next, rel, src, dst, props ? JSON.stringify(props) : null, key); },
+    dropProposals: (rel, status = 'pending') => { m('delete from model_proposals where rel = ? and status = ?').run(rel, status); },
+    moveProposals: (from, to) => { m('update model_proposals set rel = ? where rel = ?').run(to, from); m('update or replace model_files set rel = ? where rel = ?').run(to, from); },
     close: () => { try { db.close(); } catch { /* closed */ } },
   };
 }

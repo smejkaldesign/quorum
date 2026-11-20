@@ -12,6 +12,7 @@ import { openSpeech, SPEECH_ENGINES } from './speech/provider.js';
 import { SKIP as TREE_SKIP, createFolder, createNote, duplicateItem, moveItem, readVaultNote, renameItem, vaultPath, vaultTarget, vaultTree } from './vault.js';
 import { createVaultIndex } from './vindex.js';
 import { createMemoryGraph } from './graph/index.js';
+import { createTopics } from './graph/topics.js';
 import { applyUndo, sha, undoRecord } from './fixUndo.js';
 import { changedSince, createFixJournal, createNoteHashes, fixCheck, hashNotes, noteMemo, recoveryReason, rollback, writeCheckedNote } from './fixJournal.js';
 import { cancelError, cancelRuns, endFailed, holdFailed } from './fixFailures.js';
@@ -78,6 +79,7 @@ import { batchItems, rollBackItems } from './batchItems.js';
 import { FIX_RECHECK_RULE, FIX_RECHECK_VERSION, fixVersions, recheckAll, undoPlan } from './fixRecheck.js';
 import { buildPlan, checkFirst, checkOrder, effects, groupLabel, groupOf, notesOf, planExclude } from './batchPlan.js';
 import { RETRO_TITLE, ROW, autoApplyable, findingItem, itemLine, linkItem, pastFixItem } from './reviewItems.js';
+import { createMayRead, createModelPass } from './memoryModelPass.js';
 import { SETUP_OPS, approvedEdges, createMemorySetup, endEdges, graphFreshness, instructionTexts, nodeIdOf, outsideInstructions, pickItem, recordContradictions, resolveContradiction, runSetupOp, setupReport } from './memorySetup.js';
 import { approveFinding, approvePastFix, gitReader, retroCandidates, withLinkLine } from './reviewApprove.js';
 import { frontBlock, removeFrontmatterKey, withDate } from './frontmatter.js';
@@ -137,7 +139,8 @@ const FEED_READS = new Set([
   'kb-hosted-note', 'kb-drive-status', 'kb-sync-list', 'kb-sync-grants', 'kb-import-progress',
   // memory graph reads
   'memory-graph-status', 'memory-graph-query', 'memory-graph-explain', 'memory-graph-entity', 'memory-graph-decisions', 'memory-graph-path',
-  'memory-search', 'memory-search-status', 'memory-setup-status',
+  'memory-graph-communities', 'memory-graph-hubs', 'memory-topics-status', 'memory-topics-estimate',
+  'memory-search', 'memory-search-status', 'memory-setup-status', 'memory-model-status',
 ]);
 const TREE_WRITES = new Set([
   'vault-new-note', 'vault-today', 'vault-new-folder', 'vault-move', 'vault-rename', 'vault-trash', 'vault-duplicate', 'set-settings', 'guardrails-add', 'guardrails-remove', 'guardrails-set',
@@ -1442,6 +1445,9 @@ ipcMain.handle('copy', (_e, text) => clipboard.writeText(String(text)));
 ipcMain.handle('quit', () => app.quit());
 ipcMain.handle('get-settings', () => settings);
 ipcMain.handle('set-settings', (_e, next) => {
+  // the opt-out and never-listen lists, private folders and the model source live in settings: the model pass asks
+  // again which notes it may send, and estimates again
+  modelPass?.resetAccess();
   // the name Quorum uses for the recorder line and to tell the user's own voice apart; takes effect at once
   if (typeof next.userName === 'string') {
     settings.userName = next.userName.trim().slice(0, 80);
@@ -1530,6 +1536,13 @@ ipcMain.handle('set-settings', (_e, next) => {
     if (typeof next[k] === 'boolean' && next[k] !== (settings[k] === true)) { settings[k] = next[k]; store.settings.save(); optInCheck.ask(); }
   }
   // Settings > Memory: Check everything now was suggested once after the vault connected (Catchup.tsx CatchupNudge)
+  // Settings > Memory, Topics: names and summary drafts from the person's model (graph/topics.js), off by default; the
+  // card shows the estimate before it is turned on
+  // it turns on only once the graph is built and a model source is set, so the estimate was there to read first
+  if (typeof next.memoryTopicModel === 'boolean' && next.memoryTopicModel !== (settings.memoryTopicModel === true) && (!next.memoryTopicModel || (graphReady() && !!roleProvider('summary')))) {
+    settings.memoryTopicModel = next.memoryTopicModel; store.settings.save();
+    if (next.memoryTopicModel) topics?.modelPass().catch((e) => log('topics model', e?.message));
+  }
   if (next.memoryCatchupNudged === true) { settings.memoryCatchupNudged = true; store.settings.save(); }
   // Settings > Memory: Let AI tools change memory and knowledge bases (appActions.js), off by default
   if (typeof next.memoryAgentActions === 'boolean') { settings.memoryAgentActions = next.memoryAgentActions; store.settings.save(); }
@@ -2637,7 +2650,41 @@ let vindex = null;
 // DATA_DIR/memory/<vault hash>/memory.db. It reads vindex's text, so withheld lines and excluded notes never reach it.
 // openIndex opens it for the connected vault, builds it once the index is read, and hands it every change after that
 let memoryGraph = null;
-function closeMemoryGraph() { memoryGraph?.close(); memoryGraph = null; }
+// communities, hubs and topic summary drafts over the graph (graph/topics.js), read again a few seconds after it changes
+let topics = null;
+// the model pass (memoryModelPass.js), made with Memory setup below; it follows the graph of the vault open now
+let modelPass = null;
+function closeMemoryGraph() { modelPass?.cancel(); modelPass?.attach(null); topics?.close(); topics = null; memoryGraph?.close(); memoryGraph = null; }
+// one read filter for the notes topics and the model pass may name, read or send to a model (memoryModelPass.js
+// createMayRead): never one the read guard keeps out (opted-out, private or secret paths), never a confidential one
+// (frontmatter, tag or folder mark), whatever Let the agent read confidential notes says, never one with a line the
+// opt-out list withholds, and never one that names an address on the never-listen list
+const noteMayRead = createMayRead({
+  vault: () => brain()?.vault ?? null,
+  excludedPath: (rel) => excludedPath(rel), isPrivatePath: (rel) => isPrivatePath(rel), isSecretPath: (rel) => isSecretPath(rel),
+  read: (vault, rel) => readVault(vault, rel),
+  confidential: (vault, rel, raw) => confidentialNote(vault, rel, raw), isExcludedText: (raw) => suggester.isExcluded(raw), onNeverList: (e) => onNeverList(e),
+});
+// a note topics may name or read: the shared filter, on the text the index holds
+function topicMayRead(rel, text) {
+  return text != null && noteMayRead(rel);
+}
+function openTopics(g) {
+  const readable = (rel) => { const t = g.textOf(rel); return topicMayRead(rel, t) ? t : null; };
+  topics = createTopics({
+    store: g.store,
+    log: (...a) => log('topics', ...a),
+    mayRead: (rel) => readable(rel) != null,
+    model: {
+      enabled: () => settings.memoryTopicModel === true && !!roleProvider('summary'),
+      ready: () => !!roleProvider('summary'),
+      ask: async (prompt, system) => { const r = await runClaude(suggester.redactLines(prompt), system, settings.model, { role: 'summary' }); return typeof r === 'string' ? r : r?.text ?? ''; },
+      textOf: readable,
+    },
+    // new communities or drafts can change the topic summary items: the rule runs over the vault (rules/topicSummaries.js wide)
+    onChange: () => { toUI('memory-topics', topics?.status() ?? null); if (!sweepPaused()) sweep('save', []).catch((e) => log('memory sweep', e?.message)); },
+  });
+}
 function openMemoryGraph(vault) {
   closeMemoryGraph();
   try {
@@ -2645,7 +2692,11 @@ function openMemoryGraph(vault) {
     memoryGraph.on('progress', (st) => toUI('memory-graph', st));
     // the first full graph build is also search's cue: onIndexed does not fire for the index's first read, and a first
     // call opens search on the graph's database and builds it in full
-    memoryGraph.on('ready', (st) => { toUI('memory-graph', st); searchChanged([]); teamGraphSoon(); });
+    memoryGraph.on('ready', (st) => { toUI('memory-graph', st); searchChanged([]); topics?.schedule(0); setTimeout(() => modelPass?.tick(), 30000).unref?.(); teamGraphSoon(); });
+    openTopics(memoryGraph);
+    modelPass?.attach(memoryGraph);
+    // progress follows each update once the graph is built: the communities are read again after the edits settle
+    memoryGraph.on('progress', (st) => { if (st?.phase === 'ready') topics?.schedule(); });
   } catch (err) { log('memory graph failed to open', String(err)); memoryGraph = null; }
 }
 // Cloud: a built graph trades edges with the team's knowledge bases (ee/graphSync.js). A graph ready before the account
@@ -2665,6 +2716,10 @@ handleAction('memory-graph-query', (_e, args) => graphRead((g) => g.graphQuery(g
 handleAction('memory-graph-explain', (_e, ref, opts) => graphRead((g) => (graphObj(ref) ? g.explain(String(ref.id ?? ref.ref ?? ref.name ?? ''), graphArgs(ref)) : g.explain(String(ref ?? ''), graphArgs(opts)))));
 handleAction('memory-graph-entity', (_e, name, opts) => graphRead((g) => (graphObj(name) ? g.entity(String(name.name ?? name.q ?? name.id ?? ''), graphArgs(name)) : g.entity(String(name ?? ''), graphArgs(opts)))));
 handleAction('memory-graph-decisions', (_e, args) => graphRead((g) => g.decisions(graphArgs(args))));
+handleAction('memory-graph-communities', (_e, args) => graphRead((g) => g.communities(graphArgs(args))));
+handleAction('memory-graph-hubs', (_e, args) => graphRead((g) => g.hubs(graphArgs(args))));
+ipcMain.handle('memory-topics-status', () => topics?.status() ?? null);
+ipcMain.handle('memory-topics-estimate', () => (graphReady() ? topics?.estimate() ?? null : null));
 handleAction('memory-graph-path', (_e, a, b, opts) => graphRead((g) => (graphObj(a) ? g.graphPath(String(a.a ?? ''), String(a.b ?? ''), graphArgs(a)) : g.graphPath(String(a ?? ''), String(b ?? ''), graphArgs(opts)))));
 // Memory health review rules (rules/index.js) on the cadence memorySweep.js sets: the notes that changed a few seconds
 // after a save, an incremental sweep every 3.5 hours, a full sweep once a day while the person is away
@@ -2781,6 +2836,9 @@ function findingsNow() {
 function archiveFindings(keys, on) {
   const b = brain();
   if (!b || !keys.length) return 0;
+  // a model pass reading declined stays declined: the pass never proposes it again (memoryModelPass.js)
+  const readings = keys.filter((k) => k.startsWith('note.model-edge:'));
+  if (readings.length) { try { modelPass?.decline(readings, on); } catch (e) { log('model pass', e?.message); } }
   const byKey = new Map(memorySweep.findings(b.vault).map((f) => [f.key, f]));
   const recs = keys.map((k) => byKey.get(k)).filter(Boolean).map((f) => ({ ...findingRecord(f), decision: on ? 'archived' : 'reopened', actor: currentActor() }));
   try { decisionLog.recordMany(b.vault, recs); } catch (e) { log('decision log', e?.message); }
@@ -2862,7 +2920,7 @@ function setupReportNow() {
     notes, missing: notes.reduce((n, x) => n + vindex.missingIn(x.rel).length, 0),
     findings: findingsNow(), links: linkIssues().map((e) => issueOf(withMarks(e))),
     graph: store ? { stats, freshness: (since) => graphFreshness(store, since) } : null,
-    search: searchCounts(), keeper: keeper.status(), made: b.made,
+    search: searchCounts(), keeper: keeper.status(), made: b.made, model: modelPass?.status() ?? null,
     outside: outsideInstructions({ root: b.root, vault: b.vault, resolve: (t, f) => vindex.resolve(t, f) }),
   });
 }
@@ -2896,6 +2954,8 @@ function recordApproved(items) {
   try {
     store.tx(() => { for (const e of approvedEdges(items, { at, idOf: (rel, props) => nodeIdOf(store, rel, props) })) ids.push(store.addEdge(e)); });
     for (const it of items) { const id = resolveContradiction(store, it, { at }); if (id != null) ids.push(id); }
+    // the connections the model pass proposed that the person approved, with person provenance
+    ids.push(...(modelPass?.approve(items) ?? []));
   } catch (e) { log('memory graph', e?.message); }
   return ids;
 }
@@ -2921,6 +2981,48 @@ ipcMain.handle('memory-setup-keeper', (_e, opts) => {
 });
 FEED_READS.add('memory-setup-status');
 // ---- end Memory setup ----
+
+// ---- Model pass (memoryModelPass.js) ----
+// Off until the person turns it on for the vault in Memory setup or Settings, Memory, after an estimate computed from
+// the vault. It runs on the person's own model source (the final notes provider, on the relations model) and sends a
+// note only when every other part of memory may read it. Turning it on, a run and Cancel come from the window only:
+// no agent call through the control socket starts it
+// the provider and model the pass runs on now; consent is kept for this, so a change waits for the person
+const modelSourceNow = () => (roleProvider('notes') ? modelLabel(roleProvider('notes'), MEMORY_MODELS.relations, settings.localModel, connectorsConf()) : null);
+modelPass = createModelPass({
+  graph: () => memoryGraph,
+  conf: () => { const b = brain(); return b ? memorySetup.modelChoice(b.vault) : { on: false }; },
+  provider: () => roleProvider('notes'),
+  source: modelSourceNow,
+  // the read filter topics share (noteMayRead, above)
+  mayRead: (rel) => noteMayRead(rel),
+  ask: (prompt, system, { signal }) => runClaude(prompt, system, MEMORY_MODELS.relations, { role: 'notes', signal, timeoutMs: 600000, maxTokens: 16000 }),
+  recording: () => recordingNow(),
+  isExcluded: (t) => suggester.isExcluded(t),
+  // the review rules list what the pass proposed once they check the notes it read
+  onRead: (rels) => sweepOnSave(rels),
+  emit: (st) => toUI('memory-model', st),
+  log,
+});
+modelPass.attach(memoryGraph);
+// a run paused for a recording, stopped at its cap, or with notes that changed since goes on in the background
+setInterval(() => modelPass.tick(), 20 * 60000).unref?.();
+const modelView = () => ({ ...modelPass.status(), estimate: modelPass.estimate() });
+handleAction('memory-model-status', () => modelView());
+// { on, cap }: on records consent for the model source in use now and starts a run; off stops one; a cap alone only
+// sets the cap. What the pass added stays in the graph with model provenance. Turning it on needs an estimate first
+ipcMain.handle('memory-model-set', (_e, opts) => {
+  const b = brain();
+  if (!b) throw new Error('No vault connected');
+  const on = typeof opts?.on === 'boolean' ? opts.on : undefined;
+  if (on === true && (!roleProvider('notes') || !modelPass.estimate())) throw new Error('Quorum turns this on once it can show the estimate. Choose a model provider and wait for the memory graph');
+  const c = memorySetup.chooseModel(b.vault, { on, cap: Number(opts?.cap) || undefined, source: on === true ? modelSourceNow() : undefined });
+  if (on === true && c.on) modelPass.start({ reason: 'on' }); else if (on === false) modelPass.cancel();
+  return modelView();
+});
+ipcMain.handle('memory-model-run', () => { modelPass.start({ reason: 'manual' }); return modelView(); });
+ipcMain.handle('memory-model-cancel', () => { modelPass.cancel(); return modelView(); });
+// ---- end Model pass ----
 function openIndex() {
   vindex?.stop();
   vindex = null;
@@ -4580,7 +4682,7 @@ function undoBatch(run, rels) {
     else if (it.finding) { try { decisionLog.record(run.vault, { ...it.finding, decision: 'undone', actor: currentActor() }); } catch (e) { log('decision log', e?.message); } }
   }
   // memory setup: the edges the batch recorded end with it
-  try { endEdges(graphStore(), run.graphEdges); } catch (e) { log('memory graph', e?.message); }
+  try { endEdges(graphStore(), run.graphEdges); modelPass?.undo(run.graphEdges); } catch (e) { log('memory graph', e?.message); }
   try { sweep('save', rels); } catch (e) { log('memory sweep', e?.message); }
 }
 // Apply memory fixes on its own (Settings > Memory, off by default): after a sweep, every item with an automatic fix
@@ -4667,6 +4769,8 @@ ipcMain.handle('confidential-marks', () => {
 });
 // marks or clears a note or a folder; value null clears it. Answers a line saying what changed
 ipcMain.handle('confidential-mark', (_e, rel, isDir, value) => {
+  // the model pass asks again which notes it may send
+  modelPass?.resetAccess();
   const b = brain();
   if (!b) throw new Error('No vault connected');
   const r = String(rel ?? '').replace(/^\/+|\/+$/g, '');
@@ -5074,7 +5178,7 @@ function callLink(e) {
 let updates = null;
 ipcMain.handle('guardrails-get', (_e, opts) => guardrails.get({ fresh: opts?.fresh === true }));
 // a changed rule set reaches the index right away, so search stops answering from what is now denied
-const reindexed = (r) => { if (r?.ok) setTimeout(() => vindex?.rebuild(), 0); return r; };
+const reindexed = (r) => { if (r?.ok) { modelPass?.resetAccess(); setTimeout(() => vindex?.rebuild(), 0); } return r; };
 ipcMain.handle('guardrails-set', (_e, id, patch) => reindexed(guardrails.set(String(id ?? ''), patch ?? {})));
 ipcMain.handle('guardrails-add', (_e, rule) => reindexed(guardrails.add(rule ?? {})));
 ipcMain.handle('guardrails-remove', (_e, id) => reindexed(guardrails.remove(String(id ?? ''))));

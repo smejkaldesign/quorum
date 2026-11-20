@@ -1,5 +1,6 @@
-// Reads over the memory graph: a budgeted neighborhood query, paths, explain, entity and decisions. A name that matches
-// several nodes is refused with the candidates; nothing here guesses.
+// Reads over the memory graph: a budgeted neighborhood query, paths, explain, entity, decisions, communities and hubs. A
+// name that matches several nodes is refused with the candidates; nothing here guesses.
+import { norm } from './store.js';
 
 // how strongly an edge kind and a provenance carry relevance from one node to the next
 const KIND_W = { decision_about: 1, decided_in: 0.9, attended: 0.9, works_on: 0.9, member_of: 0.9, about: 0.9, contradicts: 0.8, supersedes: 0.7, embeds: 0.7, mentions: 0.6, links_to: 0.6, tagged: 0.3, in_folder: 0.15 };
@@ -190,7 +191,7 @@ export function createQuery(store) {
     if (!r.node) return r;
     const n = r.node;
     const all = store.edgesOf(n.id, { current: false });
-    const head = { node: n, source: n.rel ? { rel: n.rel } : null, aliases: store.aliasesOf(n.id), community: store.community(n.id) };
+    const head = { node: n, source: n.rel ? { rel: n.rel } : null, aliases: store.aliasesOf(n.id), community: communityOf(n.id) };
     const sections = { out: all.filter((e) => e.src === n.id && current(e)), in: all.filter((e) => e.dst === n.id && current(e)), history: all.filter((e) => !current(e)) };
     const toItem = (k, e) => (k === 'history' ? { ...edgeOut(e, nameOf), supersededBy: e.superseded_by ? edgeOut(store.edge(e.superseded_by) ?? { id: e.superseded_by }, nameOf) : null } : edgeOut(e, nameOf));
     const headT = tokensOf(head);
@@ -216,6 +217,10 @@ export function createQuery(store) {
       about: [...new Map((about.some(current) ? about.filter(current) : about).map((e) => [e.dst, { id: e.dst, name: nameOf(e.dst) }])).values()],
       decidedIn: inMeeting ? { id: inMeeting.dst, name: nameOf(inMeeting.dst) } : null,
       supersededBy: by ? { id: by.src, text: store.node(by.src)?.props?.text ?? nameOf(by.src) } : null,
+      // where the decision came from: a line the note states (explicit), the model pass's reading of its prose (model,
+      // with its confidence), or a reading a person approved in Review (person)
+      provenance: (inMeeting ?? about[0])?.provenance ?? null,
+      ...((inMeeting ?? about[0])?.provenance === 'model' ? { confidence: (inMeeting ?? about[0]).confidence } : {}),
     };
   }
   const isCurrentDecision = (id) => !store.edgesOf(id, { dir: 'out', kinds: ['decision_about'], current: false }).some((e) => e.superseded_by != null);
@@ -299,7 +304,7 @@ export function createQuery(store) {
     const dec = decisions({ about: n.id, budget: Math.max(0, budget) });
     const sections = { decisions: dec.decisions, meetings: sort(meetings), people: sort(people), projects: sort(projects), notes: sort(notes) };
     // the budget is shared: every section keeps its first items, then the rest fill what is left in order
-    const head = { node: brief(n), rel: n.rel, aliases: store.aliasesOf(n.id), status: n.props?.status ?? null };
+    const head = { node: brief(n), rel: n.rel, aliases: store.aliasesOf(n.id), status: n.props?.status ?? null, community: communityOf(n.id) ?? (own ? communityOf(own) : null) };
     const order = Object.keys(sections);
     const { out: parts } = share(sections, (_k, it) => it, budget - tokensOf(head));
     const totals = { ...Object.fromEntries(order.map((k) => [k, sections[k].length])), decisions: dec.truncated.total };
@@ -312,5 +317,88 @@ export function createQuery(store) {
     };
   }
 
-  return { resolveRef, graphQuery, graphPath, explain, entity, decisions };
+  // ---- communities and hubs (graph/communities.js fills them) ----
+  // the community a node is in, with its name and size
+  function communityOf(id) {
+    const c = store.community(id);
+    if (!c) return null;
+    const info = store.communityInfo(c.community);
+    return { community: c.community, rank: c.rank, name: info?.name ?? null, size: info?.size ?? null };
+  }
+  const communityOut = (c, top = 5) => ({
+    id: c.id, name: c.name, namedBy: c.namedBy, size: c.size, rank: c.rank, hub: hubOut(c.hub),
+    tags: c.props?.tags ?? [], folder: c.props?.folder ?? null,
+    top: store.communityMembers(c.id).slice(0, top).map((m) => ({ ...brief(store.node(m.node) ?? { id: m.node, kind: m.node.split(':')[0], name: m.node }), rank: m.rank })),
+  });
+  // distinct neighbors and edges of current, non-structural edges; tags and folders are labels, never hubs
+  const HUB_SQL = `select x.id as id, count(*) as edges, count(distinct x.other) as degree from (
+      select src as id, dst as other from edges where superseded_by is null and kind not in ('tagged', 'in_folder') and src != dst
+      union all select dst, src from edges where superseded_by is null and kind not in ('tagged', 'in_folder') and src != dst) x
+    join nodes n on n.id = x.id %JOIN% where n.kind not in ('tag', 'folder') %WHERE% group by x.id order by degree desc, edges desc, x.id limit ? offset ?`;
+  const hubStmts = new Map();
+  const hubRows = (community, limit, offset) => {
+    const key = community ? 'c' : 'all';
+    if (!hubStmts.has(key)) hubStmts.set(key, store.db().prepare(HUB_SQL.replace('%JOIN%', community ? 'join communities c on c.node = x.id' : '').replace('%WHERE%', community ? 'and c.community = ?' : '')));
+    return hubStmts.get(key).all(...(community ? [community] : []), limit, offset);
+  };
+  const hubCount = (id) => {
+    const r = store.db().prepare("select count(*) as edges, count(distinct other) as degree from (select dst as other from edges where src = ?1 and superseded_by is null and kind not in ('tagged', 'in_folder') and dst != ?1 union all select src from edges where dst = ?1 and superseded_by is null and kind not in ('tagged', 'in_folder') and src != ?1)").get(id);
+    return { degree: r?.degree ?? 0, edges: r?.edges ?? 0 };
+  };
+  function hubOut(id, counts = null) {
+    if (!id) return null;
+    const n = store.node(id) ?? { id, kind: id.split(':')[0], name: id };
+    const c = store.community(id);
+    return { ...brief(n), ...(counts ?? hubCount(id)), community: c ? c.community : null };
+  }
+  // a community by its id (c:...), or the community of a node by name, id or path
+  function resolveCommunity(ref) {
+    const r = String(ref ?? '').trim();
+    if (!r) return { notFound: r };
+    const direct = store.communityInfo(r) ?? store.communityInfo(`c:${r}`);
+    if (direct) return { community: direct };
+    const byName = store.communities().filter((c) => norm(c.name) === norm(r));
+    if (byName.length === 1) return { community: byName[0] };
+    const node = resolveRef(r);
+    if (node.ambiguous) return node;
+    const c = node.node ? store.community(node.node.id) : null;
+    if (c) return { community: store.communityInfo(c.community) };
+    return node.node ? { notFound: r, node: brief(node.node), reason: 'no community' } : { notFound: r };
+  }
+
+  // every community, biggest first, with its name, hub and strongest members; with id, one community and its members
+  function communities({ id = null, min = 3, budget = DEFAULT_BUDGET } = {}) {
+    if (id) {
+      const r = resolveCommunity(id);
+      if (!r.community) return r;
+      const c = r.community;
+      const members = store.communityMembers(c.id);
+      const head = { community: { ...communityOut(c, 0), top: undefined } };
+      const f = fitLazy(members, (m) => ({ ...hubOut(m.node), rank: m.rank }), Math.max(0, budget - tokensOf(head)), members.length);
+      return { ...head, members: f.shown, truncated: f.truncated };
+    }
+    const all = store.communities().filter((c) => c.size >= min);
+    const f = fitLazy(all, (c) => communityOut(c), budget, all.length);
+    return { communities: f.shown, computedAt: store.meta('communities_at') ? Number(store.meta('communities_at')) : null, modularity: store.meta('communities_q') ? Number(store.meta('communities_q')) : null, truncated: f.truncated };
+  }
+
+  // the most connected nodes, overall or in one community, with their distinct neighbors and edge counts
+  function hubs({ community = null, budget = DEFAULT_BUDGET } = {}) {
+    let cid = null;
+    let head = {};
+    if (community) {
+      const r = resolveCommunity(community);
+      if (!r.community) return r;
+      cid = r.community.id;
+      head = { community: { id: cid, name: r.community.name, size: r.community.size } };
+    }
+    const total = cid ? store.communityMembers(cid).length : store.db().prepare("select count(distinct x.id) as n from (select src as id from edges where superseded_by is null and kind not in ('tagged', 'in_folder') union select dst from edges where superseded_by is null and kind not in ('tagged', 'in_folder')) x join nodes n on n.id = x.id where n.kind not in ('tag', 'folder')").get().n;
+    const PAGE = 100;
+    const rows = { *[Symbol.iterator]() { for (let off = 0; ; off += PAGE) { const page = hubRows(cid, PAGE, off); yield* page; if (page.length < PAGE) return; } } };
+    const names = new Map();
+    const f = fitLazy(rows, (h) => { const o = hubOut(h.id, { degree: h.degree, edges: h.edges }); if (o.community && !names.has(o.community)) names.set(o.community, store.communityInfo(o.community)?.name ?? null); return { ...o, communityName: o.community ? names.get(o.community) : null }; }, Math.max(0, budget - tokensOf(head)), total);
+    return { ...head, hubs: f.shown, truncated: f.truncated };
+  }
+
+  return { resolveRef, graphQuery, graphPath, explain, entity, decisions, communities, hubs, communityOf };
 }

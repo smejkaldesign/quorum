@@ -10,7 +10,8 @@
 //   contradictions { provider, bar } the agent's claims and verdicts and the rule's measured bar (rules/contradictions.js)
 //   hygiene { litter, git, history } the folder walk, git status and size history of a full sweep (vaultHygiene.js)
 //   owner   the name of the person the vault belongs to (main.js USER_NAME)
-//   graph   the memory graph as the rules read it (rules/entities.js ruleGraph), or null while it is not built
+//   graph   the memory graph as the rules read it (rules/entities.js ruleGraph), or null while it is not built; its
+//           proposals() are the model pass's readings that wait for a person (rules/modelEdges.js)
 //   optIn   { entityNotes, placement }: the suggestions a person turned on that the vault's own layout does not show
 //           (Settings > Memory; rules/missingEntity.js, rules/unplaced.js)
 //   instructions  the text of the vault's instruction files outside the index (.claude/skills/*/SKILL.md, CLAUDE.md
@@ -32,12 +33,14 @@ import * as meetingLinks from './meetingLinks.js';
 import * as entityType from './entityType.js';
 import * as unplaced from './unplaced.js';
 import * as summaries from './summaries.js';
+import * as topicSummaries from './topicSummaries.js';
 import * as instructions from './instructions.js';
 import * as keeperLines from './keeperLines.js';
+import * as modelEdges from './modelEdges.js';
 
-export const RULES = [stale, duplicates, nearDuplicates, contradictions, frontmatter, confidential, secrets, oversized, orphans, hygiene, missingEntity, entityAliases, meetingLinks, entityType, unplaced, summaries, instructions, keeperLines];
+export const RULES = [stale, duplicates, nearDuplicates, contradictions, frontmatter, confidential, secrets, oversized, orphans, hygiene, missingEntity, entityAliases, meetingLinks, entityType, unplaced, summaries, topicSummaries, instructions, keeperLines, modelEdges];
 // the rules whose findings are the gaps the Memory setup scan lists (memorySetup.js)
-export const SETUP_RULES = [missingEntity, entityAliases, meetingLinks, entityType, unplaced, summaries, instructions].map((r) => r.rule.id);
+export const SETUP_RULES = [missingEntity, entityAliases, meetingLinks, entityType, unplaced, summaries, topicSummaries, instructions, modelEdges].map((r) => r.rule.id);
 export const RULE_LABELS = Object.fromEntries(RULES.map((r) => [r.rule.id, r.rule.label]));
 
 // runs every rule over the vault. only: the notes that changed; findings that touch none of them are left out, so the

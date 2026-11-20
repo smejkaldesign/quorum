@@ -19,6 +19,7 @@ export const ABOUT = {
     provenance: 'every edge says where it came from: explicit (a wikilink, embed or frontmatter field), rule (a folder or naming convention, a meeting template), model, or person (approved in Needs review), with the source path and line',
     time: 'every edge has valid_from and valid_to (when it held) and recorded_at (when Quorum learned it). A newer fact supersedes an older one, which is kept as history; tools return current facts unless current is false',
     tools: 'graph_query, graph_path, explain, entity and decisions; ambiguous names return the candidates, never a guess',
+    communities: 'topics found in the graph with no model (Louvain modularity with connected communities, weighted by edge kind and provenance), each named from its strongest member, shared tags and folder, or by the person\'s own model when they turn that on. communities lists them, hubs the most connected nodes; explain and entity show a node\'s community. A topic summary is offered in Needs review and written on Approve as a note in the Quorum folder marked quorum: generated',
     decisions: 'typed decision nodes from decision lines and ## Decisions sections, each linked to the meeting or note it was decided in and what it is about',
   },
   search: {
@@ -30,7 +31,7 @@ export const ABOUT = {
     granola_search: 'Granola\'s own search, run live through the Granola sign-in connected in Quorum',
     models: 'learned facts, chat answers and memory checks use the person\'s own model source (Claude Code or their own API key); Quorum hosts no model',
   },
-  budgets: 'search, graph_query, graph_path, explain, entity and decisions take budget (tokens, default 1500), return the strongest items first, one line each with path:line, and end with a line saying what was left out and the budget that returns everything. Ask a narrower question before raising it',
+  budgets: 'search, graph_query, graph_path, explain, entity, decisions, communities and hubs take budget (tokens, default 1500), return the strongest items first, one line each with path:line, and end with a line saying what was left out and the budget that returns everything. Ask a narrower question before raising it',
   findDecisionsAbout: 'For every decision about project X: call decisions with about X. Each line gives the decision, its date, the note and line it was decided in and whether a later one replaced it; read that note for the context. learned_facts and search_meetings X add meeting detail; in Quorum Cloud also kb_search X.',
   notFor: [
     'the web, calendars or upcoming meetings',
@@ -48,6 +49,8 @@ export const TOOL_USE = {
   explain: { returns: 'one node with its source, aliases, every edge and its superseded history', useWhen: 'checking why a fact or connection is there' },
   entity: { returns: 'a person, project or company with its meetings, decisions, notes and people', useWhen: 'first, for any question about one person, project or company' },
   decisions: { returns: 'decisions newest first with date, source line, what they are about and what replaced them', useWhen: 'every decision about a project, person or topic: decisions with about' },
+  communities: { returns: 'topics in the vault, biggest first: name, size, hub and strongest members; or one community\'s members', useWhen: 'what the vault is about, or which notes belong with a topic' },
+  hubs: { returns: 'the most connected nodes, overall or in one community, with neighbor and edge counts', useWhen: 'finding the central notes, people or projects to read first' },
   memory_status: { returns: 'setup progress, notes indexed, node and edge counts, embeddings built, open gaps', useWhen: 'a memory tool returns little, or before trusting the index' },
   about: { returns: 'this description of Quorum as JSON', useWhen: 'to check what Quorum stores and searches before choosing a tool' },
   list_meetings: { returns: 'filed meeting notes newest first, with id, title, date, source and people', useWhen: 'browsing recent meetings or one source; no query needed' },

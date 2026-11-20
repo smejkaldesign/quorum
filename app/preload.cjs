@@ -107,6 +107,11 @@ contextBridge.exposeInMainWorld('quorum', {
   memoryGraphEntity: (name, opts) => ipcRenderer.invoke('memory-graph-entity', name, opts),
   memoryGraphDecisions: (args) => ipcRenderer.invoke('memory-graph-decisions', args),
   memoryGraphPath: (a, b, opts) => ipcRenderer.invoke('memory-graph-path', a, b, opts),
+  memoryGraphCommunities: (args) => ipcRenderer.invoke('memory-graph-communities', args),
+  memoryGraphHubs: (args) => ipcRenderer.invoke('memory-graph-hubs', args),
+  memoryTopicsStatus: () => ipcRenderer.invoke('memory-topics-status'),
+  memoryTopicsEstimate: () => ipcRenderer.invoke('memory-topics-estimate'),
+  onMemoryTopics: on('memory-topics'),
   onMemoryGraph: on('memory-graph'),
   vaultLinkHealth: (fresh) => ipcRenderer.invoke('vault-link-health', fresh === true),
   memoryReviewCount: () => ipcRenderer.invoke('memory-review-count'),
@@ -470,4 +475,10 @@ contextBridge.exposeInMainWorld('quorum', {
   memorySetupRun: (opts) => ipcRenderer.invoke('memory-setup-run', opts),
   memorySetupKeeper: (opts) => ipcRenderer.invoke('memory-setup-keeper', opts),
   onMemorySetup: on('memory-setup'),
+  // the model pass (memoryModelPass.js): its status with the estimate, on and off with its token cap, a run, Cancel
+  memoryModelStatus: () => ipcRenderer.invoke('memory-model-status'),
+  memoryModelSet: (opts) => ipcRenderer.invoke('memory-model-set', opts),
+  memoryModelRun: () => ipcRenderer.invoke('memory-model-run'),
+  memoryModelCancel: () => ipcRenderer.invoke('memory-model-cancel'),
+  onMemoryModel: on('memory-model'),
 });
