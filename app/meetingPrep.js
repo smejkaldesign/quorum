@@ -8,10 +8,13 @@ import { createHash } from 'node:crypto';
 import { similarTitle } from './meetingPlatforms.js';
 
 // Settings > Calendar > Meeting prep. ahead is 'today' (the rest of today) or a number of hours. minInvitees 0 turns
-// the filter off; otherwise an event needs that many invitees besides you, or (orNew) someone you have never met with
-export const PREP_DEFAULTS = Object.freeze({ enabled: false, ahead: 'today', minInvitees: 3, orNew: true });
+// the filter off; otherwise an event needs that many invitees besides you, or (orNew) someone you have never met with.
+// minPast is how many past meetings a series needs before its page writes prep notes by itself (meetingOneOff.js); 0
+// writes them for every meeting
+export const PREP_DEFAULTS = Object.freeze({ enabled: false, ahead: 'today', minInvitees: 3, orNew: true, minPast: 3 });
 export const AHEAD_HOURS = [2, 4, 8, 24];
 export const MIN_INVITEES = [0, 2, 3, 4, 5];
+export const MIN_PAST = [0, 1, 2, 3, 4, 5];
 
 export function prepSettings(raw) {
   const r = raw && typeof raw === 'object' ? raw : {};
@@ -20,6 +23,7 @@ export function prepSettings(raw) {
     ahead: r.ahead === 'today' || AHEAD_HOURS.includes(r.ahead) ? r.ahead : PREP_DEFAULTS.ahead,
     minInvitees: MIN_INVITEES.includes(r.minInvitees) ? r.minInvitees : PREP_DEFAULTS.minInvitees,
     orNew: typeof r.orNew === 'boolean' ? r.orNew : PREP_DEFAULTS.orNew,
+    minPast: MIN_PAST.includes(r.minPast) ? r.minPast : PREP_DEFAULTS.minPast,
   };
 }
 
@@ -205,8 +209,8 @@ function around(text, re, max = 900) {
 // Everything the vault says that bears on this meeting, each piece numbered as a source.
 // notes: [{ rel, title, text }] (the vault index, already filtered by the guardrails and redacted);
 // meetings: [{ rel, title, date, people }] (the meeting index, newest first); topicRels: notes a search on the title
-// found; isPrepNote(rel) leaves earlier prep notes out so one prep never cites another.
-export function gatherPrep({ event, invitees, notes, meetings, topicRels = [], isPrepNote = () => false, now = Date.now(), perPerson = 4, maxHistory = 6, maxTasks = 10 }) {
+// found (the first maxTopic are cited); isPrepNote(rel) leaves earlier prep notes out so one prep never cites another.
+export function gatherPrep({ event, invitees, notes, meetings, topicRels = [], isPrepNote = () => false, now = Date.now(), perPerson = 4, maxHistory = 6, maxTasks = 10, maxTopic = 4 }) {
   const usable = notes.filter((n) => n?.rel && !isPrepNote(n.rel));
   const byRel = new Map(usable.map((n) => [n.rel, n]));
   const sources = [], idOf = new Map();
@@ -243,7 +247,7 @@ export function gatherPrep({ event, invitees, notes, meetings, topicRels = [], i
   const history = historyRows.map((m) => ({ id: cite(m.rel, body(byRel.get(m.rel).text).slice(0, 1200)), date: m.date ?? null }));
 
   // topic notes the title search found, beyond the meetings already cited
-  for (const rel of topicRels.filter((r) => byRel.has(r)).slice(0, 4)) {
+  for (const rel of topicRels.filter((r) => byRel.has(r)).slice(0, maxTopic)) {
     const tw = topicWords(event?.title);
     cite(rel, tw.length ? around(byRel.get(rel).text, termRe(tw)) || body(byRel.get(rel).text).slice(0, 900) : body(byRel.get(rel).text).slice(0, 900));
   }

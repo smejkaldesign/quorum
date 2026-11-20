@@ -10,11 +10,11 @@ const event = (over = {}) => ({ id: 'e1', title: 'Acme roadmap review', start: '
 
 describe('settings', () => {
   it('defaults to off, the rest of today, and 3 or more people or someone new', () => {
-    expect(prepSettings(undefined)).toEqual({ enabled: false, ahead: 'today', minInvitees: 3, orNew: true });
+    expect(prepSettings(undefined)).toEqual({ enabled: false, ahead: 'today', minInvitees: 3, orNew: true, minPast: 3 });
   });
   it('keeps only known values', () => {
-    expect(prepSettings({ enabled: 'yes', ahead: 7, minInvitees: 99, orNew: 'x' })).toEqual({ enabled: false, ahead: 'today', minInvitees: 3, orNew: true });
-    expect(prepSettings({ enabled: true, ahead: 4, minInvitees: 0, orNew: false })).toEqual({ enabled: true, ahead: 4, minInvitees: 0, orNew: false });
+    expect(prepSettings({ enabled: 'yes', ahead: 7, minInvitees: 99, orNew: 'x' })).toEqual({ enabled: false, ahead: 'today', minInvitees: 3, orNew: true, minPast: 3 });
+    expect(prepSettings({ enabled: true, ahead: 4, minInvitees: 0, orNew: false })).toEqual({ enabled: true, ahead: 4, minInvitees: 0, orNew: false, minPast: 3 });
   });
 });
 

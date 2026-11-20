@@ -42,7 +42,7 @@ export function scanExisting(root) {
   return ids;
 }
 
-export function createSources({ settings, saveSettings, toUI = () => {}, log = () => {}, meetingsDir, openExternal, openFresh = null, afterWrite = () => {}, onNoteWrite = () => {}, keepKeys = (_prev, next) => next, store = createTokenStore(), version = '0', agentRuntime = null, detect = detectRunners }) {
+export function createSources({ settings, saveSettings, toUI = () => {}, log = () => {}, meetingsDir, openExternal, openFresh = null, afterWrite = () => {}, onNoteWrite = () => {}, linkNote = (text) => text, keepKeys = (_prev, next) => next, store = createTokenStore(), version = '0', agentRuntime = null, detect = detectRunners }) {
   const conf = () => (settings.sources ??= {});
   const stateOf = (id) => (conf()[id] ??= { method: BY_ID[id]?.recommended ?? 'connect', connected: false, syncNotes: true, syncTranscripts: false, lastSyncAt: null, imported: 0 });
   const jobs = createJobs({ emit: (job) => toUI('source-job', job) });
@@ -134,7 +134,9 @@ export function createSources({ settings, saveSettings, toUI = () => {}, log = (
     let prev = existsSync(file) ? readFileSync(file, 'utf8') : null;
     if (prev !== null && !prev.includes(m.id)) { file = path.join(dir, name.replace(/\.md$/, `-${m.id.slice(0, 8)}.md`)); prev = existsSync(file) ? readFileSync(file, 'utf8') : null; }
     const acct = stateOf(id).account;
-    const own = acct && !/[\r\n]/.test(acct) ? setFrontmatterKey(text, 'source_account', JSON.stringify(String(acct))) : text;
+    const signed = acct && !/[\r\n]/.test(acct) ? setFrontmatterKey(text, 'source_account', JSON.stringify(String(acct))) : text;
+    // Quorum's own frontmatter lines only (main.js: the link back to the meeting's prep note); the body is the source's
+    const own = linkNote(signed, m);
     const next = keepKeys(prev, own);
     writeFileSync(file, next);
     // the text before and after, for the note's versions and the Memory tab's live view (main.js)

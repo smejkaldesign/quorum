@@ -101,6 +101,8 @@ export function mapEvent(e, calendarId, calendarName = '') {
     location: e.location ?? '',
     url: e.hangoutLink ?? video ?? '',
     notes: String(e.description ?? '').slice(0, 1500),
+    // the names of attached files only, for the meeting page's one-off prep (meetingOneOff.js); never their links
+    ...(e.attachments?.length ? { attachments: e.attachments.map((a) => String(a?.title ?? '').trim()).filter(Boolean).slice(0, 10) } : {}),
   };
 }
 

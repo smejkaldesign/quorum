@@ -56,11 +56,18 @@ export function parseBrief(text) {
   } catch { return null; }
 }
 
+// extra holds what the entry needs beyond the brief (a one-off brief keeps its event's start, for prune)
 export function createBriefCache(file) {
   let data = {};
   try { if (existsSync(file)) data = JSON.parse(readFileSync(file, 'utf8')) ?? {}; } catch { data = {}; }
+  const save = () => { try { writeFileSync(file, JSON.stringify(data)); } catch {} };
   return {
     get: (key, stamp) => (data[key]?.stamp === stamp ? data[key].brief : null),
-    set(key, stamp, brief) { data[key] = { stamp, brief, at: new Date().toISOString() }; try { writeFileSync(file, JSON.stringify(data)); } catch {} },
+    // the entry whatever its stamp: { stamp, brief, at, ...extra }
+    entry: (key) => data[key] ?? null,
+    set(key, stamp, brief, extra = {}) { data[key] = { ...extra, stamp, brief, at: new Date().toISOString() }; save(); },
+    delete(key) { if (key in data) { delete data[key]; save(); } },
+    // entries keep(key, entry) says no to are dropped
+    prune(keep) { let n = 0; for (const [k, v] of Object.entries(data)) if (!keep(k, v)) { delete data[k]; n += 1; } if (n) save(); },
   };
 }

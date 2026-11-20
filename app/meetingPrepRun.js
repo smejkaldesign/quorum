@@ -5,6 +5,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { similarTitle } from './meetingPlatforms.js';
+import { setFrontmatterKey } from './frontmatter.js';
 import { PREP_SYSTEM, gatherPrep, inPrepWindow, inviteStamp, inviteesOf, isPrepRel, joinLink, optedOut, parsePrep, prepPrompt, prepRel, renderPrep, wantsPrep } from './meetingPrep.js';
 
 export const PLATFORM_NAMES = { zoom: 'Zoom', meet: 'Google Meet', teams: 'Teams', webex: 'Webex' };
@@ -21,6 +23,7 @@ export function createPrepCache(file) {
   const save = () => { try { writeFileSync(file, JSON.stringify(data)); } catch { /* the next write tries again */ } };
   return {
     get: (id) => data[id] ?? null,
+    entries: () => Object.values(data),
     // set replaces the entry (a note written clears failures and a dismissal); update merges into it
     set(id, v) { data[id] = { ...v, at: new Date().toISOString() }; save(); },
     update(id, v) { data[id] = { ...data[id], ...v }; save(); },
@@ -37,6 +40,23 @@ export function prepLinks(vault, text) {
     if (abs.startsWith(vault + path.sep) && existsSync(abs)) out[m[1]] = abs;
   }
   return out;
+}
+
+// The prep note a filed meeting note links back to: the newest note Quorum wrote for an event with a similar title that
+// started within 30 minutes of the meeting, and that is still on disk (exists(rel)). A deleted one is not linked
+export function prepNoteFor(entries, { title, start }, exists = () => true) {
+  const at = new Date(start ?? '').getTime();
+  if (!title || !Number.isFinite(at)) return null;
+  const hit = entries
+    .filter((x) => x?.rel && x.title && !x.dismissed && Math.abs(new Date(x.start ?? '').getTime() - at) <= 30 * 60000 && similarTitle(x.title, title) && exists(x.rel))
+    .sort((a, b) => String(b.at ?? '').localeCompare(String(a.at ?? '')))[0];
+  return hit ? hit.rel : null;
+}
+// a filed meeting note with its link back to the prep note: one prep_note line in its frontmatter, nothing else changed.
+// The link is the note's name only, so no vault folder reaches a note that syncs; prep names carry an event hash
+export function withPrepLink(text, rel) {
+  const name = String(rel ?? '').split('/').pop().replace(/\.md$/i, '').replace(/[[\]|]/g, ' ').trim();
+  return name ? setFrontmatterKey(text, 'prep_note', JSON.stringify(`[[${name}]]`)) : text;
 }
 
 // d: { on(), conf(), brain() -> { vault, agentDoc() } | null, snapshot(), search(q, n), meetings(), isMe(a),
@@ -105,7 +125,7 @@ export function createPrepRunner(d) {
       if (!rel || !abs.startsWith(b.vault + path.sep)) return held('failed');
       mkdirSync(path.dirname(abs), { recursive: true });
       d.write(abs, text);
-      d.cache.set(e.id, { stamp, rel, hash: prepHash(text), start: e.start });
+      d.cache.set(e.id, { stamp, rel, hash: prepHash(text), start: e.start, title: e.title });
       return { status: 'ready', markdown: bodyOf(text), rel, file: abs, links: prepLinks(b.vault, text), edited: false };
     } catch (err) { d.log?.('meeting prep', err?.message); return fail(); }
   }

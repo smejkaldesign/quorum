@@ -108,7 +108,8 @@ import { titleOf } from './notificationSummary.js';
 import { SUMMARY_SYSTEM, parseSummary, parseTurns, splitNote as splitRecorded, withSummary } from './noteTranscript.js';
 import { BRIEF_SYSTEM, SERIES_MIN, briefPrompt, createBriefCache, parseBrief, relatedOf, seriesKey, seriesOf } from './meetingBrief.js';
 import { prepSettings } from './meetingPrep.js';
-import { createPrepCache, createPrepRunner } from './meetingPrepRun.js';
+import { createPrepCache, createPrepRunner, prepLinks, prepNoteFor, withPrepLink } from './meetingPrepRun.js';
+import { createOneOff, oneOffBrief } from './meetingOneOff.js';
 import { collectExport, exportFileName, writeZip } from './exportNotes.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -2426,9 +2427,13 @@ function noteMeetingApps(fm, abs) {
 }
 
 // The meeting page (MeetingPage.tsx): a recurring meeting's past notes, and its prep notes and description once it
-// has met SERIES_MIN times. The first call answers from what is kept; { generate: true } writes a new brief with the
-// person's own model when the series has gained a note since.
+// has met the threshold (SERIES_MIN, or Settings > Calendar > Meeting prep while the meeting-prep flag is on). The first
+// call answers from what is kept; { generate: true } writes a new brief with the person's own model when the series has
+// gained a note since. Below the threshold, with the flag on, { id, anyway: true, generate: true } writes a one-off
+// brief for that event from its invite and the vault (meetingOneOff.js), kept on the event until { force: true }
 const briefCache = createBriefCache(path.join(DATA_DIR, 'meeting-briefs.json'));
+const oneOffOn = () => flagsApi?.get('meeting-prep') === true;
+const briefMin = () => (oneOffOn() ? prepConf().minPast : SERIES_MIN);
 ipcMain.handle('meeting-brief', async (_e, q) => {
   const title = String(q?.title ?? '');
   if (!title || suggester.isExcluded(title)) return { past: [], related: [], brief: null, status: 'few' };
@@ -2438,11 +2443,10 @@ ipcMain.handle('meeting-brief', async (_e, q) => {
   // meetings connected by the people who come to this one: from its past notes, and its organizer when named
   const org = String(q?.organizer ?? '').trim();
   const related = relatedOf(all, { limit: 15, title, people: [...new Set([...past.slice(0, 6).flatMap((m) => m.people ?? []), ...(org && !org.includes('@') && !isSelf(org) ? [org] : [])])] });
-  const res = await meetingBriefFor(q, title, past, list);
+  const res = past.length < Math.max(1, briefMin()) ? await oneOffFor(q, past, list) : await meetingBriefFor(q, title, past, list);
   return { ...res, related };
 });
 async function meetingBriefFor(q, title, past, list) {
-  if (past.length < SERIES_MIN) return { past: list, brief: null, status: 'few' };
   const key = seriesKey(title), stamp = `${past[0].file}|${past.length}`;
   const kept = briefCache.get(key, stamp);
   if (kept) return { past: list, brief: kept, status: 'ready' };
@@ -2456,6 +2460,49 @@ async function meetingBriefFor(q, title, past, list) {
     return { past: list, brief, status: 'ready' };
   } catch (e) { log('meeting brief', e?.message); return { past: list, brief: null, status: 'failed' }; }
 }
+// the notes the memory graph and memory search find for a one-off meeting: what the graph links to each invitee, then a
+// search on the title. Before the graph is built or the search index is ready, the vault index's own title search
+async function oneOffRels(title, invitees) {
+  const rels = new Set();
+  if (graphReady()) {
+    for (const p of invitees.slice(0, 8)) {
+      try {
+        const r = memoryGraph.entity(p.name || p.email, { budget: 1500 });
+        for (const x of [r?.node, ...(r?.notes ?? []), ...(r?.meetings ?? [])]) if (x?.rel) rels.add(x.rel);
+      } catch (err) { log('meeting brief graph', err?.message); }
+    }
+  }
+  let hits = null;
+  try { hits = await memorySearch.search({ q: title, k: 8, budget: 4000 }); } catch (err) { log('meeting brief search', err?.message); }
+  for (const h of hits?.results?.length ? hits.results : vindex?.search(title, 8) ?? []) if (h?.rel) rels.add(h.rel);
+  return [...rels];
+}
+const oneOffFor = createOneOff({
+  on: oneOffOn,
+  min: briefMin,
+  cache: briefCache,
+  event: rawEvent,
+  isMe: prepIsMe,
+  mentionsOptOut,
+  onNeverList,
+  isExcluded: (t) => suggester.isExcluded(t),
+  modelReady: () => modelSource() !== 'none',
+  build: async (e, invitees, past) => {
+    const b = brain();
+    return oneOffBrief({
+      event: e, past,
+      notes: vindex ? vindex.snapshot().map((n) => ({ rel: n.rel, title: n.note?.title ?? null, text: n.text, cut: n.cut })) : [],
+      meetings: meetingIndex().map((m) => ({ rel: m.rel, title: m.title, date: m.date, people: m.people })),
+      topicRels: vindex ? await oneOffRels(String(e.title ?? ''), invitees) : [],
+      isMe: prepIsMe, mentionsOptOut, onNeverList, isExcluded: (t) => suggester.isExcluded(t), redact: (t) => suggester.redactLines(t),
+      runModel: (prompt, system) => runClaude(prompt, system, settings.model, { role: 'summary' }),
+      instructions: (() => { try { return b?.markers?.agentOS ? readFileSync(path.join(b.root, b.markers.agentOS), 'utf8') : ''; } catch { return ''; } })(),
+      owner: OWNER, about: aboutMe(),
+    });
+  },
+  links: (prep) => (brain()?.vault ? prepLinks(brain().vault, prep) : {}),
+  log,
+});
 
 // Meeting prep (meetingPrep.js, meetingPrepRun.js): the note an upcoming event opens to, built from the vault and
 // written by the person's own model source, saved into the vault next to the daily note. Behind the meeting-prep flag
@@ -2467,6 +2514,7 @@ function prepIsMe(a) {
   const mine = [userCache?.email, gcal.status?.().account].map((x) => String(x ?? '').toLowerCase()).filter(Boolean);
   return a.self === true || (!!a.email && mine.includes(a.email)) || (!!a.name && a.name.toLowerCase() === USER_NAME.toLowerCase());
 }
+const prepCache = createPrepCache(path.join(DATA_DIR, 'meeting-preps.json'));
 const prep = createPrepRunner({
   on: prepOn,
   conf: prepConf,
@@ -2495,10 +2543,19 @@ const prep = createPrepRunner({
   owner: () => OWNER,
   about: aboutMe,
   write: writeAtomic,
-  cache: createPrepCache(path.join(DATA_DIR, 'meeting-preps.json')),
+  cache: prepCache,
   log,
 });
 const prepAhead = () => prep.prepAhead();
+// a meeting note filed from a notes source links back to the prep note Quorum wrote for its event (issue 63), as one
+// frontmatter line Quorum owns. Nothing else in the note changes. In Cloud a meeting note syncs to the workspace and can
+// go to a team knowledge base (ee/meetingsKb.js), so the private prep note is linked only in the Local edition
+function linkPrepNote(text, m) {
+  const vault = brain()?.vault;
+  if (!prepOn() || !vault || account.meetingsKb) return text;
+  const rel = prepNoteFor(prepCache.entries(), { title: m?.title, start: m?.meetingAt ?? m?.date }, (r) => existsSync(path.join(vault, r)));
+  return withPrepLink(text, rel);
+}
 // the raw event (with invitees and invite text) behind an Up next row, by its id
 async function rawEvent(id) {
   const { events } = await calendarEvents(8);
@@ -2943,7 +3000,7 @@ function importWrite(file, prev, next) {
 }
 // a vault with no meetings folder yet gets 08-meetings, the same folder a first recording makes, so a first import
 // from Granola has somewhere to go
-const sourcesApi = registerSources({ ipcMain: connectIpc, settings, saveSettings, toUI, log, meetingsDir: () => meetingsDir() ?? (brain()?.vault ? path.join(brain().vault, '08-meetings') : null), keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), openFresh: openFreshSignIn, afterWrite: (file) => { account.sync.pushMeetingNote(file); keeper.schedule('import'); }, onNoteWrite: importWrite, version: app.getVersion(), agentRuntime: { runtime: RUNTIME, cli: CLI, env: RUNTIME_ENV } });
+const sourcesApi = registerSources({ ipcMain: connectIpc, settings, saveSettings, toUI, log, meetingsDir: () => meetingsDir() ?? (brain()?.vault ? path.join(brain().vault, '08-meetings') : null), keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), openFresh: openFreshSignIn, afterWrite: (file) => { account.sync.pushMeetingNote(file); keeper.schedule('import'); }, onNoteWrite: importWrite, linkNote: linkPrepNote, version: app.getVersion(), agentRuntime: { runtime: RUNTIME, cli: CLI, env: RUNTIME_ENV } });
 // platform accounts for cloud recordings (Zoom first) go through the relay, so they exist in the hosted edition only
 if (EDITION === 'cloud') { const ee = await loadEE('platforms.js'); ee.registerPlatforms({ ipcMain: connectIpc, account, clients: ee.platformClients({ packaged: packagedMeta, dev: !app.isPackaged }), settings, saveSettings, toUI, log, meetingsDir, keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), afterWrite: (file) => account.sync.pushMeetingNote(file) }); }
 ipcMain.handle('vault-graph', () => vindex?.graph() ?? null);
