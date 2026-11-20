@@ -769,15 +769,22 @@ function KeeperCard({ brain }: { brain: Brain }) {
   const run = async (allowCreate = false) => { setBusy(true); try { await window.quorum.keeperRun(allowCreate ? { allowCreate } : undefined); } finally { setBusy(false); load(); } };
   const last = k.last && !k.last.off && !k.last.held ? `${k.last.filed} filed${k.last.error ? ` · ${k.last.error}` : ''}` : null;
   const desc = !k.on ? 'Off. Quorum saves meeting notes and changes nothing else.'
-    : k.lastRunAt ? `Last run ${when(k.lastRunAt)}${last ? `: ${last}` : ''}` : "After each meeting, updates the notes Quorum created: its meetings index, daily notes and learned facts.";
+    : k.lastRunAt ? `Last run ${when(k.lastRunAt)}${last ? `: ${last}` : ''}` : `After each meeting, updates the notes Quorum created: its meetings index, daily notes and the learned facts in ${k.folder ?? 'its Quorum folder'}.`;
   return (
     <>
       <h3>Memory</h3>
       <div className="set-card">
         <Row icon={<IconReset width={18} height={18} className={k.on ? 'ok' : undefined} />} title="Auto maintain memories from new meetings" desc={desc}>
+          {k.on && k.lastRunAt && <button className="pill small-pill" onClick={() => window.quorum.keeperChangelogOpen()}>Changelog</button>}
           {k.on && <button className="pill small-pill" disabled={busy || k.running} onClick={() => run()}>{busy || k.running ? 'Running…' : 'Run now'}</button>}
           <Toggle on={k.on} onChange={async (on) => setK(await window.quorum.keeperSet({ on }))} />
         </Row>
+        {k.folder && (
+          <Row icon={<IconFolder width={18} height={18} />} title="Quorum folder"
+            desc="The one folder in your vault Quorum writes into: learned facts, and repair plans you save as notes. Your own notes, CLAUDE.md and AGENTS.md stay as you wrote them">
+            <Field value={k.folder} placeholder="Quorum" onSave={async (folder) => setK(await window.quorum.keeperSet({ folder }))} />
+          </Row>
+        )}
         {k.errors.count > 0 && (
           <Row icon={<IconInfo width={18} height={18} />} title={`${k.errors.count} upkeep ${k.errors.count === 1 ? 'error' : 'errors'}`}
             desc={k.errors.last ? `Last: ${k.errors.last.where}, ${k.errors.last.message}` : 'Logged under Application Support'}>

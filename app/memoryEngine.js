@@ -116,7 +116,7 @@ export function createMemoryEngine({ dataDir, ask = async () => { throw new Erro
     }
     let g = null;
     if (cond.graphReady === true) { try { g = ruleGraph(graph(vault)); } catch (e) { log('memory engine', 'graph', e?.message); } }
-    const ctx = { notes: list, resolve, tags, folders: cond.folders ?? {}, contradictions: contradictions(), hygiene, graph: g, owner: cond.owner ?? '', optIn: cond.optIn ?? {}, instructions: cond.instructions ?? [] };
+    const ctx = { notes: list, resolve, tags, folders: cond.folders ?? {}, contradictions: contradictions(), hygiene, graph: g, owner: cond.owner ?? '', learned: cond.learned ?? null, optIn: cond.optIn ?? {}, instructions: cond.instructions ?? [] };
     const s = sweeps.run(vault, kind, ctx, { only });
     return { state: s, tags };
   }

@@ -27,6 +27,7 @@ import { createConnectorTools } from './connectors/tools/index.js';
 import { actorLabel, createAppActions, currentActor, outsideActor } from './appActions.js';
 import { fromActionHandlers, runMemoryTool, withholdAnswer } from './cli/memoryTools.mjs';
 import { CONNECTOR_SERVER } from './cli/connectorTools.mjs';
+import { withMark } from './cli/learned.mjs';
 import { httpUrl, relayFetch, relayUrl } from './relayUrl.js';
 import { createErrorReports } from './errorReports.js';
 import { createIssueReports, createLogTail, encodeCapture } from './issueReports.js';
@@ -66,6 +67,7 @@ import updater from 'electron-updater';
 import { createUpdater, feedFor } from './updater.js';
 import { createGuardrails } from './guardrails.js';
 import { createPlatformCache, eventRef, matchPlatforms } from './meetingPlatforms.js';
+import { joinAdvice } from './joinAdvice.js';
 import { calendarWindow, normalizeDays } from './calendarWindow.js';
 import { ARCHIVE_AFTER, feedPage, feedRows, labelOf, needsReview } from './activityFeed.js';
 import { groupByLine, issueMeta, issueOf } from './memoryHealth.js';
@@ -365,12 +367,13 @@ const keeper = createKeeper({
   onGuarded: (rel, why) => guardrails.recordDenial({ path: rel, reason: why, surface: 'keeper' }),
   // memory setup: a filed meeting's typed edges go into the memory graph
   graph: () => graphStore(),
+  dataDir: DATA_DIR,
 });
 ipcMain.handle('keeper-status', () => keeper.status());
 ipcMain.handle('keeper-set', (_e, patch) => keeper.set(patch ?? {}));
-ipcMain.handle('keeper-remove-claude', () => keeper.removeClaude());
 ipcMain.handle('keeper-run', (_e, opts) => keeper.run({ reason: 'manual', allowCreate: opts?.allowCreate === true }));
 ipcMain.handle('keeper-errors-open', () => { if (existsSync(KEEPER_ERRORS)) shell.openPath(KEEPER_ERRORS); });
+ipcMain.handle('keeper-changelog-open', () => { const f = keeper.status().changelog; if (f && existsSync(f)) shell.openPath(f); });
 ipcMain.handle('keeper-errors-clear', () => keeper.clearErrors());
 let helper;
 const asset = (name) => path.join(here, 'assets', name);
@@ -2870,7 +2873,7 @@ function setupStatus() {
   const k = keeper.status();
   // a keeper turned off in Settings before setup counts as the person's choice too
   const keeperChoice = memorySetup.keeperChoice(b.vault) ?? (settings.keeper?.on === false ? 'off' : null);
-  return { ...memorySetup.status(b.vault), keeperChoice, made: b.made ?? null, keeper: { on: !!k.on, editVault: !!k.editVault }, graph: !!memoryGraph };
+  return { ...memorySetup.status(b.vault), keeperChoice, made: b.made ?? null, keeper: { on: !!k.on }, graph: !!memoryGraph };
 }
 // once per vault, after its index is in: the scan of a vault that has no report yet
 function scheduleSetup(vault) {
@@ -3014,7 +3017,62 @@ function importWrite(file, prev, next) {
 // from Granola has somewhere to go
 const sourcesApi = registerSources({ ipcMain: connectIpc, settings, saveSettings, toUI, log, meetingsDir: () => meetingsDir() ?? (brain()?.vault ? path.join(brain().vault, '08-meetings') : null), keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), openFresh: openFreshSignIn, afterWrite: (file) => { account.sync.pushMeetingNote(file); keeper.schedule('import'); }, onNoteWrite: importWrite, linkNote: linkPrepNote, version: app.getVersion(), agentRuntime: { runtime: RUNTIME, cli: CLI, env: RUNTIME_ENV } });
 // platform accounts for cloud recordings (Zoom first) go through the relay, so they exist in the hosted edition only
-if (EDITION === 'cloud') { const ee = await loadEE('platforms.js'); ee.registerPlatforms({ ipcMain: connectIpc, account, clients: ee.platformClients({ packaged: packagedMeta, dev: !app.isPackaged }), settings, saveSettings, toUI, log, meetingsDir, keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), afterWrite: (file) => account.sync.pushMeetingNote(file) }); }
+// pastZoomMeetings: Zoom calls on the calendar that ended in the last twelve hours, so My Notes from meetings the user
+// joined but did not host are found without a webhook. withheldMeeting: an imported meeting whose title names an
+// opted-out company, or whose invite (the calendar event starting within fifteen minutes of it) names someone on the
+// never-listen list, is never filed
+let withheldEvents = { at: 0, list: [] };
+async function withheldMeeting({ title, start }) {
+  if (mentionsOptOut(title)) return 'opt-out';
+  const at = Date.parse(start ?? '');
+  if (Number.isNaN(at)) return null;
+  // one calendar read serves a whole import run
+  if (Date.now() - withheldEvents.at > 5 * 60000) withheldEvents = { at: Date.now(), list: await recentCalendarEvents(36).catch(() => []) };
+  const events = withheldEvents.list;
+  const e = events.find((x) => Math.abs(Date.parse(x.start) - at) <= 15 * 60000);
+  if (!e) return null;
+  if (mentionsOptOut(e.title)) return 'opt-out';
+  return (e.attendees ?? []).some((a) => onNeverList(a.email)) ? 'never-listen' : null;
+}
+let platformsApi = null;
+if (EDITION === 'cloud') { const ee = await loadEE('platforms.js'); platformsApi = ee.registerPlatforms({ ipcMain: connectIpc, account, clients: ee.platformClients({ packaged: packagedMeta, dev: !app.isPackaged }), settings, saveSettings, toUI, log, meetingsDir, keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), afterWrite: (file) => account.sync.pushMeetingNote(file), pastZoomMeetings: async () => (await recentCalendarEvents(12)).map((e) => ({ url: callLink(e).join, title: e.title, start: e.start })).filter((x) => x.url && /zoom\./i.test(x.url)), withheldMeeting }); }
+// Join from Quorum: before a Zoom call the My Notes check, before a Meet, Teams or in-person meeting the reminder to
+// start notes by hand and ask first (joinAdvice.js). An invite on the never-listen or opt-out lists never gets a capture
+// prompt; a Zoom call gets the warning to stop My Notes instead
+async function joinCheck({ url = null, id = null, platform = null }) {
+  const zoom = platformsApi?.list().find((p) => p.id === 'zoom') ?? null;
+  if (!zoom?.connected) return null;
+  let blocked = false;
+  try {
+    const { events } = await calendarEvents(8);
+    const e = events.find((x) => (url && callLink(x).join === url) || (id && x.id === id));
+    // an entry with no call link counts as an in-person meeting only when it invites someone else
+    if (id && (!e || (e.attendees ?? []).length < 2)) return null;
+    if (e) blocked = mentionsOptOut(e.title) || (e.attendees ?? []).some((a) => onNeverList(a.email));
+  } catch (err) { log('join check', err.message); if (id) return null; }
+  return joinAdvice({ platform, zoom, blocked, dismissed: settings.joinReminders ?? {} });
+}
+// a meeting with no call link (in person): the same reminder, shown on the meeting's page
+ipcMain.handle('join-advice', (_e, id) => joinCheck({ id: String(id ?? '') || null }));
+ipcMain.handle('join-meeting', async (_e, url, platform = null) => {
+  const target = String(url ?? '');
+  if (!/^https:\/\//.test(target)) return { error: 'Not a meeting link.' };
+  const advice = await joinCheck({ url: target, platform });
+  if (advice) {
+    const buttons = advice.settingsUrl ? ['Join', 'Open Zoom settings', 'Cancel'] : ['Join', 'Cancel'];
+    // the never-listen warning shows for every such meeting, so it has nothing to turn off
+    const r = await dialog.showMessageBox(win, { type: advice.kind === 'blocked' ? 'warning' : 'info', message: advice.message, detail: advice.detail, buttons, defaultId: 0, cancelId: buttons.length - 1, ...(advice.kind === 'blocked' ? {} : { checkboxLabel: advice.kind === 'zoom' ? 'Both are on. Do not ask again' : 'Do not remind me again' }) });
+    if (r.checkboxChecked) {
+      settings.joinReminders = { ...settings.joinReminders, [advice.kind]: true };
+      saveSettings();
+      if (advice.kind === 'zoom') platformsApi?.handlers['platform-set-option']('zoom', { notesConfirmed: true });
+    }
+    if (buttons[r.response] === 'Cancel') return { ok: false };
+    if (buttons[r.response] === 'Open Zoom settings') { shell.openExternal(advice.settingsUrl); return { ok: false }; }
+  }
+  shell.openExternal(target);
+  return { ok: true };
+});
 ipcMain.handle('vault-graph', () => vindex?.graph() ?? null);
 // the person's own name for a graph cluster, kept per vault in settings so it survives a restart and a re-index; an
 // empty name goes back to the generated one. Answers with every note's cluster name after the change (a rename can
@@ -3962,6 +4020,8 @@ function memoryCond(heavy = false) {
     // Settings > Memory: suggestions the vault's own layout does not show, off by default (rules/missingEntity.js,
     // rules/unplaced.js)
     optIn: { entityNotes: settings.memoryEntityNotes === true, placement: settings.memoryPlacement === true },
+    // the keeper lines rule moves learned facts into this file (rules/keeperLines.js)
+    learned: keeper.factsFile(),
   };
   if (!heavy || !b) return out;
   let bar = null;
@@ -4538,12 +4598,15 @@ function autoApply() {
   log('auto apply', `${plan.ok.length} items`, `${plan.held.length + plan.skipped.length} left for review`);
   return startPlan(plan, items, { actor: 'auto' });
 }
-// a repair plan written as a note in the vault, only when the person asks for it (Save as a note)
+// a repair plan written as a note, only when the person asks for it (Save as a note), into the Quorum folder
+// (keeper.js quorumFolder); never at the vault root. The plan itself shows in the app either way
 function savePlanNote(view) {
   const b = brain();
   if (!b) throw new Error('No vault connected');
   const day = new Date().toISOString().slice(0, 10);
-  const rel = createNote(b.vault, '', `Memory repair plan ${day}`);
+  const folder = keeper.folder();
+  mkdirSync(path.join(b.vault, folder), { recursive: true });
+  const rel = createNote(b.vault, folder, `Memory repair plan ${day}`);
   const lines = [`# Memory repair plan ${day}`, '', `Quorum planned ${view.run} of ${view.total} items in Needs review as one batch.`, '', '## What the batch does', ''];
   for (const g of view.groups) {
     lines.push(`- ${g.label}`);
@@ -4553,7 +4616,7 @@ function savePlanNote(view) {
   part('Merged', view.merged);
   part('Skipped', view.skipped);
   part('Held back', view.held);
-  writeAtomic(path.join(b.vault, rel), `${lines.join('\n')}\n`);
+  writeAtomic(path.join(b.vault, rel), withMark(`${lines.join('\n')}\n`));
   vindex?.sync();
   return rel;
 }
@@ -4983,6 +5046,15 @@ async function calendarEvents(days) {
   const [mac, google] = await Promise.all([c.enabled ? calAsk({ cmd: 'calEvents', days }) : Promise.resolve({ status: 'off', events: [] }), gcal.events(days)]);
   const tag = (list, calendar) => (list ?? []).map((e) => ({ ...e, source: calendar }));
   return { mac, google, events: mergeEvents(tag(mac.events, 'apple-calendar'), tag(google.events, 'google-calendar')) };
+}
+// the meetings that ended in the last `hours`, from both sources: the Calendar app reads from the start of yesterday
+// (back: 1) and Google from `hours` ago, since calendarEvents starts at now and never returns a finished meeting
+async function recentCalendarEvents(hours = 12) {
+  const c = calSettings();
+  const [mac, google] = await Promise.all([c.enabled ? calAsk({ cmd: 'calEvents', days: 1, back: 1 }) : Promise.resolve({ events: [] }), gcal.recent(hours).catch(() => ({ events: [] }))]);
+  const tag = (list, calendar) => (list ?? []).map((e) => ({ ...e, source: calendar }));
+  const t = Date.now();
+  return mergeEvents(tag(mac.events, 'apple-calendar'), tag(google.events, 'google-calendar')).filter((e) => new Date(e.end) <= t && t - new Date(e.end) < hours * 3600000);
 }
 // which call platform an event points at, from its URL, location or invite text; null for a plain calendar entry
 const CALL_LINKS = [

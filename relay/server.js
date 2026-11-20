@@ -10,7 +10,7 @@ import { log } from './lib/log.js';
 import { handleConnection } from './lib/session.js';
 import { handleNotes } from './summary.js';
 import { handleCard, handleCheckout, handlePacks, handlePortal, handleWebhook } from './billing.js';
-import { handleConnect } from './connect.js';
+import { createConnectEventsPurge, handleConnect } from './connect.js';
 import { handleOAuth, oauthStatus } from './oauth.js';
 import { corsHeaders, handleAccessRequest, handleSendCode } from './platform.js';
 import { passkeyRoutes } from './passkeys.js';
@@ -36,6 +36,9 @@ const handleReportShots = reportShotsRoute(deps);
 // issue reports and their screenshots are deleted within 90 days; this sweeps hourly
 const reportPurge = createReportPurge({ db: clients.db, log });
 reportPurge.start();
+// platform webhook events are routing data only and are deleted once delivered or after seven days; this sweeps hourly
+const connectPurge = createConnectEventsPurge({ db: clients.db, log });
+connectPurge.start();
 // the KB sync worker runs in this process when KB_SYNC_WORKER=on; relay/kbSyncWorker.js runs it as its own service
 const kbSync = config.kbSync.enabled ? createKbSyncWorker({ db: clients.db, config, log }) : null;
 kbSync?.start();

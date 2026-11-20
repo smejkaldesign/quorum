@@ -15,6 +15,7 @@ export function featuresOf(connector: LibraryConnector): string[];
 export function aboutOf(connector: LibraryConnector): string;
 export function connectorsFor(opts?: { meetingCapture?: boolean }): readonly LibraryConnector[];
 export function aboutFor(connector: LibraryConnector, opts?: { meetingCapture?: boolean }): string;
+export function withoutOf(connector: LibraryConnector): string | null;
 export function featuresFor(connector: LibraryConnector, opts?: { meetingCapture?: boolean }): string[];
 // what the main process reports about connections; added is settings.meetingProviders, the apps the person turned on
 export type ConnectionLive = {

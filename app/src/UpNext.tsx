@@ -206,11 +206,12 @@ function DaysMenu({ days, onPick }: { days: number | 'week'; onPick: (d: number 
   );
 }
 
-// the white Join button an upcoming call shows on hover, with its app's logo
+// the white Join button an upcoming call shows on hover, with its app's logo. The main process opens the link, after the
+// My Notes check or the reminder to start notes by hand when Zoom AI notes are connected (joinAdvice.js)
 export function JoinButton({ id, label, url, name }: { id: string; label: string; url: string; name?: string }) {
   const icons = useAppIcons();
   return (
-    <button className="up-join" aria-label={name ? `Join on ${name}` : label} data-tip={name ? `Join on ${name}` : undefined} onClick={(ev) => { ev.stopPropagation(); window.quorum.openExternal(url); }}>
+    <button className="up-join" aria-label={name ? `Join on ${name}` : label} data-tip={name ? `Join on ${name}` : undefined} onClick={(ev) => { ev.stopPropagation(); window.quorum.joinMeeting(url, id).catch(() => window.quorum.openExternal(url)); }}>
       {icons[id] ? <img src={icons[id]!} alt="" /> : null}{label}<IconArrowRight width={14} height={14} />
     </button>
   );

@@ -3,10 +3,11 @@
 //
 //   verify(mcp)            optional. Right after sign-in: throws a plain-language Error when this identity has no
 //                          account at the source, so the token is dropped and the user is told to pick another.
-//   sync({ mcp, existing, since, write, progress })
+//   sync({ mcp, existing, since, write, progress, elsewhere })
 //                          required. Lists every meeting since `since`, skips ids in `existing` (a Set of source_id
 //                          values already in the vault: first save wins), fetches the rest and calls
-//                          write(fileName, markdown, meeting) for each. The markdown carries `source: <id>` and
+//                          write(fileName, markdown, meeting) for each, leaving out a meeting elsewhere(meeting) says
+//                          another source already filed (sources/sameMeeting.js). The markdown carries `source: <id>` and
 //                          `source_id: <meeting id>` in its frontmatter. Reports progress({ phase, message, done,
 //                          total, phaseStartedAt }) and returns { listed, imported, skipped, failed: [{ id, title, error }] }.
 //   transcript(mcp, id)    optional, behind the `transcripts` extra. The whole transcript for one meeting as

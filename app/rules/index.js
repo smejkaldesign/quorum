@@ -15,6 +15,7 @@
 //           (Settings > Memory; rules/missingEntity.js, rules/unplaced.js)
 //   instructions  the text of the vault's instruction files outside the index (.claude/skills/*/SKILL.md, CLAUDE.md
 //           at the brain root), lowercased by the rules that read them
+//   learned the keeper's facts file, vault-relative (rules/keeperLines.js)
 import * as orphans from './orphans.js';
 import * as duplicates from './duplicates.js';
 import * as nearDuplicates from './nearDuplicates.js';
@@ -32,8 +33,9 @@ import * as entityType from './entityType.js';
 import * as unplaced from './unplaced.js';
 import * as summaries from './summaries.js';
 import * as instructions from './instructions.js';
+import * as keeperLines from './keeperLines.js';
 
-export const RULES = [stale, duplicates, nearDuplicates, contradictions, frontmatter, confidential, secrets, oversized, orphans, hygiene, missingEntity, entityAliases, meetingLinks, entityType, unplaced, summaries, instructions];
+export const RULES = [stale, duplicates, nearDuplicates, contradictions, frontmatter, confidential, secrets, oversized, orphans, hygiene, missingEntity, entityAliases, meetingLinks, entityType, unplaced, summaries, instructions, keeperLines];
 // the rules whose findings are the gaps the Memory setup scan lists (memorySetup.js)
 export const SETUP_RULES = [missingEntity, entityAliases, meetingLinks, entityType, unplaced, summaries, instructions].map((r) => r.rule.id);
 export const RULE_LABELS = Object.fromEntries(RULES.map((r) => [r.rule.id, r.rule.label]));

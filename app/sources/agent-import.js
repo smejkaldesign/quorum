@@ -20,13 +20,14 @@ const short = (iso) => (iso ? new Date(iso).toISOString().slice(0, 10) : null);
 
 // the task the runner gets. It names the two MCP servers by the names the runner knows them under and leaves tool
 // names to the agent, since every source's server has its own. Notes already in Quorum are skipped by id
-export function importPrompt({ source, server, since = null, limit = LIMIT }) {
+export function importPrompt({ source, server, since = null, limit = LIMIT, transcripts = false }) {
   const from = short(since);
   return [
     `Task: import ${source.name} meeting notes into Quorum. Use only MCP tools; do not read or write files and do not run commands.`,
     `1. With the "${server}" MCP server, list the meetings${from ? ` that happened on or after ${from}` : ''}, newest first, up to ${limit}.`,
     `2. For each meeting, fetch its notes (title, date, participants, summary or notes text, a link to it in ${source.name} if there is one).`,
     `3. Call the "quorum" MCP server's import_meeting tool once per meeting with: source "${source.id}", id (the meeting's id in ${source.name}), title, date (ISO 8601), participants (names), url, and body (the notes as markdown, kept as close to the original wording as the tool allows; do not summarize further).`,
+    ...(transcripts ? [`   The person asked Quorum to file transcripts: when ${source.name} has the meeting's transcript, pass it as transcript, word for word.`] : []),
     '4. import_meeting answers skipped:true for a meeting Quorum already has; move on without changes.',
     '5. When done, answer with one line: "Imported N, skipped M" and nothing else.',
   ].join('\n');
@@ -83,8 +84,8 @@ const countNotes = (dir) => { try { return readdirSync(dir).filter((f) => f.ends
 
 // one run; the result counts notes in the source folder before and after, since that is what actually landed
 // cwd: a server the runner knows only inside one project (Claude Code project scope) is reachable only from that folder
-export async function runImport({ runnerId, server, source, since, quorum, dir, cwd = null, model = null, spawnImpl = spawn, env = process.env, timeoutMs = TIMEOUT_MS, onLine = () => {} }) {
-  const cmd = runnerCommand(runnerId, { server, prompt: importPrompt({ source, server, since }), quorum, model });
+export async function runImport({ runnerId, server, source, since, quorum, dir, cwd = null, model = null, transcripts = false, spawnImpl = spawn, env = process.env, timeoutMs = TIMEOUT_MS, onLine = () => {} }) {
+  const cmd = runnerCommand(runnerId, { server, prompt: importPrompt({ source, server, since, transcripts }), quorum, model });
   const before = countNotes(dir);
   const { code, out, err } = await new Promise((resolve, reject) => {
     // the runner bills the person's own sign-in, as the trade-offs say; an exported API key would change that

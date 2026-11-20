@@ -24,6 +24,7 @@
 //   { op: 'merge', rel, drop, alias }           merge drop into rel: its text under a heading, alias added, its links
 //                                               pointed at rel, drop to the Trash
 //   { op: 'split', rel, parts }                 move each part (heading, start, end, to) into a note of its own
+//   { op: 'movefacts', rel, to }                move the learned facts block of rel into the facts file to
 //   { op: 'keep' }                              change nothing: Approve keeps the item as it is and marks it done
 // An item the agent drafted (memoryDraft.js) carries draft; a merge is a restore of the kept note and a trash of the
 // other, a rewrite is a restore.
@@ -69,6 +70,8 @@ export function effects(o) {
     case 'mention': writes.push({ rel: o.rel, region: `mention:${norm(o.name)}` }); out.points = o.to; break;
     case 'merge': writes.push({ rel: o.rel, region: 'all' }); out.removes.push(o.drop); break;
     case 'split': writes.push({ rel: o.rel, region: 'all' }); out.creates.push(...(o.parts ?? []).map((p) => p.to)); break;
+    // each source adds its own lines to the facts file, read when the step runs, so two sources never conflict there
+    case 'movefacts': writes.push({ rel: o.rel, region: 'learned' }, { rel: o.to, region: `learned:${norm(o.rel)}` }); break;
     default: break;
   }
   return out;
@@ -113,6 +116,7 @@ const GROUPS = {
   mention: { order: 15.85, label: (n) => `Link the attendees of ${n} ${n === 1 ? 'meeting' : 'meetings'}` },
   'mark-instructions': { order: 15.88, label: (n) => `Mark ${n} out of date ${n === 1 ? 'line' : 'lines'} in instruction files` },
   split: { order: 15.9, label: (n) => `Split ${n} long ${n === 1 ? 'note' : 'notes'} into sections` },
+  movefacts: { order: 15.95, label: (n) => `Move the learned facts out of ${n} ${n === 1 ? 'file' : 'files'} of yours into Quorum's facts file` },
   keep: { order: 16, label: (n) => `Keep ${n} ${n === 1 ? 'item' : 'items'} as ${n === 1 ? 'it is' : 'they are'}` },
 };
 // the group an item lists under: what its first change does, or move and tag for a move that also tags
@@ -144,6 +148,7 @@ const CHECK = {
   'merge-copies': 'Quorum moves the other copies to the Trash.',
   split: 'Quorum moves sections out of each note into notes of their own.',
   'mark-instructions': 'The memory graph holds a newer fact for each line. Read the line first.',
+  movefacts: 'Quorum takes its marked block out of each file, which may be one every agent session loads.',
 };
 // items the agent fixes when the plan runs (main.js agentNeed): one model call each, one at a time
 const AGENT = {

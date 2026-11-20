@@ -16,8 +16,9 @@ export const isOff = (v) => v == null || v === false || (Array.isArray(v) ? !v.l
 const TEMPLATE_FOLDER = /(^|\/)_?templates?\//i;
 const TEMPLATE_SYNTAX = /\{\{[^}]*\}\}|<%[\s\S]*?%>/;
 export const isTemplate = (rel, props = {}) => TEMPLATE_FOLDER.test(rel) || Object.values(props).some((v) => (Array.isArray(v) ? v : [v]).some((x) => TEMPLATE_SYNTAX.test(String(x ?? ''))));
-// generated reports and templates: no rule reads them
-export const skipped = (n) => isGenerated(n.rel, n.note?.props ?? {}) || isTemplate(n.rel, n.note?.props ?? {});
+// generated reports, templates and the files Quorum made (quorum: generated, keeper.js): no rule reads them, so Quorum
+// never asks the person to tidy a file of its own
+export const skipped = (n) => isGenerated(n.rel, n.note?.props ?? {}) || isTemplate(n.rel, n.note?.props ?? {}) || String(n.note?.props?.quorum ?? '') === 'generated';
 export const MAX_RULE_TEXT = 1000000;
 
 // A note longer than MAX_RULE_TEXT reaches the rules as its head (memoryEngine.js).

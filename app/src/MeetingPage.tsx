@@ -1,6 +1,6 @@
 import { BackButton } from './BackButton';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { CalendarEvent, MeetingBrief, MeetingPrep } from './quorum';
+import type { CalendarEvent, JoinAdvice, MeetingBrief, MeetingPrep } from './quorum';
 import { useFlag } from './flags';
 import { CALENDAR_APP, PLATFORM_APP } from './AppChip';
 import { Markdown } from './Markdown';
@@ -153,6 +153,13 @@ function VaultPrep({ event: e, onOpenNote }: { event: CalendarEvent; onOpenNote:
     return () => { live = false; };
   }, [e.id]);
   const platform = e.platform ? PLATFORM_APP[e.platform] : null;
+  // a meeting with no call link: when Zoom AI notes are connected, the reminder to start My Notes by hand (joinAdvice.js)
+  const [inPerson, setInPerson] = useState<JoinAdvice | null>(null);
+  useEffect(() => {
+    let live = true;
+    if (!e.join) window.quorum.joinAdvice(e.id).then((a) => { if (live) setInPerson(a); }).catch(() => {});
+    return () => { live = false; };
+  }, [e.id, e.join]);
   const has = prep?.status === 'ready' || prep?.status === 'changed';
   // the heading and date line are the page's own; the saved note keeps them for the vault
   const md = prep?.markdown ?? '';
@@ -163,10 +170,11 @@ function VaultPrep({ event: e, onOpenNote }: { event: CalendarEvent; onOpenNote:
       <div className="mp-head">
         <h2>Meeting prep</h2>
         <span className="mp-prep-actions">
-          {platform && e.join && <button className="act-pill primary" onClick={() => window.quorum.openExternal(e.join!)}>Join on {platform.short}</button>}
+          {platform && e.join && <button className="act-pill primary" onClick={() => window.quorum.joinMeeting(e.join!, platform.id).catch(() => window.quorum.openExternal(e.join!))}>Join on {platform.short}</button>}
           {(e.item || e.link) && <button className="act-pill" onClick={() => window.quorum.calendarOpen(e)}>View in Calendar</button>}
         </span>
       </div>
+      {inPerson && <p className="muted" role="note"><strong>{inPerson.message}.</strong> {inPerson.detail}</p>}
       {!prep || writing ? <Skeleton lines={6} />
         : has ? <>
           {prep.edited ? <p className="muted" role="status">You edited this note. Prepare again writes a new note and keeps yours.</p>

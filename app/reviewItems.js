@@ -95,6 +95,7 @@ export function itemLine(item) {
   if (o.op === 'merge') return item.ops.length > 1 ? `Merge ${item.ops.length} copies into ${q(o.rel)}` : `Merge ${q(o.drop)} into ${q(o.rel)}`;
   if (o.op === 'create' && item.kind === 'finding') return `Write ${q(o.rel)} and link ${item.ops.length - 1 === 1 ? 'its mention' : `${item.ops.length - 1} mentions`} to it`;
   if (o.op === 'mention') return item.ops.length > 1 ? `Link ${item.ops.length} names in ${q(o.rel)} to their notes` : `Link ${q(o.name)} in ${q(o.rel)} to ${q(o.to)}`;
+  if (o.op === 'movefacts') return `Move the learned facts in ${q(o.rel)} into ${q(o.to)}`;
   if (o.op === 'split') return `Move ${o.parts.length} ${o.parts.length === 1 ? 'section' : 'sections'} of ${q(o.rel)} into notes beside it`;
   if (item.group === 'rewrite') return `Rewrite ${q(o.rel)} as the agent drafted it`;
   if (o.op === 'keep') return item.kind === 'pastfix' ? `Keep the earlier fix on ${q(item.title)} as it is` : `Keep ${q(item.title)} as it is`;

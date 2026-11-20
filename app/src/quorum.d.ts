@@ -116,13 +116,11 @@ export type KeeperRun = { filed: number; skipped: number; changed: number; reaso
 // one upkeep job (app/plugins.js): owned by Quorum, or by the vault when a saved choice keeps it off
 export type PluginOwner = 'quorum' | 'vault';
 export type KeeperPlugin = { id: string; title: string; does: string; owner: PluginOwner };
-export type KeeperStatus = { on: boolean; editVault: boolean; meetingsIndex: boolean; facts: boolean; running: boolean; lastRunAt: string | null; filed: number; last: KeeperRun | null; folders: Partial<Record<'people' | 'projects' | 'daily' | 'meetings', string>>; model: boolean; held: KeeperHeld | null; plugins: KeeperPlugin[]; learned: KeeperLearned | null; errors: KeeperErrors };
-// where learned facts go and how much of the budget they use; errors are upkeep failures logged under Application Support
-// target is .quorum/learned.md or a vault note (note holds its path; linked says index.md links to it); budgetPick is the
-// budget select's value. claude says what CLAUDE.md holds: block is null, the copy, a pointer or a list (lines counts it)
-export type LearnedTarget = 'learned' | 'note';
-export type KeeperClaude = { on: boolean; editable: boolean; block: 'copy' | 'pointer' | 'list' | null; lines: number; generated: boolean; facts: number; budget: number };
-export type KeeperLearned = { target: LearnedTarget; pick: LearnedTarget; file: string; note: string; noteHeld: boolean; linked: boolean; indexGenerated: boolean; budget: number; budgetPick: number | 'auto'; defaultBudget: number; defaultMoves: number; chars: number; fileChars: number; claude: KeeperClaude };
+export type KeeperStatus = { on: boolean; meetingsIndex: boolean; facts: boolean; running: boolean; lastRunAt: string | null; filed: number; last: KeeperRun | null; folders: Partial<Record<'people' | 'projects' | 'daily' | 'meetings', string>>; model: boolean; held: KeeperHeld | null; plugins: KeeperPlugin[]; learned: KeeperLearned | null; errors: KeeperErrors; folder: string | null; changelog: string | null };
+// where learned facts go and how much of the budget they use; errors are upkeep failures logged under Application Support.
+// folder is the Quorum folder in the vault and file the facts file in it (linked says index.md links to it); budgetPick
+// is the budget select's value. changelog is the keeper's changelog in Quorum's data folder
+export type KeeperLearned = { file: string; linked: boolean; indexGenerated: boolean; budget: number; budgetPick: number | 'auto'; defaultBudget: number; defaultMoves: number; chars: number; fileChars: number };
 export type KeeperErrors = { count: number; last: { at: string; where: string; message: string } | null; file: string | null };
 // screen context: on-screen text as spelling hints; granted is the Screen Recording permission, null when unknown
 export type ScreenContextStatus = { available?: boolean; on: boolean; granted: boolean | null };
@@ -157,7 +155,7 @@ export type MemorySetupState = {
   done: boolean;
 };
 // keeperChoice: what the person chose for the keeper in setup, or null while they have not chosen (the card then offers it)
-export type MemorySetupStatus = MemorySetupState & { made: 'quorum' | null; keeper: { on: boolean; editVault: boolean }; keeperChoice: 'on' | 'off' | null; graph: boolean };
+export type MemorySetupStatus = MemorySetupState & { made: 'quorum' | null; keeper: { on: boolean }; keeperChoice: 'on' | 'off' | null; graph: boolean };
 export type Brain = { root: string; vault: string; name: string; made?: 'quorum' | null; markers: { agentOS: string | null; obsidian: boolean; safetyHooks: boolean } };
 // hosted edition: who is signed in, which organization they are in, and whether notes sync
 export type Role = 'owner' | 'admin' | 'member';
@@ -188,6 +186,8 @@ export type AccountState = {
   accountGone?: string | null;
 };
 export type Result = { ok?: boolean; error?: string };
+// what Quorum says before a call when Zoom AI notes are connected (app/joinAdvice.js)
+export type JoinAdvice = { kind: 'zoom' | 'manual' | 'blocked'; message: string; detail: string; settingsUrl: string | null };
 // what the danger zone reads before it offers a delete (migration 0039): the signed-in email, whether the account runs
 // Quorum itself, and the workspaces it owns
 // what the Delete my data confirm names: the vault folder that stays, whether the models stay, and whether a Cloud
@@ -199,12 +199,15 @@ export type AccountDeleteStatus = { email: string | null; platformOwner: boolean
 export type SourceMethod = 'connect' | 'folder';
 export type SourceJob = { id: string; label: string; status: 'running' | 'done' | 'failed'; phase?: 'list' | 'import'; phaseStartedAt?: number; done: number; total: number | null; message: string | null; error: string | null; failed: { id: string; title: string; error: string }[]; result: { listed: number; imported: number; skipped: number } | null; startedAt: number; finishedAt: number | null };
 // a platform account (Zoom first) connected through the relay for cloud recordings; hosted edition only
-export type PlatformInfo = { id: string; name: string; available: boolean; connected: boolean; account: string | null; accountName: string | null; lastSyncAt: string | null; imported: number; notes: number; folderPath: string | null; job: SourceJob | null };
+// syncTranscripts: transcript filing, off by default; vaultRemote: the host the vault's git repository pushes to; missing:
+// the Zoom scopes Quorum's Zoom app lacks; myNotes: when Quorum last imported a My Notes note and when the user said both settings are on;
+// transcriptNotice: a connection that filed transcripts before the setting existed has not seen the privacy text yet; trouble: Zoom refused three runs or more in a row
+export type PlatformInfo = { id: string; name: string; available: boolean; connected: boolean; account: string | null; accountName: string | null; lastSyncAt: string | null; imported: number; notes: number; folderPath: string | null; job: SourceJob | null; syncTranscripts?: boolean; vaultRemote?: string | null; missing?: string[]; myNotes?: { seenAt: string | null; confirmedAt: string | null }; transcriptNotice?: boolean; trouble?: { failures: number; status: number; at: string; until: string } | null };
 // the fallback import through the person's own agent: which runners on this Mac already have the source's MCP server
 export type AgentSchedule = 'off' | 'hourly' | 'daily';
 export type AgentRunner = { id: string; name: string; server: string; installed: boolean; writable: boolean; note: string | null };
 export type AgentImportInfo = { runners: AgentRunner[]; schedule: AgentSchedule; runner: string | null; lastRunAt: string | null; lastResult: string | null };
-export type MeetingSourceInfo = { id: string; name: string; kind: 'mcp'; url: string; folder: string; description: string; methods: SourceMethod[]; extras?: string[]; recommended: SourceMethod; why: string; method: SourceMethod; connected: boolean; syncNotes: boolean; syncTranscripts: boolean; transcripts: number; freshNext?: boolean; account?: string | null; lastSyncAt: string | null; imported: number; folderPath: string | null; notes: number; job: SourceJob | null; agent?: AgentImportInfo | null };
+export type MeetingSourceInfo = { id: string; name: string; kind: 'mcp'; url: string; folder: string; description: string; methods: SourceMethod[]; extras?: string[]; recommended: SourceMethod; why: string; method: SourceMethod; connected: boolean; syncNotes: boolean; syncTranscripts: boolean; transcripts: number; vaultRemote?: string | null; freshNext?: boolean; account?: string | null; lastSyncAt: string | null; imported: number; folderPath: string | null; notes: number; job: SourceJob | null; agent?: AgentImportInfo | null };
 // workspace connectors (Settings › Admin › Connectors): a provider key held in Supabase Vault for the whole workspace and
 // the roles it may serve. The key never comes back to the client; a draft carries it once, on the way in
 export type ConnectorProvider = 'assemblyai' | 'deepgram' | 'elevenlabs' | 'openai' | 'anthropic' | 'google' | 'openai_compatible';
@@ -663,6 +666,9 @@ declare global {
       platformConnect(id: string): Promise<Result>;
       platformDisconnect(id: string): Promise<Result>;
       platformSync(id: string): Promise<Result>;
+      platformSetOption(id: string, patch: { syncTranscripts?: boolean; notesConfirmed?: boolean; transcriptNoticeSeen?: boolean }): Promise<Result>;
+      joinMeeting(url: string, platform?: string | null): Promise<Result>;
+      joinAdvice(eventId: string): Promise<JoinAdvice | null>;
       onPlatformJob(cb: (job: SourceJob) => void): () => void;
       onSourceJob(cb: (job: SourceJob) => void): Unsub;
       onNoteDelta(cb: (d: { text: string }) => void): Unsub;
@@ -730,10 +736,10 @@ declare global {
       screenContextStatus(): Promise<ScreenContextStatus>;
       screenContextSet(on: boolean): Promise<ScreenContextStatus>;
       screenContextPrivacy(): Promise<void>;
-      keeperSet(patch: { on?: boolean; facts?: boolean; factsBudget?: number | 'auto'; factsTarget?: LearnedTarget; factsNote?: string; factsInClaude?: boolean; editVault?: boolean; meetingsIndex?: boolean }): Promise<KeeperStatus>;
-      keeperRemoveClaude(): Promise<KeeperStatus>;
+      keeperSet(patch: { on?: boolean; facts?: boolean; factsBudget?: number | 'auto'; folder?: string; meetingsIndex?: boolean }): Promise<KeeperStatus>;
       keeperRun(opts?: { allowCreate?: boolean }): Promise<KeeperRun>;
       keeperErrorsOpen(): Promise<void>;
+      keeperChangelogOpen(): Promise<void>;
       keeperErrorsClear(): Promise<KeeperStatus>;
       onKeeper?(cb: (r: KeeperRun) => void): Unsub;
       onboardingOpenPermission(which: 'microphone' | 'audio' | 'accessibility' | 'calendar'): Promise<void>;

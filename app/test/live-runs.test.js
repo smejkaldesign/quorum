@@ -108,7 +108,7 @@ describe('stopping a keeper run', () => {
     let asked;
     const askedP = new Promise((r) => { asked = r; });
     const runText = async () => { asked(); await gate; return '- Ada leads the design review every Tuesday'; };
-    const keeper = createKeeper({ brain: () => ({ root: dir, vault: dir }), settings: { brainMade: 'quorum' }, owner: () => 'Rick Bot', versions: store, live, runText, hasModel: () => true });
+    const keeper = createKeeper({ brain: () => ({ root: dir, vault: dir }), dataDir: `${dir}.data`, settings: { brainMade: 'quorum' }, owner: () => 'Rick Bot', versions: store, live, runText, hasModel: () => true });
     writeFileSync(path.join(dir, '08-meetings', '2026-11-10-quorum-sync.md'), '---\nquorum_id: 01X\ntitle: Quorum sync\ndate: 2026-11-10T15:00:00-08:00\nparticipants:\n  - Rick Bot (recorder)\n  - Ada Lovelace\nsource: quorum\n---\n\n# Quorum sync\n\nWe talked about Quorum.\n');
     const running = keeper.run({ reason: 'test', allowCreate: true });
     await askedP;
