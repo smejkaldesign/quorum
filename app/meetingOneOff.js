@@ -171,6 +171,8 @@ export function createOneOff(d) {
     if (prior?.brief && prior.stamp === stamp && !q?.force) return shown(prior.brief);
     // a kept brief whose invite changed shows as out of date and is written again only when the person asks
     if (prior?.brief && !q?.force && !q?.anyway) return shown(prior.brief, { changed: true });
+    // with no model source the page says so in place of the button, before anyone clicks it
+    if (!prior?.brief && !d.modelReady()) return { ...few, status: 'no-model' };
     // with the threshold at 0 (Meeting prep switched on) every meeting gets one without asking
     if (!q?.anyway && min > 0 && !prior?.brief) return few;
     // the last brief stays on the page while it is written again, and when that fails

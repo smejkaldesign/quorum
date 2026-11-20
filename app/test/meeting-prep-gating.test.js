@@ -47,4 +47,9 @@ describe('meeting prep: Generate anyways', () => {
     expect(renderToStaticMarkup(createElement(WritingStatus))).toBe(`<p class="sr-only" role="status">${WRITING_TEXT}</p>`);
     expect(WRITING_TEXT).toBe('Writing prep notes…');
   });
+  it('shows the Choose a model message in place of the button when no model source is set', () => {
+    const noModel = { status: 'no-model', anyway: true, brief: null };
+    expect(anywayOffered(noModel)).toBe(false);
+    expect(prepEmptyText(noModel)).toMatch(/^Choose a model in Settings/);
+  });
 });

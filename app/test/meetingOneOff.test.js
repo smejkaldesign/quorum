@@ -250,6 +250,11 @@ describe('createOneOff', () => {
     expect(await s.run(q({ generate: true, force: true }), [], [])).toMatchObject({ status: 'ready', brief: BRIEF, failed: true });
     await expect(setup({ model: false }).run(q({ anyway: true, generate: true }), [], [])).resolves.toMatchObject({ status: 'no-model', brief: null });
   });
+  it('says to choose a model on open, before any click, when no model source is set', async () => {
+    const s = setup({ model: false });
+    expect(await s.run(q(), [], [])).toMatchObject({ status: 'no-model', anyway: true, brief: null });
+    expect(s.d.build).not.toHaveBeenCalled();
+  });
   it('runs one write per event at a time', async () => {
     let release;
     const s = setup({ build: () => new Promise((r) => { release = () => r({ status: 'ready', brief: BRIEF }); }) });
