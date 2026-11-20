@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ANYWAY_LABEL, anywayOffered, prepEmptyText } from '../src/meetingBriefView.ts';
+import { ANYWAY_LABEL, CHANGED_TEXT, anywayOffered, prepEmptyText, regenerateLabel } from '../src/meetingBriefView.ts';
 
 const BRIEF = { prep: '- Ask about the portfolio. (invite)', what: 'An interview.', who: 'Invited: Jane Doe.', how: 'Nothing found.', sources: 'Based on limited history: the invite and 2 related notes.', oneOff: true };
 
@@ -29,5 +29,13 @@ describe('meeting prep: Generate anyways', () => {
     expect(anywayOffered({ status: 'empty', anyway: true, brief: null })).toBe(false);
     expect(prepEmptyText({ status: 'empty', anyway: true })).toBe('There is nothing to build prep notes from yet. This meeting has no earlier meetings, no other invitees, no description and no related notes.');
     expect(prepEmptyText({ status: 'no-model', anyway: true })).toBe("Choose a model in Settings and Quorum writes prep notes from this meeting's past notes.");
+  });
+  it('marks a kept brief whose invite changed as out of date, with Update in place of Regenerate', () => {
+    const changed = { status: 'ready', anyway: true, brief: BRIEF, changed: true };
+    expect(anywayOffered(changed)).toBe(false);
+    expect(regenerateLabel(changed, false)).toBe('Update');
+    expect(regenerateLabel({ changed: false }, false)).toBe('Regenerate');
+    expect(regenerateLabel(changed, true)).toBe('Writing…');
+    expect(CHANGED_TEXT).toContain('Update');
   });
 });

@@ -196,16 +196,21 @@ describe('createOneOff', () => {
     expect(await s.run(q({ anyway: true, generate: true }), [], [])).toMatchObject({ status: 'empty', brief: null });
     expect(s.cache.entry('event:e1')).toBeNull();
   });
-  it('writes on Generate anyway, keeps it on the event, and writes it again when the invite changes', async () => {
+  it('writes on Generate anyways, keeps it on the event, and marks it changed when the invite changes', async () => {
     const s = setup();
     expect(await s.run(q({ anyway: true, generate: true }), [], [])).toMatchObject({ status: 'ready', brief: BRIEF });
     expect(await s.run(q(), [], [])).toMatchObject({ status: 'ready', brief: BRIEF });
     expect(s.d.build).toHaveBeenCalledTimes(1);
-    // same event id, new time: the kept brief shows as stale, and opening the page writes it again without Generate anyway
+    // same event id, new time: the kept brief shows as changed, and nothing is written until the person asks
     const moved = setup({ ev: event({ start: '2026-11-21T15:00:00.000Z', end: '2026-11-21T16:00:00.000Z' }) });
     moved.cache.set('event:e1', s.cache.entry('event:e1').stamp, BRIEF, { end: '2026-11-20T16:00:00.000Z' });
-    expect(await moved.run(q(), [], [])).toMatchObject({ status: 'stale', brief: BRIEF });
-    expect(await moved.run(q({ generate: true }), [], [])).toMatchObject({ status: 'ready' });
+    expect(await moved.run(q(), [], [])).toMatchObject({ status: 'ready', brief: BRIEF, changed: true });
+    expect(await moved.run(q({ generate: true }), [], [])).toMatchObject({ status: 'ready', brief: BRIEF, changed: true });
+    expect(moved.d.build).not.toHaveBeenCalled();
+    // Update writes it again
+    const updated = await moved.run(q({ generate: true, force: true }), [], []);
+    expect(updated).toMatchObject({ status: 'ready' });
+    expect(updated.changed).toBeUndefined();
     expect(moved.d.build).toHaveBeenCalledTimes(1);
   });
   it('writes nothing on open with Meeting prep switched off and its threshold set to 0', async () => {

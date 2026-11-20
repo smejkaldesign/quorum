@@ -144,8 +144,8 @@ export function oneOffGate({ prepFlag = false, anywayFlag = false, conf = { enab
 // briefs for events that ended more than this long ago are dropped from the cache
 export const KEEP_MS = 7 * 86400000;
 
-// The meeting page's one-off path in the main process (main.js meeting-brief): the kept brief for an event, written
-// again when its invite changes, and Generate anyways / Regenerate. Nothing is written until the person asks. The cache entry is keyed by the event id and stamped
+// The meeting page's one-off path in the main process (main.js meeting-brief): the kept brief for an event, marked
+// changed when its invite changes, and Generate anyways / Regenerate / Update. Nothing is written until the person asks. The cache entry is keyed by the event id and stamped
 // with the invite (inviteStamp), so a changed title, time, invitee list or description writes it again. Every answer
 // first checks the event against the opt-out lists: an opted-out event shows no brief, and its kept one is deleted.
 // A failed Regenerate keeps showing the last brief, with failed: true.
@@ -169,7 +169,9 @@ export function createOneOff(d) {
     const prior = d.cache.entry(key);
     const shown = (brief, extra = {}) => ({ past: list, brief, status: 'ready', min, anyway: true, links: d.links(brief.prep), ...extra });
     if (prior?.brief && prior.stamp === stamp && !q?.force) return shown(prior.brief);
-    // with the threshold at 0 every meeting gets one without asking; a kept brief whose invite changed is written again
+    // a kept brief whose invite changed shows as out of date and is written again only when the person asks
+    if (prior?.brief && !q?.force && !q?.anyway) return shown(prior.brief, { changed: true });
+    // with the threshold at 0 (Meeting prep switched on) every meeting gets one without asking
     if (!q?.anyway && min > 0 && !prior?.brief) return few;
     // the last brief stays on the page while it is written again, and when that fails
     const held = (status) => (prior?.brief ? shown(prior.brief, { failed: true, status: 'ready' }) : { ...few, status });

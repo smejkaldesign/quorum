@@ -20,3 +20,10 @@ export function prepEmptyText(data: Pick<MeetingBrief, 'status' | 'anyway' | 'mi
     default: return data?.anyway ? 'Quorum could not write prep notes this time. Try again.' : 'Quorum could not write prep notes this time. They are tried again the next time you open this meeting.';
   }
 }
+
+// a kept one-off brief whose invite changed since it was written: it stays on the page, marked out of date, and is
+// written again only on Update
+export const CHANGED_TEXT = 'The invite changed since these prep notes were written. Update writes them again.';
+export function regenerateLabel(data: Pick<MeetingBrief, 'changed'> | null | undefined, writing: boolean) {
+  return writing ? 'Writing…' : data?.changed ? 'Update' : 'Regenerate';
+}

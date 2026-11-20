@@ -16,7 +16,7 @@ import { Composer } from './Composer';
 import { Avatar } from './Speaker';
 import { splitChoices } from './MeetingNote';
 import { ChatExit, ChatStrip, useChats, useComposerFocus } from './ChatStack';
-import { ANYWAY_LABEL, anywayOffered, prepEmptyText } from './meetingBriefView';
+import { ANYWAY_LABEL, CHANGED_TEXT, anywayOffered, prepEmptyText, regenerateLabel } from './meetingBriefView';
 import markProd from '../assets/quorum-mark.png';
 
 // one click each, above the chat input before the first question
@@ -277,7 +277,8 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
   const onWiki = (target: string) => { const file = data?.links?.[target]; if (file) onOpenNote(file); };
   const oneOffFoot = (from: 'prep' | 'about') => (brief?.oneOff ? <>
     {data?.failed && !writing && <p className="set-error" role="alert">Quorum could not write new prep notes. These are the last ones it wrote.</p>}
-    <p className="mp-prep-foot"><button className="up-all" disabled={writing} aria-busy={writing} onClick={() => generate(true, from)}>{writing ? 'Writing…' : 'Regenerate'}</button></p>
+    {data?.changed && !writing && <p className="muted" role="status">{CHANGED_TEXT}</p>}
+    <p className="mp-prep-foot"><button className="up-all" disabled={writing} aria-busy={writing} onClick={() => generate(true, from)}>{regenerateLabel(data, writing)}</button></p>
   </> : null);
   const anywayFoot = (from: 'prep' | 'about') => (canAnyway && !anywayRunning ? <p className="mp-prep-foot"><button className="up-all" onClick={() => generate(false, from)}>{ANYWAY_LABEL}</button></p> : null);
   // once the brief arrives, every section types itself in together over about half a second
