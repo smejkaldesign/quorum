@@ -221,12 +221,15 @@ function labelsOf(members, labels) {
 }
 
 // a short name with no model: the strongest member of the best naming kind, with a shared tag when the hub is only a
-// note. nodeOf(id) gives { kind, name }
+// note. nodeOf(id) gives { kind, name }, or null for a node the name may not show (a confidential or read-guarded
+// note); a community with none to show is named by its shared tag or folder
 export function nameCommunity(c, nodeOf) {
   const top = c.members.slice(0, 10).map((m) => ({ ...m, node: nodeOf(m.id) })).filter((m) => m.node);
   const pick = NAMING.map((k) => top.find((m) => m.node.kind === k)).find(Boolean) ?? top[0];
-  const hubName = String(pick?.node?.name ?? c.hub).replace(/\.md$/i, '');
-  const strong = pick && ['project', 'topic', 'company'].includes(pick.node.kind);
+  const label = c.tags?.length ? c.tags[0].replace(/^#/, '') : c.folder ?? null;
+  if (!pick) return label ?? 'Unnamed topic';
+  const hubName = String(pick.node.name ?? '').replace(/\.md$/i, '') || 'Unnamed topic';
+  const strong = ['project', 'topic', 'company'].includes(pick.node.kind);
   if (!strong && c.tags?.length) return `${c.tags[0].replace(/^#/, '')}: ${hubName}`;
   if (!strong && c.folder && c.folder !== hubName) return `${c.folder}: ${hubName}`;
   return hubName;

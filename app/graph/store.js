@@ -260,8 +260,12 @@ export function openStore({ dir, vault, log = () => {}, now = Date.now, readOnly
       list.forEach((c, i) => {
         for (const m of c.members) put.run(m.id, c.id, m.rank);
         const was = old.get(c.id);
-        const keep = was?.namedBy === 'model' && was.props?.nameSig === c.props?.nameSig;
-        const props = { ...c.props, ...(was?.props?.draft ? { draft: was.props.draft } : {}), ...(keep ? { ruleName: c.name } : {}) };
+        const same = was?.props?.nameSig === c.props?.nameSig;
+        // what was asked of the model stays with the community: a draft and the sources a draft was tried for, and the
+        // members a name was tried for while they hold
+        const carried = { draft: was?.props?.draft, draftTriedSig: was?.props?.draftTriedSig, nameTriedSig: same ? was?.props?.nameTriedSig : undefined };
+        const keep = was?.namedBy === 'model' && same;
+        const props = { ...c.props, ...Object.fromEntries(Object.entries(carried).filter(([, v]) => v !== undefined)), ...(keep ? { ruleName: c.name } : {}) };
         s.putCommunity.run(c.id, keep ? was.name : c.name, keep ? 'model' : 'rule', c.size, i + 1, c.hub, JSON.stringify(props), t);
       });
     });

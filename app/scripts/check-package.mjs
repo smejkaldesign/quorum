@@ -15,9 +15,10 @@ const read = (rel) => { execFileSync('npx', ['asar', 'extract-file', asar, rel],
 
 const seen = new Set();
 const missing = [];
-// memoryWorker.js is started by path (utilityProcess.fork), so no import reaches it. The decision layer (decide/) is
-// listed until the contradiction agent imports it
-const queue = ['main.js', 'preload.cjs', 'memoryWorker.js', 'decide/index.js', 'decide/gate.js'];
+// memoryWorker.js is started by path (utilityProcess.fork), and graph/communityWorker.js by path in a worker thread
+// (graph/topics.js), so no import reaches them. The decision layer (decide/) is listed until the contradiction agent
+// imports it
+const queue = ['main.js', 'preload.cjs', 'memoryWorker.js', 'graph/communityWorker.js', 'decide/index.js', 'decide/gate.js'];
 while (queue.length) {
   const rel = queue.shift();
   if (seen.has(rel)) continue;
@@ -34,6 +35,9 @@ if (missing.length) { console.error(`package check: ${missing.length} module(s) 
 const guard = path.resolve(appDir, 'Contents/Resources/app.asar.unpacked/guards/read-guard.py');
 if (!existsSync(guard)) { console.error(`package check: read guard is not unpacked at ${guard}`); process.exit(1); }
 execFileSync('python3', ['-c', `compile(open(${JSON.stringify(guard)}).read(), 'read-guard.py', 'exec')`]);
+// the community worker thread loads its script and what it imports from real files (graph/topics.js workerPath)
+const workerFiles = ['graph/communityWorker.js', 'graph/communities.js'].filter((rel) => !existsSync(path.resolve(appDir, 'Contents/Resources/app.asar.unpacked', rel)));
+if (workerFiles.length) { console.error(`package check: community worker not unpacked from app.asar: ${workerFiles.join(', ')}`); process.exit(1); }
 // ONNX Runtime (the decision layer) is loaded by native code, which cannot read inside the archive. The models are
 // downloaded after launch into the data folder (decide/download.js), so the package holds none
 const unpacked = path.resolve(appDir, 'Contents/Resources/app.asar.unpacked');

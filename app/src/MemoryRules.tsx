@@ -26,7 +26,7 @@ export function MemoryRulesCard() {
   return (
     <>
       <h3>Rules</h3>
-      <div className="set-card mr-rules">
+      <div className="set-card form mr-rules">
         {(records ?? []).map((r) => (
           <div key={r.id} className="set-line mr-rule">
             <span className="mr-name"><strong>{r.label}</strong><span className="muted">{r.state}{r.ignores ? `. ${plural(r.ignores, 'ignore rule')}` : ''}</span></span>

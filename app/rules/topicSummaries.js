@@ -5,6 +5,7 @@
 // summary is the model's draft (graph/topics.js) when it was written from the sources as they read now; with no model it
 // lists the community's main notes, people, decisions and notes with their first lines.
 import { finding, noteHash, plural, quote } from './common.js';
+import { confidentialSet } from './entities.js';
 import { readHashes, writeHashes } from './summaries.js';
 
 export const rule = { id: 'note.topic-summary', version: 1, label: 'Topic summaries' };
@@ -15,6 +16,8 @@ export const MIN_NOTES = 5;
 export const MAX_NEW = 5;
 // the share of sources that changed, joined or left before a refresh is offered
 export const REFRESH_SHARE = 0.3;
+// a summary whose community id is gone belongs to the community holding at least this share of its sources
+const SAME_TOPIC = 0.5;
 const MAX_SOURCES = 40;
 const LINE_CHARS = 160;
 
@@ -78,22 +81,43 @@ export function plainBody({ members, byRel }) {
   return out.join('\n');
 }
 
-export function run({ notes, graph, learned = null, now = Date.now() }) {
+export function run({ notes, graph, learned = null, now = Date.now(), ...ctx }) {
   if (!graph?.communities) return [];
+  // a confidential note is never a source: its words, title and decisions stay out of the summary, which is a plain note
+  const secret = confidentialSet(ctx);
   const byRel = new Map(notes.map((n) => [n.rel, n]));
   const folder = topicsFolder(learned);
+  // only Quorum's own summaries in the Topics folder are matched and written again; a generated note elsewhere is the
+  // person's to keep
   const generated = new Map();
-  for (const n of notes) if (isGenerated(n) && n.note?.props?.community) generated.set(String(n.note.props.community), n);
+  for (const n of notes) if (isGenerated(n) && n.rel.startsWith(`${folder}/`) && n.note?.props?.community) generated.set(String(n.note.props.community), n);
+  const matched = new Set();
+  const live = new Set();
+  const communities = graph.communities();
+  for (const c of communities) live.add(c.id);
+  // the summary of a community whose id is gone, by the share of its recorded sources it still holds
+  const orphanFor = (rels) => {
+    let best = null;
+    let bestJ = SAME_TOPIC;
+    for (const [id, n] of generated) {
+      if (live.has(id) || matched.has(n.rel)) continue;
+      const rec = new Set(readHashes(n.note?.props?.source_hashes).keys());
+      const both = rels.filter((r) => rec.has(r)).length;
+      const j = both / (rels.length + rec.size - both || 1);
+      if (j >= bestJ) { best = n; bestJ = j; }
+    }
+    return best;
+  };
   const today = day(now);
   const out = [];
   let offered = 0;
-  for (const c of graph.communities()) {
+  for (const c of communities) {
     if (c.size < 3) continue;
     const members = c.members.map((m) => { const node = graph.node(m.node); return { id: m.node, rank: m.rank, node, rel: node?.rel ?? null }; });
     const sources = [];
     const seen = new Set();
     for (const m of members) {
-      if (!m.rel || seen.has(m.rel) || !byRel.has(m.rel) || isGenerated(byRel.get(m.rel))) continue;
+      if (!m.rel || seen.has(m.rel) || !byRel.has(m.rel) || isGenerated(byRel.get(m.rel)) || secret(byRel.get(m.rel))) continue;
       seen.add(m.rel);
       const n = byRel.get(m.rel);
       sources.push({ rel: m.rel, hash: noteHash(n.text, n.chars) });
@@ -101,15 +125,17 @@ export function run({ notes, graph, learned = null, now = Date.now() }) {
     }
     if (sources.length < MIN_NOTES) continue;
     const name = c.name || c.id;
-    const existing = generated.get(c.id);
+    const existing = generated.get(c.id) ?? orphanFor(sources.map((x) => x.rel));
+    if (existing) matched.add(existing.rel);
     const draft = c.props?.draft && c.props.draft.sig === c.props.sourceSig && c.props.draft.text ? c.props.draft.text : null;
-    const body = draft ?? plainBody({ members: members.filter((m) => !m.rel || seen.has(m.rel)), byRel });
+    // members with a note show only when that note is a source; people and decisions from a confidential note stay out
+    const body = draft ?? plainBody({ members: members.filter((m) => (m.rel ? seen.has(m.rel) : true)), byRel });
     const evidence = sources.slice(0, 5).map((s) => `Source: ${s.rel}`);
     if (!existing) {
       if (offered >= MAX_NEW) continue;
       offered++;
       const rel = `${folder}/${topicFile(name)}.md`;
-      if (byRel.has(rel) && !isGenerated(byRel.get(rel))) continue;
+      if (byRel.has(rel)) continue;
       out.push(finding(rule, {
         key: `new:${c.id}`, target: rel, notes: [sources[0].rel, ...sources.slice(1).map((s) => s.rel)],
         title: `Write a summary of ${quote(name)}`,
@@ -127,6 +153,7 @@ export function run({ notes, graph, learned = null, now = Date.now() }) {
     const changed = [...nowMap].filter(([rel, h]) => recorded.get(rel) !== h).map(([rel]) => rel);
     const left = [...recorded.keys()].filter((rel) => !nowMap.has(rel));
     const moved = changed.length + left.length;
+    // a summary found by its sources (its community has a new id) is written again with the new id when it is behind
     if (moved < 2 || moved / Math.max(recorded.size, nowMap.size) < REFRESH_SHARE) continue;
     out.push(finding(rule, {
       key: `refresh:${c.id}`, target: existing.rel, notes: [existing.rel, ...changed],
@@ -136,7 +163,7 @@ export function run({ notes, graph, learned = null, now = Date.now() }) {
       evidence: [...changed.slice(0, 5).map((r) => (recorded.has(r) ? `Changed: ${r}` : `New: ${r}`)), ...left.slice(0, 3).map((r) => `Left: ${r}`)],
       facts: changed.map((r) => `changed:${r}`),
       meta: [['Summary', existing.rel], ['Written by', draft ? 'your model' : 'Quorum, from the notes']],
-      fix: { kind: 'ops', group: 'summary', ops: [{ op: 'summary', rel: existing.rel, folder: existing.rel.slice(0, existing.rel.lastIndexOf('/')), community: c.id, replace: true, text: summaryText({ community: c.id, name: existing.note?.title ?? name, sources, body, by: draft ? 'model' : 'rule', today }) }] },
+      fix: { kind: 'ops', group: 'summary', ops: [{ op: 'summary', rel: existing.rel, folder, community: c.id, replace: true, text: summaryText({ community: c.id, name: existing.note?.title ?? name, sources, body, by: draft ? 'model' : 'rule', today }) }] },
     }));
   }
   return out;

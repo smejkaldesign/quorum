@@ -1534,7 +1534,8 @@ ipcMain.handle('set-settings', (_e, next) => {
   // Settings > Memory: Check everything now was suggested once after the vault connected (Catchup.tsx CatchupNudge)
   // Settings > Memory, Topics: names and summary drafts from the person's model (graph/topics.js), off by default; the
   // card shows the estimate before it is turned on
-  if (typeof next.memoryTopicModel === 'boolean' && next.memoryTopicModel !== (settings.memoryTopicModel === true)) {
+  // it turns on only once the graph is built and a model source is set, so the estimate was there to read first
+  if (typeof next.memoryTopicModel === 'boolean' && next.memoryTopicModel !== (settings.memoryTopicModel === true) && (!next.memoryTopicModel || (graphReady() && !!roleProvider('summary')))) {
     settings.memoryTopicModel = next.memoryTopicModel; store.settings.save();
     if (next.memoryTopicModel) topics?.modelPass().catch((e) => log('topics model', e?.message));
   }
@@ -2648,14 +2649,23 @@ let memoryGraph = null;
 // communities, hubs and topic summary drafts over the graph (graph/topics.js), read again a few seconds after it changes
 let topics = null;
 function closeMemoryGraph() { topics?.close(); topics = null; memoryGraph?.close(); memoryGraph = null; }
+// a note topics may name or read: never one the read guard keeps out, and never a confidential one, whatever Let the
+// agent read confidential notes says, since a topic summary is a plain note
+function topicMayRead(rel, text) {
+  const b = brain();
+  return !!b && text != null && !excludedPath(rel) && !isPrivatePath(rel) && !isSecretPath(rel) && !confidentialNote(b.vault, rel, text);
+}
 function openTopics(g) {
+  const readable = (rel) => { const t = g.textOf(rel); return topicMayRead(rel, t) ? t : null; };
   topics = createTopics({
     store: g.store,
     log: (...a) => log('topics', ...a),
+    mayRead: (rel) => readable(rel) != null,
     model: {
       enabled: () => settings.memoryTopicModel === true && !!roleProvider('summary'),
+      ready: () => !!roleProvider('summary'),
       ask: async (prompt, system) => { const r = await runClaude(suggester.redactLines(prompt), system, settings.model, { role: 'summary' }); return typeof r === 'string' ? r : r?.text ?? ''; },
-      textOf: (rel) => g.textOf(rel),
+      textOf: readable,
     },
     // new communities or drafts can change the topic summary items: the rule runs over the vault (rules/topicSummaries.js wide)
     onChange: () => { toUI('memory-topics', topics?.status() ?? null); if (!sweepPaused()) sweep('save', []).catch((e) => log('memory sweep', e?.message)); },

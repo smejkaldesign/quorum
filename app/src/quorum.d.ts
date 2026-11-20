@@ -422,8 +422,8 @@ export type MemoryEntity = { node: MemoryNodeBrief; rel: string | null; aliases:
 export type MemoryCommunityRef = { community: string; rank: number; name: string | null; size: number | null };
 export type MemoryHub = MemoryNodeBrief & { degree: number; edges: number; community: string | null; communityName?: string | null; rank?: number };
 export type MemoryCommunity = { id: string; name: string; namedBy: 'rule' | 'model'; size: number; rank: number; hub: MemoryHub | null; tags: string[]; folder: string | null; top: (MemoryNodeBrief & { rank: number })[] };
-export type MemoryTopicsStatus = { phase: 'idle' | 'running' | 'ready' | 'error'; at: number | null; ms: number | null; count: number; modularity: number | null; error: string | null; model: { on: boolean; running: boolean; at: number | null; error: string | null } };
-export type MemoryTopicsEstimate = { calls: number; names: number; summaries: number; inputTokens: number; outputTokens: number; cost: number; costLabel: string | null };
+export type MemoryTopicsStatus = { phase: 'idle' | 'running' | 'ready' | 'error'; at: number | null; ms: number | null; count: number; modularity: number | null; error: string | null; model: { on: boolean; ready: boolean; running: boolean; at: number | null; error: string | null } };
+export type MemoryTopicsEstimate = { calls: number; names: number; summaries: number; inputTokens: number; outputTokens: number; cost: number; costLabel: string | null; left: number };
 // a name that matches several nodes is refused with the candidates; a name with no match says so
 export type MemoryGraphResult<T> = T | { ambiguous: MemoryNodeBrief[]; for?: 'a' | 'b' } | { notFound: string } | { error: string } | null;
 

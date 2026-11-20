@@ -106,6 +106,8 @@
       "package.json"
     ],
     "asarUnpack": [
+      "graph/communityWorker.js",
+      "graph/communities.js",
       "guards/**",
       "node_modules/onnxruntime-node/bin/**"
     ],

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { detectCommunities, louvain, nameCommunity } from '../graph/communities.js';
-import { createTopics, cleanDraft, cleanName, inProcess, inWorker } from '../graph/topics.js';
+import { createTopics, cleanDraft, cleanName, inProcess, inWorker, stableIds, workerPath } from '../graph/topics.js';
 import { openStore } from '../graph/store.js';
 import { createVaultIndex } from '../vindex.js';
 import { createMemoryGraph } from '../graph/index.js';
@@ -338,5 +338,164 @@ describe('the summary step on Approve', () => {
     await expect(run(vault, { op: 'summary', rel: 'Quorum/Topics/Mine.md', folder: 'Quorum/Topics', replace: true, text: 'x' })).rejects.toThrow(/a note of yours/);
     await expect(run(vault, { op: 'summary', rel: 'Quorum/Topics/Orca.md', folder: 'Quorum/Topics', text: 'x' })).rejects.toThrow(/already/);
     expect(readFileSync(path.join(vault, 'Quorum/Topics/Mine.md'), 'utf8')).toBe('# Mine\nmy words\n');
+  });
+});
+
+// the review findings on #205: read guards, the Quorum folder, races, retries, lasting ids and the worker fallback
+describe('topics never name, quote or send a confidential or read-guarded note', () => {
+  it('the model never gets their names or text, and the rule name skips them', async () => {
+    const dir = tmp('topics-guard-');
+    const store = openStore({ dir, vault: path.join(dir, 'v') });
+    const g = planted({ groups: 2, size: 8 });
+    store.tx(() => { for (const n of g.nodes) store.upsertNode(n); for (const e of g.edges) store.addEdge(e); });
+    const secret = new Set(g.nodes.filter((n, i) => i % 2 === 0).map((n) => n.rel));
+    const prompts = [];
+    const ask = vi.fn(async (prompt, system) => { prompts.push(prompt); return system.startsWith('You name') ? '{}' : '## Summary\n\nText.'; });
+    const t = createTopics({ store, run: inProcess(store), mayRead: (rel) => !secret.has(rel), model: { enabled: () => true, ask, textOf: (rel) => (secret.has(rel) ? null : `Body of ${rel}`) } });
+    await t.refresh();
+    await t.modelPass();
+    expect(ask).toHaveBeenCalled();
+    for (const rel of secret) {
+      const name = g.nodes.find((n) => n.rel === rel).name;
+      for (const p of prompts) { expect(p).not.toContain(rel.replace(/\.md$/, '')); expect(p).not.toMatch(new RegExp(`\\b${name}\\b`)); }
+      for (const c of store.communities()) expect(c.name).not.toMatch(new RegExp(`\\b${name}$`));
+    }
+    // ids name no note
+    for (const c of store.communities()) expect(c.id).toMatch(/^c:[0-9a-f]{10}$/);
+    store.close();
+  });
+  it('a community with no note to show is named by its tag or folder, never by a hidden note', () => {
+    expect(nameCommunity({ hub: 'note:secret.md', members: [{ id: 'note:secret.md' }], tags: ['#ops'] }, () => null)).toBe('ops');
+    expect(nameCommunity({ hub: 'note:secret.md', members: [{ id: 'note:secret.md' }], tags: [] }, () => null)).toBe('Unnamed topic');
+  });
+  it('the no-model summary leaves out confidential notes, their decisions and their first lines', () => {
+    const rels = Array.from({ length: 7 }, (_, i) => `t/n${i}.md`);
+    const nodes = new Map([...rels.map((r) => [`note:${r}`, { id: `note:${r}`, kind: 'note', name: r, rel: r }]), ['decision:t/n0.md#1', { id: 'decision:t/n0.md#1', kind: 'decision', name: 'Buy Acme', rel: 't/n0.md', props: { text: 'Buy Acme' } }]]);
+    const community = { id: 'c:abc', name: 'T', size: 8, props: {}, members: [...nodes.keys()].map((id) => ({ node: id, rank: 1 })) };
+    const notes = rels.map((r, i) => note(r, `# N${i}\n\n${i === 0 ? 'The secret plan.' : `Plain ${i}.`}\n`, i === 0 ? { confidential: 'true' } : {}));
+    const [f] = topicRule({ notes, graph: ruleView([community], nodes), learned: 'Quorum/learned-facts.md' });
+    const text = f.fix.ops[0].text;
+    expect(text).not.toContain('secret plan');
+    expect(text).not.toContain('Buy Acme');
+    expect(text).not.toContain('[[t/n0');
+    expect(f.notes).not.toContain('t/n0.md');
+    // with the frontmatter mark gone the note is a source again; a confidential mark on its folder keeps every note out
+    const plain = notes.map((n, i) => (i === 0 ? note(n.rel, n.text) : n));
+    expect(topicRule({ notes: plain, graph: ruleView([community], nodes), learned: 'Quorum/learned-facts.md' })[0].fix.ops[0].text).toContain('secret plan');
+    expect(topicRule({ notes: plain, folders: { t: 'true' }, graph: ruleView([community], nodes), learned: 'Quorum/learned-facts.md' })).toEqual([]);
+  });
+});
+
+describe('summary refresh stays in the Quorum Topics folder', () => {
+  const rels = Array.from({ length: 6 }, (_, i) => `p/n${i}.md`);
+  const nodes = new Map(rels.map((r) => [`note:${r}`, { id: `note:${r}`, kind: 'note', name: r, rel: r }]));
+  const community = (id = 'c:abc') => ({ id, name: 'P', size: 6, props: {}, members: [...nodes.keys()].map((n) => ({ node: n, rank: 1 })) });
+  const notes = (edited = 0) => rels.map((r, i) => note(r, `# N${i}\n\nLine ${i}.${i < edited ? ' Edited.' : ''}\n`));
+  const written = (rel, id = 'c:abc') => {
+    const [f] = topicRule({ notes: notes(), graph: ruleView([community(id)], nodes), learned: 'Quorum/learned-facts.md' });
+    const hashes = f.fix.ops[0].text.match(/source_hashes: \[(.*)\]/)[1].split(', ').map((x) => JSON.parse(x));
+    return note(rel, f.fix.ops[0].text, { quorum: 'generated', community: id, source_hashes: hashes, type: 'summary' });
+  };
+  it('offers a refresh of the summary in the Topics folder, with the Topics folder on the op', () => {
+    const [r] = topicRule({ notes: [...notes(3), written('Quorum/Topics/P.md')], graph: ruleView([community()], nodes), learned: 'Quorum/learned-facts.md' });
+    expect(r.fix.ops[0]).toMatchObject({ op: 'summary', rel: 'Quorum/Topics/P.md', folder: 'Quorum/Topics', replace: true });
+  });
+  it('never refreshes a generated note outside it, and the op refuses one', async () => {
+    const items = topicRule({ notes: [...notes(3), written('elsewhere/P.md')], graph: ruleView([community()], nodes), learned: 'Quorum/learned-facts.md' });
+    expect(items.some((i) => i.key.includes('refresh'))).toBe(false);
+    expect(items.every((i) => i.fix.ops[0].rel.startsWith('Quorum/Topics/'))).toBe(true);
+    const vault = tmp('topics-out-');
+    mkdirSync(path.join(vault, 'elsewhere'), { recursive: true });
+    writeFileSync(path.join(vault, 'elsewhere/P.md'), '---\nquorum: generated\n---\nold\n');
+    await expect(runSetupOp({}, { op: 'summary', rel: 'elsewhere/P.md', folder: 'Quorum/Topics', replace: true, text: 'x' }, { step: async () => {}, keep: () => {}, vault }, { vindex: { sync: () => {} } })).rejects.toThrow(/outside the Quorum folder/);
+  });
+  it('finds a summary whose community took a new id by its sources: no second summary, a refresh that writes the new id', () => {
+    const old = written('Quorum/Topics/P.md', 'c:old');
+    expect(topicRule({ notes: [...notes(), old], graph: ruleView([community('c:new')], nodes), learned: 'Quorum/learned-facts.md' })).toEqual([]);
+    const [r] = topicRule({ notes: [...notes(3), old], graph: ruleView([community('c:new')], nodes), learned: 'Quorum/learned-facts.md' });
+    expect(r.fix.ops[0]).toMatchObject({ rel: 'Quorum/Topics/P.md', replace: true, community: 'c:new' });
+    expect(r.fix.ops[0].text).toContain('community: "c:new"');
+  });
+});
+
+describe('topics: lasting ids, races, retries and the worker fallback', () => {
+  const seeded = (groups = 3) => {
+    const dir = tmp('topics-more-');
+    const store = openStore({ dir, vault: path.join(dir, 'v') });
+    const g = planted({ groups, size: 8 });
+    store.tx(() => { for (const n of g.nodes) store.upsertNode(n); for (const e of g.edges) store.addEdge(e); });
+    return { store, g };
+  };
+  it('keeps a community id when its hub changes and most members stay', () => {
+    const prev = [{ id: 'c:keep', members: new Set(['a', 'b', 'c', 'd']) }];
+    const [kept, fresh] = stableIds([{ id: 'c:x', hub: 'b', members: [{ id: 'b' }, { id: 'a' }, { id: 'c' }] }, { id: 'c:y', hub: 'z', members: [{ id: 'z' }, { id: 'y' }] }], prev);
+    expect(kept.id).toBe('c:keep');
+    expect(fresh.id).toMatch(/^c:[0-9a-f]{10}$/);
+  });
+  it('drops a model name when detection changed the community while the call ran', async () => {
+    const { store, g } = seeded();
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const ask = vi.fn(async () => { await gate; return JSON.stringify(Object.fromEntries(store.communities().map((c) => [c.id, 'Stale name']))); });
+    const t = createTopics({ store, run: inProcess(store), model: { enabled: () => false, ask, textOf: () => null } });
+    await t.refresh();
+    const pass = t.modelPass();
+    // the graph changes under the call: a member of every community goes, so each community's strongest members change
+    for (let i = 0; i < 3; i++) store.dropNode(g.nodes[i * 8].id);
+    await t.refresh();
+    release();
+    await pass;
+    expect(store.communities().some((c) => c.name === 'Stale name')).toBe(false);
+    store.close();
+  });
+  it('asks once per set of members, whatever the answer, and stops at the daily cap', async () => {
+    const { store } = seeded(4);
+    const ask = vi.fn(async () => 'not json');
+    let day = Date.UTC(2026, 10, 20);
+    const t = createTopics({ store, run: inProcess(store), now: () => day, cap: () => 1, model: { enabled: () => false, ask, textOf: () => 'text' } });
+    await t.refresh();
+    await t.modelPass();
+    await t.refresh();
+    await t.modelPass();
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(t.estimate()).toMatchObject({ names: 0, left: 0 });
+    // the summaries are still owed but wait for the next day's calls
+    day += 86400000;
+    expect(t.estimate().left).toBe(1);
+    store.close();
+  });
+  it('falls back to this process when the worker cannot start on a small vault, and skips a large one', async () => {
+    const { store } = seeded();
+    const broken = async () => { throw new Error('no worker'); };
+    const small = createTopics({ store, run: broken });
+    expect((await small.refresh()).phase).toBe('ready');
+    expect(store.communities().length).toBe(3);
+    const large = createTopics({ store, run: broken, maxInProcess: 10 });
+    const st = await large.refresh();
+    expect(st.phase).toBe('error');
+    expect(st.error).toMatch(/skipped for 24 nodes/);
+    store.close();
+  });
+  it('a node that goes leaves its community, and the community it was the hub of goes', async () => {
+    const { store } = seeded();
+    await createTopics({ store, run: inProcess(store) }).refresh();
+    const c = store.communities()[0];
+    const before = store.communityMembers(c.id).length;
+    const member = store.communityMembers(c.id).find((m) => m.node !== c.hub).node;
+    store.dropNode(member);
+    expect(store.community(member)).toBeNull();
+    expect(store.communityMembers(c.id).length).toBe(before - 1);
+    store.dropNode(c.hub);
+    expect(store.communityInfo(c.id)).toBeNull();
+    expect(store.communityMembers(c.id)).toEqual([]);
+    store.close();
+  });
+  it('the packaged worker path points at the unpacked copy when there is one', () => {
+    const root = tmp('topics-asar-');
+    const inAsar = path.join(root, 'app.asar', 'graph', 'communityWorker.js');
+    expect(workerPath(inAsar)).toBe(inAsar);
+    mkdirSync(path.join(root, 'app.asar.unpacked', 'graph'), { recursive: true });
+    writeFileSync(path.join(root, 'app.asar.unpacked', 'graph', 'communityWorker.js'), '');
+    expect(workerPath(inAsar)).toBe(path.join(root, 'app.asar.unpacked', 'graph', 'communityWorker.js'));
   });
 });
