@@ -33,13 +33,14 @@ import * as meetingLinks from './meetingLinks.js';
 import * as entityType from './entityType.js';
 import * as unplaced from './unplaced.js';
 import * as summaries from './summaries.js';
+import * as topicSummaries from './topicSummaries.js';
 import * as instructions from './instructions.js';
 import * as keeperLines from './keeperLines.js';
 import * as modelEdges from './modelEdges.js';
 
-export const RULES = [stale, duplicates, nearDuplicates, contradictions, frontmatter, confidential, secrets, oversized, orphans, hygiene, missingEntity, entityAliases, meetingLinks, entityType, unplaced, summaries, instructions, keeperLines, modelEdges];
+export const RULES = [stale, duplicates, nearDuplicates, contradictions, frontmatter, confidential, secrets, oversized, orphans, hygiene, missingEntity, entityAliases, meetingLinks, entityType, unplaced, summaries, topicSummaries, instructions, keeperLines, modelEdges];
 // the rules whose findings are the gaps the Memory setup scan lists (memorySetup.js)
-export const SETUP_RULES = [missingEntity, entityAliases, meetingLinks, entityType, unplaced, summaries, instructions, modelEdges].map((r) => r.rule.id);
+export const SETUP_RULES = [missingEntity, entityAliases, meetingLinks, entityType, unplaced, summaries, topicSummaries, instructions, modelEdges].map((r) => r.rule.id);
 export const RULE_LABELS = Object.fromEntries(RULES.map((r) => [r.rule.id, r.rule.label]));
 
 // runs every rule over the vault. only: the notes that changed; findings that touch none of them are left out, so the

@@ -184,8 +184,9 @@ An agent connected to the `quorum` MCP server reads this in the server's instruc
 - **Memory index.** Quorum derives a knowledge graph and a search index from the vault, in one SQLite database per vault in its data folder on the Mac. It is rebuilt from the vault at any time and updates as notes change. No note text leaves the Mac. `memory_status` says how far the build is.
 - **Graph.** Typed nodes (note, person, project, company, meeting, decision, topic, tag, folder) and typed edges (`links_to`, `embeds`, `mentions`, `attended`, `works_on`, `member_of`, `decided_in`, `decision_about`, `about`, `tagged`, `in_folder`, `contradicts`, `supersedes`). Every edge has a provenance (explicit, rule, model or person), its source path and line, and the dates it held. A newer fact supersedes an older one, which stays as history; tools return current facts unless `current` is false. A name that matches several nodes returns the candidates.
 - **Search.** `search` is hybrid over the whole vault: keyword (BM25 over SQLite FTS5), local embeddings (bge-small-en-v1.5, on the Mac) and nearness in the graph, merged by reciprocal rank fusion. `search_meetings` is a case-insensitive text match over meeting notes, where every word must appear. `kb_search` is Postgres full-text search with English stemming. Learned facts, chat answers and memory checks use your own model source; Quorum hosts no model.
+- **Topics.** Quorum groups the graph into communities with no model (Louvain modularity, each community kept connected, weighted by edge kind and provenance) and names each from its strongest member, shared tags and folder, or with your own model when you turn that on in Settings, Memory. `communities` lists them and `hubs` the most connected nodes; `explain` and `entity` show a node's community. A topic summary is offered in Needs review and written on Approve as a note in the Quorum folder marked `quorum: generated`.
 - **Decisions about project X.** One call: `decisions` with `about` X. Each line gives the decision, its date, the note and line it was decided in, and whether a later decision replaced it.
-- **Budgets.** `search`, `graph_query`, `graph_path`, `explain`, `entity` and `decisions` take `budget` in tokens (default 1,500), return the strongest items first, one line each with its source path and line, and end with a line that says what was left out and the budget that would return everything.
+- **Budgets.** `search`, `graph_query`, `graph_path`, `explain`, `entity`, `decisions`, `communities` and `hubs` take `budget` in tokens (default 1,500), return the strongest items first, one line each with its source path and line, and end with a line that says what was left out and the budget that would return everything.
 - **Use something else for** the web, calendars and upcoming meetings, and writing to Slack, Notion or GitHub (those tools only read). The memory tools only read; fixes go through Needs review. Notes and lines naming an opted-out customer are withheld.
 
 | Tool | Returns | Use it when |
@@ -194,6 +195,7 @@ An agent connected to the `quorum` MCP server reads this in the server's instruc
 | `decisions` | Decisions newest first, with date, source line and what replaced them | Every decision about a project, person or topic |
 | `search` | Passages from any note, best first, with path and lines | Any question about the vault, before reading files |
 | `graph_query`, `graph_path`, `explain` | Nodes and typed edges with provenance and dates | Who or what connects to something, and why |
+| `communities`, `hubs` | Topics in the vault with their hubs and members; the most connected nodes with counts | What the vault is about, and where to start reading |
 | `memory_status` | Setup progress, index counts, open gaps | Before trusting the index |
 | `search_meetings` | Meeting notes containing every word, best first, with a matching line | An exact word in meeting notes |
 | `get_meeting` | One meeting note in full, with any transcript | Reading a hit from search or list |
@@ -203,7 +205,7 @@ An agent connected to the `quorum` MCP server reads this in the server's instruc
 | `kb_search`, `kb_read`, `kb_list` | Quorum Cloud knowledge base notes | Workspace or team knowledge |
 | `about` | This section as JSON, with every tool | Choosing a tool |
 
-Chats (`list_chats`, `get_chat`), the live call (`live_transcript`), `import_meeting`, Memory health (`review_*`, `fix_*`, `memory_check_*`) and the connected Slack, Notion and GitHub read tools are described in `about`. In Terminal, `quorum memory search|graph|path|explain|entity|decisions|status` runs the same memory tools.
+Chats (`list_chats`, `get_chat`), the live call (`live_transcript`), `import_meeting`, Memory health (`review_*`, `fix_*`, `memory_check_*`) and the connected Slack, Notion and GitHub read tools are described in `about`. In Terminal, `quorum memory search|graph|path|explain|entity|decisions|communities|hubs|status` runs the same memory tools.
 
 ## How it fits together
 

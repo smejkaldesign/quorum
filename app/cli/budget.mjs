@@ -137,6 +137,29 @@ function summary(counts, left, all, used) {
   return `Left out ${parts.join(' and ')} (about ${n(Math.max(0, all - used))} tokens). budget ${n(Math.ceil(all / 100) * 100)} returns everything; or ask a narrower question.`;
 }
 
+// c:project:orca  Orca  (14 members, model name)  hub project:orca 23 neighbors  tags #design  folder projects  top: a, b
+export function communityLine(c) {
+  const hub = c.hub && typeof c.hub === 'object' ? c.hub : null;
+  const meta = [
+    c.size != null ? plural(c.size, 'member') : null,
+    c.namedBy === 'model' ? 'named by your model' : null,
+  ].filter(Boolean);
+  const parts = [
+    `${pick(c, 'id') ?? '?'}  ${oneLine(pick(c, 'name') ?? '')}${meta.length ? `  (${meta.join(', ')})` : ''}`,
+    hub ? `hub ${hub.id}${hub.degree != null ? ` ${plural(hub.degree, 'neighbor')}` : ''}` : typeof c.hub === 'string' ? `hub ${c.hub}` : null,
+    list(c.tags).length ? `tags ${list(c.tags).join(', ')}` : null,
+    c.folder ? `folder ${c.folder}` : null,
+    list(c.top).length ? `top: ${list(c.top).map((m) => ref(m)).join(', ')}` : null,
+  ].filter(Boolean);
+  return parts.join('  ');
+}
+// person:jane-doe  Jane Doe  (people/Jane Doe.md)  31 neighbors, 44 edges  in c:project:orca Orca
+export function hubLine(h) {
+  const counts = [h.degree != null ? plural(h.degree, 'neighbor') : null, h.edges != null ? plural(h.edges, 'edge') : null, h.rank != null ? `rank ${Number(h.rank).toFixed(2)}` : null].filter(Boolean).join(', ');
+  const c = h.community ? `  in ${h.community}${h.communityName ? ` ${oneLine(h.communityName)}` : ''}` : '';
+  return `${nodeLine(h)}${counts ? `  ${counts}` : ''}${c}`;
+}
+
 // a name that matches several nodes: the candidates, never a guess
 export function ambiguousLines(q, candidates) {
   return [`"${q}" matches ${plural(candidates.length, 'node')}. Call again with one id:`, ...candidates.map((c) => `  ${typeof c === 'string' ? c : nodeLine(c)}`)];
@@ -183,7 +206,7 @@ export function formatMemory(tool, result, { budget, args = {} } = {}) {
         nodeLine(nd),
         pick(r, 'source') || nd.rel ? `source: ${typeof r.source === 'string' ? r.source : at(pick(r.source, 'rel') ?? nd.rel, pick(r.source, 'line'))}` : null,
         aliases.length ? `aliases: ${aliases.join(', ')}` : null,
-        pick(r, 'community') ? `community: ${typeof r.community === 'string' ? r.community : pick(r.community, 'name', 'community')}` : null,
+        pick(r, 'community') ? `community: ${typeof r.community === 'string' ? r.community : [pick(r.community, 'community', 'id'), pick(r.community, 'name')].filter(Boolean).join('  ')}` : null,
       ].filter(Boolean);
       const groups = [
         { title: 'Outgoing', items: list(r.outgoing ?? r.out).map((e) => ({ text: edgeLine(e), noun: 'edge' })) },
@@ -202,10 +225,21 @@ export function formatMemory(tool, result, { budget, args = {} } = {}) {
         { title: 'Notes', items: list(r.notes).map((x) => ({ text: nodeLine(x), noun: 'note' })) },
         { title: 'Edges', items: list(r.edges).map((e) => ({ text: edgeLine(e), noun: 'edge' })) },
       ];
-      return fit({ head: [`${nodeLine(nd)}${r.rel && !nd.rel ? `  (${r.rel})` : ''}`], groups, budget, upstream, noun: 'item' });
+      const community = r.community ? `community: ${[pick(r.community, 'community', 'id'), pick(r.community, 'name')].filter(Boolean).join('  ')}` : null;
+      return fit({ head: [`${nodeLine(nd)}${r.rel && !nd.rel ? `  (${r.rel})` : ''}`, ...(community ? [community] : [])], groups, budget, upstream, noun: 'item' });
     }
     case 'decisions':
       return fit({ items: list(r.decisions ?? r.results).map((d) => ({ text: decisionLine(d), noun: 'decision' })), budget, upstream, noun: 'decision' });
+    case 'communities': {
+      if (r.community) {
+        const c = r.community;
+        return fit({ head: [communityLine(c)], items: list(r.members).map((m) => ({ text: hubLine(m), noun: 'member' })), budget, upstream, noun: 'member' });
+      }
+      const when = day(r.computedAt);
+      return fit({ head: when ? [`Communities found ${when}${r.modularity != null ? `, modularity ${Number(r.modularity).toFixed(2)}` : ''}:`] : [], items: list(r.communities).map((c) => ({ text: communityLine(c), noun: 'topic' })), budget, upstream, noun: 'topic' });
+    }
+    case 'hubs':
+      return fit({ head: r.community ? [`Hubs of ${r.community.id}  ${r.community.name ?? ''}`.trim()] : [], items: list(r.hubs).map((h) => ({ text: hubLine(h), noun: 'hub' })), budget, upstream, noun: 'hub' });
     case 'memory_status':
       return fit({ items: statusLines(r).map((text) => ({ text, noun: 'line' })), budget, noun: 'line' }).slice(0, -1);
     default:
