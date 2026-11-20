@@ -11,6 +11,7 @@
 //   hygiene { litter, git, history } the folder walk, git status and size history of a full sweep (vaultHygiene.js)
 //   owner   the name of the person the vault belongs to (main.js USER_NAME)
 //   graph   the memory graph as the rules read it (rules/entities.js ruleGraph), or null while it is not built
+//   learned the keeper's facts file, vault-relative (rules/keeperLines.js)
 import * as orphans from './orphans.js';
 import * as duplicates from './duplicates.js';
 import * as nearDuplicates from './nearDuplicates.js';
@@ -28,8 +29,9 @@ import * as entityType from './entityType.js';
 import * as unplaced from './unplaced.js';
 import * as summaries from './summaries.js';
 import * as instructions from './instructions.js';
+import * as keeperLines from './keeperLines.js';
 
-export const RULES = [stale, duplicates, nearDuplicates, contradictions, frontmatter, confidential, secrets, oversized, orphans, hygiene, missingEntity, entityAliases, meetingLinks, entityType, unplaced, summaries, instructions];
+export const RULES = [stale, duplicates, nearDuplicates, contradictions, frontmatter, confidential, secrets, oversized, orphans, hygiene, missingEntity, entityAliases, meetingLinks, entityType, unplaced, summaries, instructions, keeperLines];
 // the rules whose findings are the gaps the Memory setup scan lists (memorySetup.js)
 export const SETUP_RULES = [missingEntity, entityAliases, meetingLinks, entityType, unplaced, summaries, instructions].map((r) => r.rule.id);
 export const RULE_LABELS = Object.fromEntries(RULES.map((r) => [r.rule.id, r.rule.label]));

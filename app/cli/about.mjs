@@ -7,8 +7,8 @@ export const ABOUT = {
   data: [
     { what: 'meeting notes', where: 'markdown files in the meetings folder of the person\'s vault, one subfolder per imported source', truth: true },
     { what: 'link lines', where: 'appended by Quorum after it files a note: a line in the index, the daily note, and under "## Meetings" in each people and project note the note concerns', truth: true },
-    { what: 'learned facts', where: 'a marked list in .quorum/learned.md in the vault, or a vault note linked from index.md; plain text lines a model wrote from meeting notes, each citing its note', truth: true },
-    { what: 'chats, settings, Memory health findings, the review decision log and the fix journal', where: 'Quorum\'s data folder on this Mac, outside the vault', truth: true },
+    { what: 'learned facts', where: 'a marked list in learned-facts.md in the Quorum folder of the vault (Quorum by default), linked from index.md when Quorum keeps the index; plain text lines a model wrote from meeting notes, each citing its note. Quorum writes only files it made and never CLAUDE.md or AGENTS.md', truth: true },
+    { what: 'chats, settings, Memory health findings, the review decision log, the fix journal and the keeper\'s state and changelog', where: 'Quorum\'s data folder on this Mac, outside the vault', truth: true },
     { what: 'Quorum Cloud copies and knowledge bases', where: 'a hosted Postgres database, Cloud edition only: notes and meeting notes sync both ways with the vault, and knowledge base notes live there', truth: 'the vault files for notes; the database for knowledge bases' },
     { what: 'the memory index: knowledge graph and search index', where: 'one SQLite database per vault in Quorum\'s data folder on this Mac, derived from the vault and rebuilt from it at any time; it updates as notes change', truth: false },
   ],

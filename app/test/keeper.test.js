@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { CHANGELOG, LEARNED_BUDGET, LEARNED_OPEN, addLearned, appendUnder, createKeeper, folders, learnedChars, learnedLines, parseFacts } from '../keeper.js';
+import { CHANGELOG, LEARNED_BUDGET, LEARNED_OPEN, addLearned, appendUnder, createKeeper, folders, keeperHome, learnedChars, learnedLines, parseFacts } from '../keeper.js';
 import { plan, writeStarter } from '../starter.js';
 import { compile, effective } from '../guardrails.js';
 import { wouldBlock } from '../guardrails.js';
@@ -15,9 +15,10 @@ function vault() {
   writeStarter(dir, plan({ name: 'Studio', answers }));
   return dir;
 }
+const home = (dir) => keeperHome(`${dir}.data`, dir);
 const keeperFor = (dir, over = {}) => {
   const settings = { brainMade: 'quorum', ...(over.settings ?? {}) };
-  return createKeeper({ brain: () => ({ root: dir, vault: dir }), settings, guards: () => compile(effective({}), { root: dir, privateDirs: () => ['08-meetings/private'] }), wouldBlock, owner: () => 'Rick Bot', ...over });
+  return createKeeper({ brain: () => ({ root: dir, vault: dir }), dataDir: `${dir}.data`, settings, guards: () => compile(effective({}), { root: dir, privateDirs: () => ['08-meetings/private'] }), wouldBlock, owner: () => 'Rick Bot', ...over });
 };
 
 describe('keeper pieces', () => {
@@ -61,7 +62,10 @@ describe('keeper run', () => {
     expect(readFileSync(path.join(dir, '02-people', 'ada-lovelace.md'), 'utf8')).toContain('## Meetings\n\n- 2026-11-10 [[2026-11-10-design-sync-01x]] Design sync');
     expect(readFileSync(path.join(dir, '03-projects', 'quorum.md'), 'utf8')).toContain('[[2026-11-10-design-sync-01x]]');
     expect(readFileSync(path.join(dir, '03-projects', 'benefind.md'), 'utf8')).not.toContain('[[2026-11-10-design-sync-01x]]');
-    expect(readFileSync(path.join(dir, CHANGELOG), 'utf8')).toContain('Design sync');
+    expect(readFileSync(path.join(home(dir), CHANGELOG), 'utf8')).toContain('Design sync');
+    // the keeper's state stays out of the vault
+    expect(existsSync(path.join(dir, '.quorum', 'keeper.json'))).toBe(false);
+    expect(existsSync(path.join(dir, '.quorum', 'changelog.md'))).toBe(false);
     // the note body is untouched and a second run changes nothing
     const before = readFileSync(path.join(dir, rel), 'utf8');
     const r2 = await k.run();
@@ -94,14 +98,14 @@ describe('keeper run', () => {
     const k = keeperFor(dir, { runText: async (p) => { calls.push(p); return '- Ada owns the launch page\n- none'; }, hasModel: () => true });
     await k.run();
     expect(calls).toHaveLength(1);
-    expect(readFileSync(path.join(dir, '.quorum/learned.md'), 'utf8')).toContain('- Ada owns the launch page ([[2026-11-10-plan-01w]], 2026-11-10)');
+    expect(readFileSync(path.join(dir, 'Quorum/learned-facts.md'), 'utf8')).toContain('- Ada owns the launch page ([[2026-11-10-plan-01w]], 2026-11-10)');
     expect(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8')).not.toContain(LEARNED_OPEN);
     const dir2 = vault();
     mkdirSync(path.dirname(path.join(dir2, rel)), { recursive: true });
     writeFileSync(path.join(dir2, rel), NOTE('Plan', [], 'x'));
     const k2 = keeperFor(dir2, { runText: async () => '- x', hasModel: () => true, settings: { brainMade: 'quorum', keeper: { on: true, facts: false } } });
     await k2.run();
-    expect(existsSync(path.join(dir2, '.quorum/learned.md'))).toBe(false);
+    expect(existsSync(path.join(dir2, 'Quorum/learned-facts.md'))).toBe(false);
     expect(readFileSync(path.join(dir2, 'CLAUDE.md'), 'utf8')).not.toContain(LEARNED_OPEN);
   });
   it('does nothing on a folder the person connected themselves until they turn it on', async () => {

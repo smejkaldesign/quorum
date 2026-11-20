@@ -27,6 +27,7 @@ import { createConnectorTools } from './connectors/tools/index.js';
 import { actorLabel, createAppActions, currentActor, outsideActor } from './appActions.js';
 import { fromActionHandlers, runMemoryTool, withholdAnswer } from './cli/memoryTools.mjs';
 import { CONNECTOR_SERVER } from './cli/connectorTools.mjs';
+import { withMark } from './cli/learned.mjs';
 import { httpUrl, relayFetch, relayUrl } from './relayUrl.js';
 import { createErrorReports } from './errorReports.js';
 import { createIssueReports, createLogTail, encodeCapture } from './issueReports.js';
@@ -365,12 +366,13 @@ const keeper = createKeeper({
   onGuarded: (rel, why) => guardrails.recordDenial({ path: rel, reason: why, surface: 'keeper' }),
   // memory setup: a filed meeting's typed edges go into the memory graph
   graph: () => graphStore(),
+  dataDir: DATA_DIR,
 });
 ipcMain.handle('keeper-status', () => keeper.status());
 ipcMain.handle('keeper-set', (_e, patch) => keeper.set(patch ?? {}));
-ipcMain.handle('keeper-remove-claude', () => keeper.removeClaude());
 ipcMain.handle('keeper-run', (_e, opts) => keeper.run({ reason: 'manual', allowCreate: opts?.allowCreate === true }));
 ipcMain.handle('keeper-errors-open', () => { if (existsSync(KEEPER_ERRORS)) shell.openPath(KEEPER_ERRORS); });
+ipcMain.handle('keeper-changelog-open', () => { const f = keeper.status().changelog; if (f && existsSync(f)) shell.openPath(f); });
 ipcMain.handle('keeper-errors-clear', () => keeper.clearErrors());
 let helper;
 const asset = (name) => path.join(here, 'assets', name);
@@ -2859,7 +2861,7 @@ function setupStatus() {
   const k = keeper.status();
   // a keeper turned off in Settings before setup counts as the person's choice too
   const keeperChoice = memorySetup.keeperChoice(b.vault) ?? (settings.keeper?.on === false ? 'off' : null);
-  return { ...memorySetup.status(b.vault), keeperChoice, made: b.made ?? null, keeper: { on: !!k.on, editVault: !!k.editVault }, graph: !!memoryGraph };
+  return { ...memorySetup.status(b.vault), keeperChoice, made: b.made ?? null, keeper: { on: !!k.on }, graph: !!memoryGraph };
 }
 // once per vault, after its index is in: the scan of a vault that has no report yet
 function scheduleSetup(vault) {
@@ -3936,6 +3938,8 @@ function memoryCond(heavy = false) {
     // memory setup: the rules read the memory graph once it is built (memoryEngine.js)
     graphReady: graphReady(),
     owner: USER_NAME,
+    // the keeper lines rule moves learned facts into this file (rules/keeperLines.js)
+    learned: keeper.factsFile(),
   };
   if (!heavy || !b) return out;
   let bar = null;
@@ -4510,12 +4514,15 @@ function autoApply() {
   log('auto apply', `${plan.ok.length} items`, `${plan.held.length + plan.skipped.length} left for review`);
   return startPlan(plan, items, { actor: 'auto' });
 }
-// a repair plan written as a note in the vault, only when the person asks for it (Save as a note)
+// a repair plan written as a note, only when the person asks for it (Save as a note), into the Quorum folder
+// (keeper.js quorumFolder); never at the vault root. The plan itself shows in the app either way
 function savePlanNote(view) {
   const b = brain();
   if (!b) throw new Error('No vault connected');
   const day = new Date().toISOString().slice(0, 10);
-  const rel = createNote(b.vault, '', `Memory repair plan ${day}`);
+  const folder = keeper.folder();
+  mkdirSync(path.join(b.vault, folder), { recursive: true });
+  const rel = createNote(b.vault, folder, `Memory repair plan ${day}`);
   const lines = [`# Memory repair plan ${day}`, '', `Quorum planned ${view.run} of ${view.total} items in Needs review as one batch.`, '', '## What the batch does', ''];
   for (const g of view.groups) {
     lines.push(`- ${g.label}`);
@@ -4525,7 +4532,7 @@ function savePlanNote(view) {
   part('Merged', view.merged);
   part('Skipped', view.skipped);
   part('Held back', view.held);
-  writeAtomic(path.join(b.vault, rel), `${lines.join('\n')}\n`);
+  writeAtomic(path.join(b.vault, rel), withMark(`${lines.join('\n')}\n`));
   vindex?.sync();
   return rel;
 }
