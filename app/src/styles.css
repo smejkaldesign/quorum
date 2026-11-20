@@ -726,12 +726,12 @@ em.stub { font-style: normal; font-size: 12px; font-weight: 500; padding: 1px 9p
 .note-menu button { display: flex; align-items: center; gap: 10px; }
 .note-menu .danger, .menu .danger { color: var(--danger); }
 .hist-row { position: relative; }
-.hist-hover { position: absolute; right: 8px; top: 50%; transform: translateY(-50%) translateX(16px); display: flex; align-items: center; gap: 4px; padding-left: 28px;
+.hist-hover { position: absolute; right: 8px; top: 0; bottom: 0; transform: translateX(16px); display: flex; align-items: center; gap: 4px; padding-left: 28px;
   background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--panel), white 3%) 24px);
   opacity: 0; visibility: hidden; transition: opacity 250ms ease, transform 250ms ease, visibility 0s linear 250ms; }
 /* hover: the time slides out to the right, then the buttons slide in from the right; leaving runs it backwards */
 .hist-time { transition: opacity 250ms ease 250ms, transform 250ms ease 250ms; }
-.hist-row:hover .hist-hover, .hist-row:focus-within .hist-hover { opacity: 1; visibility: visible; transform: translateY(-50%);
+.hist-row:hover .hist-hover, .hist-row:focus-within .hist-hover { opacity: 1; visibility: visible; transform: none;
   transition: opacity 250ms ease 250ms, transform 250ms ease 250ms, visibility 0s linear 250ms; }
 @media (prefers-reduced-motion: reduce) { .hist-hover, .hist-time { transition: none; } }
 .row-more { width: 32px; height: 30px; }
@@ -946,7 +946,7 @@ svg.err { color: var(--danger); }
 .up-empty { padding: 10px 12px 4px; font-size: 13px; color: var(--muted); }
 .up-more { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; color: var(--muted); }
 .up-more:hover, .menu-open .up-more { background: rgba(255, 255, 255, 0.08); color: var(--text); }
-.menu-open .hist-hover { opacity: 1; visibility: visible; transform: translateY(-50%); transition: none; }
+.menu-open .hist-hover { opacity: 1; visibility: visible; transform: none; transition: none; }
 .menu-open .hist-time { opacity: 0; transition: none; }
 .up-menu { top: 34px; min-width: 180px; }
 .mcp-lede { margin: -4px 0 12px; color: var(--muted); font-size: 14px; }
@@ -1741,7 +1741,7 @@ button.meta-pill { font: inherit; cursor: pointer; }
 .avatar-sq.app .app-logo { width: 28px; height: 28px; border-radius: 7px; }
 .up-strip .avatar-sq.app .app-logo { width: 22px; height: 22px; }
 /* details text that opens the item in its app: subdued, white on hover */
-.hist-text .app-link { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted); text-decoration: none; cursor: pointer; transition: color 160ms ease; }
+.hist-text .app-link { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; overflow: hidden; color: var(--muted); text-decoration: none; cursor: pointer; transition: color 160ms ease; }
 .hist-text .app-link-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: inherit; font-size: inherit; }
 .hist-text .app-link:hover, .hist-text .app-link:focus-visible { color: var(--text); }
 .up-inline .up-head .up-show-more { margin: 0; }
@@ -1972,6 +1972,10 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 /* the highlight reaches past the right edge by the same amount as the left, so it sits even; text and buttons stay put */
 .hist-row { margin-right: calc(-1 * var(--row-pad)); padding-right: var(--row-pad); width: calc(100% + 2 * var(--row-pad)); }
 .hist-row .hist-hover { right: var(--row-pad); }
+/* on hover the buttons take the time's place in the row, so the title and subtitle truncate before them and never run
+   under them; the time fades out where it was */
+.hist-row:is(:hover, :focus-within) .hist-hover, .hist-row.menu-open .hist-hover { position: relative; top: auto; bottom: auto; right: auto; flex: none; padding-left: 0; background: none; }
+.hist-row:is(:hover, :focus-within) .hist-time, .hist-row.menu-open .hist-time { position: absolute; top: 0; bottom: 0; right: var(--row-pad); display: flex; align-items: center; }
 .up-strip .up-fold-in { padding-right: 4px; margin-right: -4px; }
 /* the time only fades: quickly out on hover, back in once the buttons have slid away; the buttons keep their slide */
 .hist-row .hist-time { transform: none; transition: opacity 120ms ease 250ms; }

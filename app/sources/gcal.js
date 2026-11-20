@@ -95,6 +95,10 @@ export function mapEvent(e, calendarId, calendarName = '') {
     calendar: calendarName,
     attendees: (e.attendees ?? []).filter((a) => !a.resource).map((a) => ({ name: a.displayName ?? '', email: a.email ?? '', ...(a.self ? { self: true } : {}) })),
     organizer: e.organizer?.email ?? e.organizer?.displayName ?? '',
+    // the organizer's display name, and whether Google marks the organizer as a resource, so a row names a person
+    // (meetingWho.js) when the organizer is a group or resource calendar
+    organizerName: e.organizer?.displayName ?? '',
+    ...((e.attendees ?? []).some((a) => a.organizer && a.resource) ? { organizerResource: true } : {}),
     item: null,
     link: e.htmlLink ?? null,
     recurring: !!e.recurringEventId,

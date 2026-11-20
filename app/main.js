@@ -1879,7 +1879,7 @@ async function matchMeetingApps() {
     const back = Math.max(1, Math.ceil((now - first) / 86400000) + 1);
     const r = await calAsk({ cmd: 'calEvents', days: 14, back });
     if (r.status !== 'granted') return;
-    if (platformCache.merge(matchPlatforms(notes, r.events ?? [], callLink)) > 0) toUI('history-changed');
+    if (platformCache.merge(matchPlatforms(notes, r.events ?? [], callLink, prepIsMe)) > 0) toUI('history-changed');
   } catch (e) { log?.('meeting apps', e?.message); } finally { platformRun.busy = false; }
 }
 
@@ -5241,7 +5241,8 @@ ipcMain.handle('calendar', async () => {
     // an event Quorum can do nothing with (no call, or a call on a platform that is off) only shows when asked for
     // Up next lists calls only; everything else is in the list below it
     if (hiddenIds.has(e.id) || !(platform && providerOn(platform))) { hidden += 1; return []; }
-    return [{ id: e.id, title: e.title, start: e.start, end: e.end, item: e.item, link: e.link ?? null, recurring: e.recurring, platform, join, calendar: e.source ?? null, organizer: eventRef(e).organizer, count: eventRef(e).count }];
+    const ref = eventRef(e, prepIsMe);
+    return [{ id: e.id, title: e.title, start: e.start, end: e.end, item: e.item, link: e.link ?? null, recurring: e.recurring, platform, join, calendar: e.source ?? null, organizer: ref.organizer, others: ref.others, count: ref.count }];
   });
   return { connected: true, status, events, days: c.days, showAll: false, hidden };
 });

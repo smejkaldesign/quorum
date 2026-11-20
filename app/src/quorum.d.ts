@@ -36,7 +36,7 @@ export type MeetingMeta = { title: string; startedAt?: string; minutes: number; 
 export type SpeakersEvent = { turns: { id: number; speaker: string | null; confidence: number; cluster: string | null; corrected: boolean }[]; participants: string[] };
 
 type Unsub = () => void;
-export type CalendarEvent = { openChat?: boolean; id: string; title: string; start: string; end: string; item?: string | null; link?: string | null; recurring?: boolean; platform?: 'zoom' | 'meet' | 'teams' | null; join?: string | null; calendar?: 'apple-calendar' | 'google-calendar' | null; organizer?: string; count?: number };
+export type CalendarEvent = { openChat?: boolean; id: string; title: string; start: string; end: string; item?: string | null; link?: string | null; recurring?: boolean; platform?: 'zoom' | 'meet' | 'teams' | null; join?: string | null; calendar?: 'apple-calendar' | 'google-calendar' | null; organizer?: string; others?: number; count?: number };
 // the Google Calendar connector: configured means the app has a Google client to sign in with
 // guardrails (app/guardrails.js): one list of what the agent may not read or say, from four sources
 export type GuardrailKind = 'path' | 'frontmatter' | 'secret' | 'term' | 'hook';
@@ -300,7 +300,7 @@ export type ContributionMine = { noteId: string; path: string; status: 'pending'
 export type Billing = { plan: Plan; seats: number; seatsIncluded: number; hourPacks: number; members: number; status: string | null; periodEnd: string | null; subscribed: boolean };
 export type MemberInvite = { inviteId: string; email: string; role: Role; expiresAt: string };
 // the calendar event a note was matched to (meetingPlatforms.js eventRef)
-export type EventRef = { id: string | null; item: string | null; link: string | null; start: string; recurring: boolean; organizer: string; count: number };
+export type EventRef = { id: string | null; item: string | null; link: string | null; start: string; recurring: boolean; organizer: string; others?: number; count: number };
 // the vault prep note for an upcoming event (main.js meeting-prep, meetingPrep.js). links maps each wiki link target in
 // the note to its file on disk. changed: the invite changed since the note was written. edited: the person changed the
 // note, which Quorum then never writes over. dismissed: the person deleted it, and Quorum writes another only on request
