@@ -217,6 +217,10 @@ export function createQuery(store) {
       about: [...new Map((about.some(current) ? about.filter(current) : about).map((e) => [e.dst, { id: e.dst, name: nameOf(e.dst) }])).values()],
       decidedIn: inMeeting ? { id: inMeeting.dst, name: nameOf(inMeeting.dst) } : null,
       supersededBy: by ? { id: by.src, text: store.node(by.src)?.props?.text ?? nameOf(by.src) } : null,
+      // where the decision came from: a line the note states (explicit), the model pass's reading of its prose (model,
+      // with its confidence), or a reading a person approved in Review (person)
+      provenance: (inMeeting ?? about[0])?.provenance ?? null,
+      ...((inMeeting ?? about[0])?.provenance === 'model' ? { confidence: (inMeeting ?? about[0]).confidence } : {}),
     };
   }
   const isCurrentDecision = (id) => !store.edgesOf(id, { dir: 'out', kinds: ['decision_about'], current: false }).some((e) => e.superseded_by != null);

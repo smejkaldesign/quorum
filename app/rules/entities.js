@@ -204,6 +204,8 @@ export function ruleGraph(store) {
     // the communities biggest first (graph/topics.js), each with its members strongest first
     communities: () => safe(() => store.communities(), []).map((c) => ({ ...c, members: safe(() => store.communityMembers(c.id), []) })),
     superseded: (id) => safe(() => store.edgesOf(id, { dir: 'in', kinds: ['supersedes'], current: true }), []).length > 0,
+    // the model pass's readings that wait for a person (memoryModelPass.js), never edges until one approves them
+    proposals: () => safe(() => store.proposals?.({ status: 'pending' }) ?? [], []),
     linked: (a, b, kinds) => {
       const bs = new Set(idsOf(b));
       return idsOf(a).some((id) => safe(() => store.edgesOf(id, { dir: 'both', kinds, current: true }), []).some((e) => bs.has(e.src === id ? e.dst : e.src)));

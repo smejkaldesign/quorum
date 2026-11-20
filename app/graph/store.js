@@ -17,7 +17,10 @@ export const vaultHash = (vault) => createHash('sha256').update(path.resolve(vau
 export const storeFile = (dir, vault) => path.join(dir, vaultHash(vault), 'memory.db');
 export const norm = (s) => String(s ?? '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
 
-const TABLES = ['files', 'nodes', 'aliases', 'edges', 'communities', 'community_info'];
+// a rebuild drops the model pass's read marks with the edges it wrote, so it reads those notes again; model_proposals
+// stays, so a connection the person approved or declined keeps that answer
+const TABLES = ['files', 'nodes', 'aliases', 'edges', 'communities', 'community_info', 'model_files'];
+export const PROPOSAL_STATUS = ['pending', 'approved', 'declined'];
 const SCHEMA = `
 create table if not exists meta(key text primary key, value text);
 create table if not exists files(rel text primary key, hash text, mtime real, size int, indexed_at real);
@@ -34,11 +37,15 @@ create index if not exists edges_by_source on edges(source_rel);
 create table if not exists communities(node text primary key, community text, rank real);
 create index if not exists communities_by_id on communities(community);
 create table if not exists community_info(id text primary key, name text, named_by text, size int, rank real, hub text, props text, updated_at real);
+create table if not exists model_files(rel text primary key, hash text, read_at real, tokens int);
+create table if not exists model_proposals(id integer primary key, key text unique not null, rel text, line int, kind text, src text, dst text, confidence real, props text, status text not null, edges text, recorded_at real, decided_at real);
+create index if not exists model_proposals_by_rel on model_proposals(rel, status);
 `;
 
 const parse = (s) => { if (!s) return {}; try { return JSON.parse(s); } catch { return {}; } };
 const nodeRow = (r) => (r ? { id: r.id, kind: r.kind, name: r.name, rel: r.rel, props: parse(r.props), created_at: r.created_at, updated_at: r.updated_at } : null);
 const edgeRow = (r) => (r ? { ...r, props: parse(r.props) } : null);
+const proposalRow = (r) => (r ? { ...r, props: parse(r.props), edges: r.edges ? JSON.parse(r.edges) : null } : null);
 
 export function openStore({ dir, vault, log = () => {}, now = Date.now, readOnly = false }) {
   const file = storeFile(dir, vault);
@@ -111,6 +118,10 @@ export function openStore({ dir, vault, log = () => {}, now = Date.now, readOnly
     dropFromCommunities: q('delete from communities where node = ?1 or community = (select id from community_info where hub = ?1)'),
     dropCommunityOf: q('delete from community_info where hub = ?'),
   };
+  // the model pass (memoryModelPass.js): which notes it read at which hash, and the connections it proposed that wait
+  // for a person. Prepared on first use, so a reader that never asks for them works on a database built before them
+  const mq = new Map();
+  const m = (sql) => mq.get(sql) ?? mq.set(sql, db.prepare(sql)).get(sql);
   const counts = { files: s.count('files'), nodes: s.count('nodes'), edges: s.count('edges') };
   const nodeKinds = q('select kind, count(*) as n from nodes group by kind');
   const edgeKinds = q('select kind, count(*) as n from edges where superseded_by is null group by kind');
@@ -337,6 +348,26 @@ export function openStore({ dir, vault, log = () => {}, now = Date.now, readOnly
       db.prepare('insert or replace into meta(key, value) values (?, ?)').run(key, String(value));
       return value;
     },
+    // ---- model pass ----
+    modelFile: (rel) => m('select hash from model_files where rel = ?').get(rel)?.hash ?? null,
+    modelFiles: () => new Map(m('select rel, hash from model_files').all().map((r) => [r.rel, r.hash])),
+    putModelFile: (rel, hash, tokens = null) => { m('insert or replace into model_files(rel, hash, read_at, tokens) values (?, ?, ?, ?)').run(rel, hash, now(), tokens); },
+    dropModelFile: (rel) => { m('delete from model_files where rel = ?').run(rel); },
+    // a proposal by its key keeps the answer a person gave it: only a pending one is written over
+    putProposal: ({ key, rel, line = null, kind, src = null, dst = null, confidence = null, props = null }) => {
+      const cur = m('select status from model_proposals where key = ?').get(key);
+      if (cur && cur.status !== 'pending') return false;
+      m('insert into model_proposals(key, rel, line, kind, src, dst, confidence, props, status, recorded_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict(key) do update set rel = excluded.rel, line = excluded.line, kind = excluded.kind, src = excluded.src, dst = excluded.dst, confidence = excluded.confidence, props = excluded.props, recorded_at = excluded.recorded_at')
+        .run(key, rel, line, kind, src, dst, confidence, props ? JSON.stringify(props) : null, 'pending', now());
+      return true;
+    },
+    proposal: (key) => proposalRow(m('select * from model_proposals where key = ?').get(key)),
+    proposals: ({ rel = null, status = null } = {}) => m('select * from model_proposals where (?1 is null or rel = ?1) and (?2 is null or status = ?2) order by id').all(rel, status).map(proposalRow),
+    setProposal: (key, { status, edges = null }) => { m('update model_proposals set status = ?, edges = ?, decided_at = ? where key = ?').run(status, edges ? JSON.stringify(edges) : null, now(), key); },
+    // a reading of a moved note under its new key and path; a key already taken keeps the row it has
+    rekeyProposal: (key, { key: next, rel, src = null, dst = null, props = null }) => { m('update or ignore model_proposals set key = ?, rel = ?, src = ?, dst = ?, props = ? where key = ?').run(next, rel, src, dst, props ? JSON.stringify(props) : null, key); },
+    dropProposals: (rel, status = 'pending') => { m('delete from model_proposals where rel = ? and status = ?').run(rel, status); },
+    moveProposals: (from, to) => { m('update model_proposals set rel = ? where rel = ?').run(to, from); m('update or replace model_files set rel = ? where rel = ?').run(to, from); },
     close: () => { try { db.close(); } catch { /* closed */ } },
   };
 }

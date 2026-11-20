@@ -25,6 +25,8 @@
 //                                               pointed at rel, drop to the Trash
 //   { op: 'split', rel, parts }                 move each part (heading, start, end, to) into a note of its own
 //   { op: 'movefacts', rel, to }                move the learned facts block of rel into the facts file to
+//   { op: 'confirm', rel, key, label }          add a connection the model pass proposed to the memory graph, with
+//                                               person provenance; nothing is written to the vault
 //   { op: 'summary', rel, folder, text, replace }  write a topic summary in the Quorum folder, over one Quorum wrote
 //   { op: 'keep' }                              change nothing: Approve keeps the item as it is and marks it done
 // An item the agent drafted (memoryDraft.js) carries draft; a merge is a restore of the kept note and a trash of the
@@ -43,7 +45,7 @@
 // The steps that remain run in phases so each step's preconditions hold: put back, remove, edit, write, move.
 
 const q = (t) => `“${t}”`;
-const PHASE = { restore: 0, unalias: 0, trash: 1, tag: 2, setkey: 2, alias: 3, relink: 4, unlink: 5, link: 5, addlink: 5, annotate: 5, compact: 2, trashdirs: 1, create: 6, mention: 6.5, merge: 1.5, split: 2, move: 7, commit: 8, keep: 9 };
+const PHASE = { restore: 0, unalias: 0, trash: 1, tag: 2, setkey: 2, alias: 3, relink: 4, unlink: 5, link: 5, addlink: 5, annotate: 5, compact: 2, trashdirs: 1, create: 6, mention: 6.5, merge: 1.5, split: 2, move: 7, commit: 8, confirm: 9, keep: 9 };
 const KIND_ORDER = { pastfix: 0, link: 1, finding: 2 };
 const norm = (t) => String(t ?? '').toLowerCase().replace(/\.md$/, '').replace(/\s+/g, ' ').trim();
 
@@ -119,6 +121,7 @@ const GROUPS = {
   'mark-instructions': { order: 15.88, label: (n) => `Mark ${n} out of date ${n === 1 ? 'line' : 'lines'} in instruction files` },
   split: { order: 15.9, label: (n) => `Split ${n} long ${n === 1 ? 'note' : 'notes'} into sections` },
   movefacts: { order: 15.95, label: (n) => `Move the learned facts out of ${n} ${n === 1 ? 'file' : 'files'} of yours into Quorum's facts file` },
+  confirm: { order: 15.97, label: (n) => `Add ${n} ${n === 1 ? 'connection' : 'connections'} the model read from your notes to the memory graph` },
   keep: { order: 16, label: (n) => `Keep ${n} ${n === 1 ? 'item' : 'items'} as ${n === 1 ? 'it is' : 'they are'}` },
 };
 // the group an item lists under: what its first change does, or move and tag for a move that also tags

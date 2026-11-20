@@ -11,6 +11,7 @@
 //   note.unplaced        notes outside the folder for their kind: move them
 //   note.summary-stale   summaries whose sources changed: record the hashes, or mark them stale
 //   note.instructions    CLAUDE.md, AGENTS.md and similar: size budget (listed, no fix), decisions a newer one replaced
+//   note.model-edge      connections the model pass read under its bar: add them to the graph (op confirm), or decline
 //
 // The fixes run through the fix run machinery like every other finding (main.js runOp, batchPlan.js, versions, Undo);
 // this module holds the steps of the ops the setup rules added (create, mention, alias, merge, split), and, after a
@@ -28,9 +29,12 @@ import { entityKinds, normName, PEOPLE_KEYS, PROJECT_KEYS } from './rules/entiti
 import { BUDGET, INSTRUCTION_NAME } from './rules/instructions.js';
 import { bodyOf, DAY, meetingInstance } from './rules/common.js';
 import { ENTITY_FOLDERS, entityId, folderKind, noteKind } from './graph/extract.js';
+import { CAPS as MODEL_CAPS, DEFAULT_CAP as MODEL_CAP } from './memoryModelPass.js';
 
 // the ops this module runs for a finding item (main.js runOp hands them here)
-export const SETUP_OPS = new Set(['create', 'mention', 'alias', 'merge', 'split', 'movefacts', 'summary']);
+export const SETUP_OPS = new Set(['create', 'mention', 'alias', 'merge', 'split', 'movefacts', 'summary', 'confirm']);
+// the model pass's choice per vault (memoryModelPass.js): off until the person turns it on, and its token cap per run
+export { CAPS as MODEL_CAPS, DEFAULT_CAP as MODEL_CAP } from './memoryModelPass.js';
 export const FRESH_DAYS = 90;
 const noExt = (rel) => String(rel).replace(/\.md$/i, '');
 const base = (rel) => noExt(rel).split('/').pop();
@@ -138,6 +142,9 @@ export async function runSetupOp(item, o, { step, keep, vault, written = new Set
     const now = abs ? sha(readFileSync(abs, 'utf8')) : null;
     if (now !== hashes[rel]) throw new Error(`“${rel}” changed after Quorum checked it, so Quorum did not write. Review it again`);
   };
+  // a connection the model pass proposed: the graph records it after the batch (main.js recordApproved); the note is
+  // not written
+  if (o.op === 'confirm') { await step(`Adding to the memory graph: ${o.label ?? o.key}`); return; }
   if (o.op === 'create') {
     const abs = vaultTarget(vault, o.rel);
     if (!abs) throw new Error(`“${o.rel}” is outside the vault`);
@@ -413,7 +420,9 @@ function entityCounts(notes, stats) {
 // The setup report. notes: the vault index's snapshot; missing: the count of links that open nothing; findings: Memory
 // health's findings now; links: the broken link issues; graph: { stats, freshness } or null; search: { chunks,
 // embedded } or null; outside: outsideInstructions()
-export function setupReport({ notes = [], missing = 0, findings = [], links = [], graph = null, search = null, keeper = null, outside = [], made = null, now = Date.now() }) {
+// model: the model pass (memoryModelPass.js status): whether it is on, the notes it read, its edges and the readings
+// waiting in Needs review
+export function setupReport({ notes = [], missing = 0, findings = [], links = [], graph = null, search = null, keeper = null, outside = [], made = null, model = null, now = Date.now() }) {
   const resolved = notes.reduce((s, n) => s + (n.outbound ?? 0), 0);
   const open = findings.filter((f) => !f.archived);
   const gap = (id, label) => {
@@ -441,7 +450,7 @@ export function setupReport({ notes = [], missing = 0, findings = [], links = []
     freshness: freshness({ notes, findings: open, graph, now }),
     outside,
     keeper: keeper ? { on: !!keeper.on, made: made === 'quorum' } : null,
-    model: { available: false },
+    model: { available: true, on: !!model?.on, read: model?.counts?.read ?? 0, edges: model?.counts?.edges ?? 0, waiting: model?.counts?.waiting ?? 0 },
   };
 }
 
@@ -462,6 +471,12 @@ export function createMemorySetup({ file, steps, emit = () => {}, log = () => {}
   let state = null;
   const save = () => { try { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, JSON.stringify(saved)); } catch (e) { log('memory setup', e?.message); } };
   const choice = (vault) => (saved[vault]?.keeper === 'on' || saved[vault]?.keeper === 'off' ? saved[vault].keeper : null);
+  // the model pass: on only when the person turned it on for this vault, for the model source (provider and model) they
+  // saw the estimate for
+  const modelChoice = (vault) => {
+    const m = saved[vault]?.model ?? {};
+    return { on: m.on === true, cap: MODEL_CAPS.includes(m.cap) ? m.cap : MODEL_CAP, source: typeof m.source === 'string' ? m.source : null };
+  };
   const view = (vault) => {
     const last = saved[vault] ?? null;
     if (state && state.vault === vault) return { running: state.running, phase: state.phase, progress: state.progress, phases: PHASES, error: state.error, report: state.report ?? last?.report ?? null, done: !state.running && !!(state.report ?? last?.report), keeperChoice: choice(vault) };
@@ -496,5 +511,15 @@ export function createMemorySetup({ file, steps, emit = () => {}, log = () => {}
     save();
     return true;
   }
-  return { run, status: (vault) => view(vault), keeperChoice: choice, chooseKeeper, at: now };
+  // { on, cap, source } from Memory setup or Settings, Memory; a cap not on the list is ignored. Turning it on records
+  // the source it was turned on for
+  function chooseModel(vault, { on, cap, source } = {}) {
+    if (!vault) return modelChoice(vault);
+    const cur = modelChoice(vault);
+    const next = typeof on === 'boolean' ? on : cur.on;
+    saved[vault] = { ...(saved[vault] ?? {}), model: { on: next, cap: MODEL_CAPS.includes(cap) ? cap : cur.cap, source: on === true && typeof source === 'string' ? source : cur.source } };
+    save();
+    return modelChoice(vault);
+  }
+  return { run, status: (vault) => view(vault), keeperChoice: choice, chooseKeeper, modelChoice, chooseModel, at: now };
 }

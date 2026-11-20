@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
-import type { MemorySetupReport, MemorySetupStatus } from './quorum';
+import type { MemorySetupReport, MemorySetupStatus, ModelPassStatus } from './quorum';
+import { BY_ID } from '../connectors/catalog';
 import { Row, Toggle } from './controls';
 import { IconBrain, IconCheck, IconClock, IconInfo, IconListCheck, IconNotes, IconSliders } from './icons';
-import { keeperRow, percent, phaseName } from './memorySetupView';
+import { keeperRow, modelEstimateText, modelPhaseText, modelRowState, modelStateText, percent, phaseName } from './memorySetupView';
+import { openConnectors } from './connectorsNav';
 
 const n = (x: number) => x.toLocaleString('en-US');
 const plural = (x: number, one: string, many = `${one}s`) => `${n(x)} ${x === 1 ? one : many}`;
@@ -119,11 +121,70 @@ export function MemorySetupView({ s, failed = '', error = '', offerKeeper = fals
           desc={`After each meeting, Quorum adds a line to the index, the daily note, and each person and project note it names, and records who attended in the memory graph. It writes only files it made unless you allow more in Settings, Memory.${k.pending ? ' Selected: it turns on when you finish setup. Turn it off here to keep it off.' : ''}`}>
           <Toggle on={k.on} onChange={onKeeper} label={KEEPER_TITLE} />
         </Row>
-        <Row icon={<IconSliders width={18} height={18} />} title={<>Model pass <em className="soon grey">Later</em></>}
-          desc="Reads the prose of your notes for relations and decisions with your own model source, and shows its cost before it runs. It comes in a later version." >
-          <Toggle on={false} onChange={() => {}} disabled label="Model pass" />
-        </Row>
+        <ModelPassRow defer={offerKeeper} />
       </div>
     </>
+  );
+}
+
+const MODEL_TITLE = 'Read the prose of your notes with your model';
+const CAPS = [50000, 200000, 500000, 1000000, 3000000];
+// in onboarding the switch only selects: Finish turns the pass on (Onboarding.tsx takePendingModel), as the keeper does
+let pendingModel: { on: boolean; cap: number } | null = null;
+export function takePendingModel() { const p = pendingModel; pendingModel = null; return p; }
+
+// The model pass (memoryModelPass.js): off until the person turns it on for this vault, after the estimate computed from
+// the vault and the token cap per run are on screen. Turning it on starts a run; a new model source asks again
+export function ModelPassRow({ defer = false }: { defer?: boolean }) {
+  const [m, setM] = useState<ModelPassStatus | null>(null);
+  const [error, setError] = useState('');
+  const [pending, setPending] = useState(() => pendingModel?.on ?? false);
+  const [cap, setCap] = useState<number | null>(() => pendingModel?.cap ?? null);
+  const [tries, setTries] = useState(0);
+  useEffect(() => {
+    let live = true;
+    window.quorum.memoryModelStatus().then((st) => { if (live) { setM(st); setError(''); } }).catch((e) => { if (live) setError(message(e)); });
+    // run events carry no estimate: the one shown stays, and is read again once a run ends
+    const off = window.quorum.onMemoryModel((p) => {
+      setM((prev) => ({ ...p, estimate: prev?.estimate ?? null }));
+      if (!p.running) window.quorum.memoryModelStatus().then((st) => { if (live) setM(st); }).catch(() => {});
+    });
+    return () => { live = false; off(); };
+  }, [tries]);
+  const act = async (fn: () => Promise<ModelPassStatus>) => { setError(''); try { setM(await fn()); } catch (e) { setError(message(e)); } };
+  const r = modelRowState(m, { defer, pending });
+  const capNow = cap ?? m?.cap ?? CAPS[1];
+  const source = m?.provider ? (BY_ID as Record<string, { name: string } | undefined>)[m.provider]?.name ?? m.provider : null;
+  const toggle = (on: boolean) => {
+    if (defer) { pendingModel = on ? { on: true, cap: capNow } : null; setPending(on); return; }
+    act(() => window.quorum.memoryModelSet(on ? { on, cap: capNow } : { on }));
+  };
+  const chooseCap = (c: number) => {
+    setCap(c);
+    if (defer) { if (pendingModel) pendingModel = { ...pendingModel, cap: c }; return; }
+    if (m?.on) act(() => window.quorum.memoryModelSet({ cap: c }));
+  };
+  const state = m ? (m.sourceChanged ? 'Your model source changed since you turned this on. Check the new estimate and confirm to go on.' : modelStateText({ ...m, cap: capNow })) : '';
+  return (
+    <Row icon={<IconSliders width={18} height={18} />} title={MODEL_TITLE} busy={!!m?.running}
+      desc={<>
+        {`Quorum sends your notes to ${source ? `your ${source} model source` : 'your own model source'} to find the people, projects, relations and decisions their links and frontmatter do not show. Connections it is sure of go into the memory graph, marked as found by the model, with the line they came from. The rest wait in Needs review for you to approve. Notes that are private, confidential, opted out or on the never-listen list never go to the model.`}
+        <br />{defer && pending ? 'Selected: it starts reading when you finish setup, then reads new and changed notes in the background.' : 'Turning it on starts reading now, then reads new and changed notes in the background. Turning it off stops a run.'}
+        {!error && <><br />{m ? modelEstimateText(m.estimate ? { ...m.estimate, cap: capNow, runs: m.estimate.tokens ? Math.ceil(m.estimate.tokens / capNow) : 0 } : null) : 'Estimating…'}</>}
+        {state && <><br />{state}</>}
+        <span className="sr-only" aria-live="polite">{modelPhaseText(m)}</span>
+        {error && <><br /><span role="alert">{error}</span></>}
+      </>}>
+      {error && !m && <button className="pill" onClick={() => { setError(''); setTries((t) => t + 1); }}>Try again</button>}
+      {r.needsProvider && m && <button className="pill" onClick={() => openConnectors()}>Choose a model provider</button>}
+      {m && (
+        <select className="set-select" aria-label="Tokens per run" value={capNow} disabled={r.capDisabled} onChange={(e) => chooseCap(Number(e.target.value))}>
+          {CAPS.map((c) => <option key={c} value={c}>{`${c.toLocaleString('en-US')} tokens a run`}</option>)}
+        </select>
+      )}
+      {r.confirm && <button className="pill primary" onClick={() => act(() => window.quorum.memoryModelSet({ on: true, cap: capNow }))}>Confirm</button>}
+      {r.action && <button className="pill" onClick={() => act(() => (r.action === 'cancel' ? window.quorum.memoryModelCancel() : window.quorum.memoryModelRun()))}>{r.action === 'cancel' ? 'Cancel' : 'Run now'}</button>}
+      <Toggle on={r.on} disabled={r.toggleDisabled} onChange={toggle} label={MODEL_TITLE} />
+    </Row>
   );
 }
