@@ -198,7 +198,7 @@ describe('learned facts in a vault note', () => {
     expect(readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8')).toBe('# Agent OS\n\nRules.\n');
     expect(existsSync(path.join(dir, '.quorum'))).toBe(false);
     const text = readFileSync(path.join(dir, note), 'utf8');
-    expect(text.startsWith(LEARNED_HEADER)).toBe(true);
+    expect(text.startsWith(`---\nquorum: generated\n---\n${LEARNED_HEADER}`)).toBe(true);
     expect(learnedLines(text)).toEqual(['- Ada owns the launch page ([[2026-11-10-plan]], 2026-11-10)']);
     expect(readFileSync(path.join(dir, 'index.md'), 'utf8')).toContain(`- [[learned-facts]] - ${NOTE_LINK}`);
     const log = changelog(dir);

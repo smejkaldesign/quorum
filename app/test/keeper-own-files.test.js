@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { CHANGELOG, INDEX_HEADER, LEARNED_HEADER, LEARNED_OPEN, MEETINGS_HEADER, createKeeper, keeperHome, learnedFileIn, learnedLines } from '../keeper.js';
@@ -239,5 +240,106 @@ describe('junk notes', () => {
     rmSync(path.join(dir, '08-meetings/2026-11-15-kjhkjhkjh-q1.md'));
     expect(k.junk()).toEqual([]);
     expect(changelog(dir)).toContain('Moved to the Trash');
+  });
+});
+
+// whether a file is Quorum's is read from the vault itself, so the keeper keeps its files when the state on this Mac is
+// gone or belongs to another path
+describe('ownership without the state on this Mac', () => {
+  const counting = () => { const c = { n: 0 }; return { c, runText: async () => { c.n++; return '- Ada owns the launch page'; } }; };
+  const filedOnce = async (dataDir) => {
+    const dir = personVault();
+    const { k } = keeperFor(dir, {}, QUORUM, { dataDir });
+    await k.run();
+    expect(text(dir, '08-meetings/index.md').startsWith('---\nquorum: generated\n---\n')).toBe(true);
+    put(dir, '08-meetings/2026-11-12-sync.md', NOTE('Sync', '2026-11-12'));
+    return dir;
+  };
+  const updatesItsFiles = async (dir, dataDir) => {
+    const { c, runText } = counting();
+    const { k } = keeperFor(dir, {}, QUORUM, { dataDir, runText });
+    const r = await k.run();
+    // only the new note goes to the model; the one the meetings index lists counts as filed
+    expect(c.n).toBe(1);
+    expect(r.filed).toBe(1);
+    const index = text(dir, '08-meetings/index.md');
+    expect(index).toContain('[[2026-11-10-plan]]');
+    expect(index).toContain('[[2026-11-12-sync]]');
+    expect(text(dir, '01-daily/2026-11-12.md')).toContain('[[2026-11-12-sync]]');
+    // the same fact again: one line, with the newer citation
+    expect(learnedLines(text(dir, FACTS))).toEqual(['- Ada owns the launch page ([[2026-11-12-sync]], 2026-11-12)']);
+    for (const [rel, body] of Object.entries(MINE)) expect(text(dir, rel), rel).toBe(body);
+  };
+  it('after the vault folder is renamed', async () => {
+    const dataDir = mkdtempSync(path.join(tmpdir(), 'own-data-'));
+    const dir = await filedOnce(dataDir);
+    const moved = `${dir}-renamed`;
+    renameSync(dir, moved);
+    // the state follows the folder, so nothing is filed twice
+    const { c, runText } = counting();
+    const { k } = keeperFor(moved, {}, QUORUM, { dataDir, runText });
+    expect(k.status().filed).toBe(1);
+    await k.run();
+    expect(c.n).toBe(1);
+    expect(text(moved, '08-meetings/index.md')).toContain('[[2026-11-12-sync]]');
+  });
+  it('on a second Mac, whose data folder holds no state for the vault', async () => {
+    const dir = await filedOnce(mkdtempSync(path.join(tmpdir(), 'own-data-a-')));
+    await updatesItsFiles(dir, mkdtempSync(path.join(tmpdir(), 'own-data-b-')));
+  });
+  it('after Delete my data', async () => {
+    const dataDir = mkdtempSync(path.join(tmpdir(), 'own-data-'));
+    const dir = await filedOnce(dataDir);
+    rmSync(dataDir, { recursive: true, force: true });
+    await updatesItsFiles(dir, dataDir);
+  });
+  it('proves files an earlier version wrote with no mark by their text, and marks them on the next write', async () => {
+    const dir = personVault();
+    put(dir, '08-meetings/index.md', `${MEETINGS_HEADER}- [[2026-11-01-old]] - meeting 2026-11-01: Old\n`);
+    put(dir, '01-daily/2026-11-12.md', '# 2026-11-12\n\n## Meetings\n\n- [[2026-11-12-old]] Old\n');
+    put(dir, '05-knowledge/quorum-learned.md', `${LEARNED_HEADER}\n${LEARNED_OPEN}\n## Learned from meetings\n\n- Bo owns pricing ([[m]], 2026-11-01)\n<!-- /quorum:learned -->\n`);
+    put(dir, '08-meetings/2026-11-12-sync.md', NOTE('Sync', '2026-11-12'));
+    const { k } = keeperFor(dir, {}, QUORUM);
+    const r = await k.run();
+    expect(r.left).not.toContain('08-meetings/index.md');
+    expect(r.left).not.toContain('01-daily/2026-11-12.md');
+    for (const rel of ['08-meetings/index.md', '01-daily/2026-11-12.md']) {
+      expect(text(dir, rel).startsWith('---\nquorum: generated\n---\n'), rel).toBe(true);
+      expect(text(dir, rel), rel).toContain('[[2026-11-12-sync]]');
+    }
+    // the older default facts note moves in with no factsNoteAt to point at it
+    expect(existsSync(path.join(dir, '05-knowledge/quorum-learned.md'))).toBe(false);
+    expect(learnedLines(text(dir, FACTS))[0]).toBe('- Bo owns pricing ([[m]], 2026-11-01)');
+    // the person's own notes stay theirs
+    for (const [rel, body] of Object.entries(MINE)) expect(text(dir, rel), rel).toBe(body);
+  });
+  it('leaves state in the vault when it can not be copied to the data folder', async () => {
+    const dir = personVault();
+    put(dir, '.quorum/keeper.json', JSON.stringify({ done: {} }));
+    const notADir = path.join(mkdtempSync(path.join(tmpdir(), 'own-data-')), 'file');
+    writeFileSync(notADir, 'x');
+    const { k } = keeperFor(dir, {}, QUORUM, { dataDir: notADir });
+    await k.run();
+    expect(text(dir, '.quorum/keeper.json')).toBe(JSON.stringify({ done: {} }));
+  });
+});
+
+describe('the quorum CLI', () => {
+  const cli = path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'cli', 'quorum.mjs');
+  const learned = (h) => execFileSync(process.execPath, [cli, 'learned'], { env: { ...process.env, HOME: h, QUORUM_ENV: '' }, encoding: 'utf8' });
+  it('reads the facts file the keeper recorded in the data folder, else in .quorum/keeper.json', async () => {
+    const h = mkdtempSync(path.join(tmpdir(), 'own-home-'));
+    const data = path.join(h, 'Library/Application Support/Quorum');
+    const dir = personVault();
+    put(data, 'settings.json', JSON.stringify({ vaultPath: dir }));
+    const { k } = keeperFor(dir, { folder: 'notes/q' }, QUORUM, { dataDir: data });
+    await k.run();
+    expect(learned(h)).toContain('Ada owns the launch page');
+    // a vault the app has not opened since the move keeps its state in .quorum
+    const old = personVault();
+    put(old, 'notes/facts.md', `${LEARNED_HEADER}\n${LEARNED_OPEN}\n- Bo owns pricing\n<!-- /quorum:learned -->\n`);
+    put(old, '.quorum/keeper.json', JSON.stringify({ done: {}, factsNoteAt: 'notes/facts.md' }));
+    put(data, 'settings.json', JSON.stringify({ vaultPath: old }));
+    expect(learned(h)).toContain('Bo owns pricing');
   });
 });

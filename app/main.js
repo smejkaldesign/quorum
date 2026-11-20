@@ -27,6 +27,7 @@ import { createConnectorTools } from './connectors/tools/index.js';
 import { actorLabel, createAppActions, currentActor, outsideActor } from './appActions.js';
 import { fromActionHandlers, runMemoryTool, withholdAnswer } from './cli/memoryTools.mjs';
 import { CONNECTOR_SERVER } from './cli/connectorTools.mjs';
+import { withMark } from './cli/learned.mjs';
 import { httpUrl, relayFetch, relayUrl } from './relayUrl.js';
 import { createErrorReports } from './errorReports.js';
 import { createIssueReports, createLogTail, encodeCapture } from './issueReports.js';
@@ -4531,7 +4532,7 @@ function savePlanNote(view) {
   part('Merged', view.merged);
   part('Skipped', view.skipped);
   part('Held back', view.held);
-  writeAtomic(path.join(b.vault, rel), `${lines.join('\n')}\n`);
+  writeAtomic(path.join(b.vault, rel), withMark(`${lines.join('\n')}\n`));
   vindex?.sync();
   return rel;
 }

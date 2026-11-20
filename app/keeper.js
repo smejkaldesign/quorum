@@ -8,9 +8,10 @@
 // instructions point agents at it. The list stays under a budget in characters: the oldest lines move to the changelog
 // when it runs over, and a line marked #keep stays. A fact that only says a note is empty or holds no decisions is left
 // out. Everything else is append-only: no note body is rewritten, and a line already present is left alone.
-// Quorum edits only the files it made: files the keeper created (recorded in keeper.json as made), the files the
-// starter wrote into a folder Quorum built, files under the .quorum folder an earlier version used, and a facts file
-// that starts with LEARNED_HEADER. CLAUDE.md, AGENTS.md, project logs and every other note the person made are never
+// Quorum edits only the files it made: files that carry its mark (QUORUM_MARK in their frontmatter, added to each file
+// the keeper creates or writes), files the keeper created (recorded in keeper.json as made), the files the starter wrote
+// into a folder Quorum built, files under the .quorum folder an earlier version used, and, for files an earlier version
+// wrote with no mark, a facts file, an index or a daily note whose text is still only what the keeper writes. CLAUDE.md, AGENTS.md, project logs and every other note the person made are never
 // written; the meeting index lines then go to the meetings folder's own index.md, which Quorum makes. A list an earlier
 // version wrote into a file the person made stays there until the person approves its move in Needs review
 // (rules/keeperLines.js).
@@ -31,7 +32,7 @@ import path from 'node:path';
 import { parseFrontmatter } from './linkparse.js';
 import { writeAtomic } from './relink.js';
 import { SETUP_FILE, plan, readSetup, slug } from './starter.js';
-import { CITE_RE, FACTS_NAME, KEEP_RE, LEARNED_CLOSE, LEARNED_HEADER, LEARNED_OPEN, LEGACY_LEARNED, QUORUM_FOLDER, blockAt, dropBlock, factKey, keeperHome, learnedLines } from './cli/learned.mjs';
+import { CITE_RE, FACTS_NAME, KEEP_RE, LEARNED_CLOSE, LEARNED_HEADER, LEARNED_OPEN, LEGACY_LEARNED, QUORUM_FOLDER, VAULT_FILE, blockAt, bodyText, dropBlock, factKey, isFactsFile, isMarked, keeperHome, learnedLines, withMark } from './cli/learned.mjs';
 import { junkOf } from './noteJunk.js';
 import { DAILY_DEFAULT, choose, dailyName, dailyPattern, isGenerated, owns, resolvePlugins } from './plugins.js';
 import { entityId, noteKind } from './graph/extract.js';
@@ -44,7 +45,7 @@ export const CHANGELOG = 'changelog.md';
 export const KEPT_FILE = 'kept-notes.json';
 // where an earlier version kept each of them, inside the vault
 const LEGACY_STATE = [[KEEPER_FILE, '.quorum/keeper.json'], [CHANGELOG, '.quorum/changelog.md'], [KEPT_FILE, '.quorum/kept-notes.json']];
-export { CITE_RE, FACTS_NAME, KEEP_RE, LEARNED_CLOSE, LEARNED_HEADER, LEARNED_OPEN, LEGACY_LEARNED, QUORUM_FOLDER, factKey, keeperHome, learnedFileIn, learnedLines } from './cli/learned.mjs';
+export { CITE_RE, FACTS_NAME, KEEP_RE, LEARNED_CLOSE, LEARNED_HEADER, LEARNED_OPEN, LEGACY_LEARNED, QUORUM_FOLDER, QUORUM_MARK, factKey, isMarked, keeperHome, learnedFileIn, learnedLines, withMark } from './cli/learned.mjs';
 export const LEARNED_BUDGET = 2000;
 export const NOTE_LINK = 'learned facts from meetings, kept by Quorum';
 // the first lines of the index files the keeper makes; only Quorum writes them
@@ -292,6 +293,14 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
   const budgetFor = () => ({ budget: conf().factsBudget ?? LEARNED_BUDGET, maxLines: Infinity });
   // the facts file, vault-relative: learned-facts.md in the Quorum folder
   const factsFor = (vault) => `${quorumFolder(vault, conf().folder)}/${FACTS_NAME}`;
+  // where an earlier version put the facts note by default: the knowledge folder (05-knowledge or knowledge), else the
+  // root. A list there moves into the facts file once saveFacts proves the note Quorum's, also with no state
+  const oldNotes = (vault) => {
+    let names = [];
+    try { names = readdirSync(vault).filter((n) => !n.startsWith('.')).sort(); } catch {}
+    const k = names.find((n) => /^knowledge$/i.test(n.replace(/^\d+[-_ ]*/, '')) && isDir(path.join(vault, n)));
+    return [...(k ? [`${k}/quorum-learned.md`] : []), 'quorum-learned.md'];
+  };
   let running = null;
   let queued = null;
   let timer = null;
@@ -352,15 +361,23 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
     timer = null;
     try { await running?.catch(() => {}); } finally { stopping = false; }
   };
-  // made is a Set in memory and an array in the file. A keeper.json from before made existed gets it from provenMade
+  // made is a Set in memory and an array in the file. A keeper.json from before made existed gets it from provenMade.
+  // fresh: no keeper.json on this Mac yet (another Mac filed this vault, the folder moved to another volume, or Delete
+  // my data ran); run then takes the notes Quorum's index lists as filed. It is never saved
   const loadState = (vault) => {
     migrate(vault);
     let st;
-    try { st = JSON.parse(readFileSync(stateFile(vault), 'utf8')); } catch { st = { done: {} }; }
+    try { st = JSON.parse(readFileSync(stateFile(vault), 'utf8')); } catch { st = { done: {}, fresh: true }; }
     st.made = new Set(Array.isArray(st.made) ? st.made : provenMade(vault));
     return st;
   };
-  const saveState = (vault, st) => { mkdirSync(home(vault), { recursive: true }); writeAtomic(stateFile(vault), JSON.stringify({ ...st, made: [...(st.made ?? [])] }, null, 2) + '\n'); };
+  // the home also records the vault's path, which keeperHome reads to tell two folders with one inode apart
+  const saveState = (vault, st) => {
+    mkdirSync(home(vault), { recursive: true });
+    const { fresh, ...keep } = st;
+    writeAtomic(stateFile(vault), JSON.stringify({ ...keep, made: [...(st.made ?? [])] }, null, 2) + '\n');
+    writeAtomic(path.join(home(vault), VAULT_FILE), JSON.stringify({ path: path.resolve(vault) }) + '\n');
+  };
   // the files an earlier keeper made, for a keeper.json without made: a file the changelog names whose text is still
   // only what the keeper writes (an index under INDEX_HEADER or MEETINGS_HEADER, a daily note of meeting lines and
   // nothing else). Anything it cannot prove stays the person's. Worked out once per vault until a run saves made
@@ -407,8 +424,18 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
     return starterCache.made;
   };
   // whether a file is Quorum's (see the top of this file), and whether the keeper may write it: a file that does not
-  // exist yet is made by the keeper and recorded as its own
-  const quorumMade = (reg, st, rel, cur) => rel.startsWith('.quorum/') || reg.made.has(rel) || !!st.made?.has(rel) || (cur != null && cur.startsWith(LEARNED_HEADER));
+  // exist yet is made by the keeper and recorded as its own. Read from the file itself first, so it holds on any Mac
+  // and with no state: the mark (QUORUM_MARK), or for a file an earlier version wrote with no mark, its text is still
+  // only what the keeper writes at that path (a facts file, an index under INDEX_HEADER or MEETINGS_HEADER, a daily
+  // note of meeting lines). Each write the keeper makes to its own file adds the mark when it is missing (own)
+  const provenByText = (reg, rel, cur) => {
+    const body = bodyText(cur);
+    const base = path.posix.basename(rel);
+    return isFactsFile(cur) || (rel === 'index.md' && body.startsWith(INDEX_HEADER)) || (base === 'index.md' && body.startsWith(MEETINGS_HEADER))
+      || (!!reg.f.daily && rel.startsWith(`${reg.f.daily}/`) && KEEPER_DAILY_RE.test(body));
+  };
+  const quorumMade = (reg, st, rel, cur) => rel.startsWith('.quorum/') || reg.made.has(rel) || !!st.made?.has(rel) || (cur != null && (isMarked(cur) || provenByText(reg, rel, cur)));
+  const own = withMark;
   const mayEdit = (reg, st, rel, cur) => cur == null || quorumMade(reg, st, rel, cur);
   const markMade = (st, rel) => { st.made ??= new Set(); st.made.add(rel); };
 
@@ -447,14 +474,14 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
     const ix = indexFor(vault, reg, st);
     const base = path.posix.basename(note, '.md');
     if (!ix || [`[[${base}]]`, `[[${base}|`, `[[${note.replace(/\.md$/i, '')}`].some((l) => ix.cur.includes(l))) return;
-    writeNote(vault, ix.abs, ix.cur.replace(/\s*$/, '') + '\n' + noteLine(note) + '\n');
+    writeNote(vault, ix.abs, own(ix.cur.replace(/\s*$/, '') + '\n' + noteLine(note) + '\n'));
     changed.push('index.md');
   };
   const unlinkNote = (vault, reg, st, note, changed) => {
     const ix = indexFor(vault, reg, st);
     const line = noteLine(note);
     if (!ix || !ix.cur.split('\n').includes(line)) return;
-    writeNote(vault, ix.abs, ix.cur.split('\n').filter((l) => l !== line).join('\n'));
+    writeNote(vault, ix.abs, own(ix.cur.split('\n').filter((l) => l !== line).join('\n')));
     changed.push('index.md');
   };
 
@@ -473,7 +500,7 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
     const cur = read(abs);
     if (cur != null && isGenerated(cur)) { fail('facts', `${file} is marked as generated, so learned facts were not written`); return; }
     if (!mayEdit(reg, st, file, cur)) { fail('facts', `${file} was not made by Quorum, so learned facts were not written. Pick another Quorum folder in Settings`); return; }
-    const olds = [...new Set([LEGACY_LEARNED, st.factsNoteAt])].filter((rel) => rel && rel !== file)
+    const olds = [...new Set([LEGACY_LEARNED, st.factsNoteAt, ...oldNotes(vault)])].filter((rel) => rel && rel !== file)
       .map((rel) => ({ rel, text: read(path.join(vault, rel)) }))
       .filter((o) => o.text != null && !isGenerated(o.text) && !!blockAt(o.text) && quorumMade(reg, st, o.rel, o.text));
     if (cur == null && noCreate) return;
@@ -481,7 +508,7 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
     if (r) {
       if (cur == null) markMade(st, file);
       mkdirSync(path.dirname(abs), { recursive: true });
-      writeNote(vault, abs, r.text);
+      writeNote(vault, abs, own(r.text));
       changed.push(file);
       dropped.push(...r.dropped);
     }
@@ -490,7 +517,7 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
     for (const o of olds) {
       const oabs = path.join(vault, o.rel);
       const rest = dropBlock(o.text);
-      if (o.rel !== LEGACY_LEARNED && rest.trim() !== LEARNED_HEADER.trim()) { writeNote(vault, oabs, rest); changed.push(o.rel); continue; }
+      if (o.rel !== LEGACY_LEARNED && bodyText(rest).trim() !== LEARNED_HEADER.trim()) { writeNote(vault, oabs, own(rest)); changed.push(o.rel); continue; }
       removeNote(vault, oabs);
       changed.push(o.rel);
       if (o.rel === LEGACY_LEARNED) { try { rmdirSync(path.join(vault, '.quorum')); } catch { /* setup.json or other files stay */ } } else unlinkNote(vault, reg, st, o.rel, changed);
@@ -583,7 +610,7 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
       }
       if (!mayEdit(reg, st, r, cur)) { if (!left.includes(r)) left.push(r); return; }
       if (cur == null) markMade(st, r);
-      writeNote(vault, abs, next);
+      writeNote(vault, abs, own(next));
       changed.push(path.relative(vault, abs));
       step(`Updated ${path.basename(abs, '.md')}`);
     };
@@ -696,7 +723,7 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
     st.meetingsIndexAt = ix.rel;
     if (index === cur || (cur == null && index === ix.header)) return [];
     if (cur == null) markMade(st, ix.rel);
-    writeNote(vault, abs, index);
+    writeNote(vault, abs, own(index));
     return [ix.rel];
   };
   // the file a note's index line goes into: index.md while Quorum owns the index job; while the vault owns it, the
@@ -772,6 +799,19 @@ export function createKeeper({ onStep = () => {}, brain, settings, saveSettings 
           if (st.done[rel] === h) { filed.push({ rel, text }); continue; }
           const why = compiled ? wouldBlock(compiled, rel, text.slice(0, 2000)) : null;
           pending.push({ rel, text, h, why });
+        }
+        // with fresh state, a note the index Quorum keeps lists already was filed before: it counts as filed, so its
+        // facts are not asked for again
+        const ixf = st.fresh ? indexFile(reg, st) : null;
+        const listed = ixf ? read(path.join(vault, ixf.rel)) : null;
+        if (listed != null && quorumMade(reg, st, ixf.rel, listed)) {
+          for (let i = pending.length - 1; i >= 0; i--) {
+            const n = pending[i];
+            if (n.why || !hasIndexLine(listed, `[[${path.posix.basename(n.rel, '.md')}]]`)) continue;
+            st.done[n.rel] = n.h;
+            filed.push({ rel: n.rel, text: n.text });
+            pending.splice(i, 1);
+          }
         }
         // junk notes wait for the person's decision before they are filed into the memory
         const kept = keptOf(vault);
