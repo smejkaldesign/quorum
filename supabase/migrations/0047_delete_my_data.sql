@@ -13,7 +13,8 @@
 --   * Sync grants outlive the account and the workspace that held them. kb_sync_grants.user_id and workspace_id now
 --     set null instead of cascading, and every path that deletes an auth user (delete_my_account, redefined here
 --     from 0041 with no other change, and platform_reset_user) first ends the user's grants through
---     kb_sync_grant_end (account_end_grants). An ended grant waits with revoke_pending until the relay's worker revokes
+--     kb_sync_grant_end (account_end_grants), and delete_workspace (redefined here from 0039 with no other change)
+--     ends the workspace's grants the same way. An ended grant waits with revoke_pending until the relay's worker revokes
 --     the token with the provider and deletes the row, and with it the Vault secret (0032). Before this, the cascade
 --     deleted the row and its secret but never revoked the token.
 --   * account_gone(uid) tells a signed-out Mac whether the account it last held still exists, so the app can say the
@@ -265,3 +266,37 @@ begin
 end $$;
 revoke all on function public.delete_my_account() from public, anon;
 grant execute on function public.delete_my_account() to authenticated;
+
+-- 0039's delete_workspace, unchanged except that the workspace's sync grants end first (account_end_grants), so the
+-- relay revokes their tokens after the workspace is gone. Members lose access; their own accounts stay
+create or replace function public.delete_workspace(ws public.ulid) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare uid uuid := auth.uid(); w public.workspaces; objects integer := 0; n integer;
+begin
+  if uid is null then raise exception 'You need to sign in first'; end if;
+  if public.account_is_platform_owner(uid) then raise exception 'The account that runs Quorum cannot delete a workspace from the app'; end if;
+  select * into w from public.workspaces x where x.id = delete_workspace.ws and x.deleted_at is null;
+  if not found or not (public.is_member(w.id) or public.account_is_owner(w.id, uid)) then raise exception 'That workspace no longer exists'; end if;
+  if not public.account_is_owner(w.id, uid) then raise exception 'Only the workspace owner can delete it'; end if;
+  if w.stripe_subscription_id is not null and coalesce(w.billing_status, '') in ('active', 'trialing', 'past_due', 'unpaid', 'incomplete') then
+    raise exception 'Cancel the subscription under Billing first, then delete the workspace';
+  end if;
+  insert into public.kb_files_trash (object_path, workspace_id, kb_id, bucket)
+  select f.object_path, f.workspace_id, f.kb_id, 'kb-files' from public.kb_files f where f.workspace_id = w.id
+  on conflict (object_path) do nothing;
+  get diagnostics n = row_count; objects := objects + n;
+  insert into public.kb_files_trash (object_path, workspace_id, kb_id, bucket)
+  select a.object_path, a.workspace_id, null, 'attachments' from public.attachments a where a.workspace_id = w.id and a.bucket = 'attachments'
+  on conflict (object_path) do nothing;
+  get diagnostics n = row_count; objects := objects + n;
+  perform public.account_end_grants(null, array[w.id]);
+  -- hosted KB notes are guarded against signed-in deletes (0034); this delete is the system path
+  perform set_config('quorum.kb_system', 'on', true);
+  delete from public.workspaces x where x.id = w.id;
+  perform set_config('quorum.kb_system', '', true);
+  insert into public.platform_audit (actor, action, target_workspace, detail)
+  values (uid, 'workspace_deleted', null, jsonb_build_object('workspace', w.id, 'name', w.name, 'plan', w.plan));
+  return jsonb_build_object('ok', true, 'objects', objects);
+end $$;
+revoke all on function public.delete_workspace(public.ulid) from public, anon;
+grant execute on function public.delete_workspace(public.ulid) to authenticated;

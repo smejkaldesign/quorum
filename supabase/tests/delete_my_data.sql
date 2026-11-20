@@ -3,7 +3,7 @@
 --   docker exec -i supabase_db_quorum psql -U postgres -d postgres -v ON_ERROR_STOP=1 -f - < supabase/tests/delete_my_data.sql
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(48);
+select plan(51);
 
 -- fixtures. d1 owns Solo alone and is a member of Team, which d2 owns with d3 as a member; d4 runs Quorum; d5 owns
 -- Paying alone, which has a live subscription; d6 owns Crowd, which d3 also belongs to
@@ -160,6 +160,19 @@ select pg_temp.as_postgres();
 select ok(not exists (select 1 from public.workspaces where id = '01DD00000000000000000000WS') and public.account_gone('00000000-0000-4000-8000-0000000000d1'), 'both are gone');
 select ok(exists (select 1 from public.kb_sync_grants g where g.id = '01DD00000000000000000000G1' and g.revoke_pending and g.user_id is null and g.workspace_id is null),
   'a grant in the deleted solo workspace outlives it, waiting for the revoke');
+
+-- 7. delete_workspace ends the workspace's grants first, so the relay still revokes them
+select pg_temp.as_postgres();
+insert into auth.users (id, email, aud, role) values ('00000000-0000-4000-8000-0000000000d8', 'closer@example.com', 'authenticated', 'authenticated');
+insert into public.workspaces (id, user_id, name) values ('01DD00000000000000000000WG', '00000000-0000-4000-8000-0000000000d8', 'Gone');
+insert into public.kb_sync_grants (id, workspace_id, user_id, provider, secret_id) values
+  ('01DD00000000000000000000G8', '01DD00000000000000000000WG', '00000000-0000-4000-8000-0000000000d8', 'github', vault.create_secret('token-d8'));
+select pg_temp.as_user('00000000-0000-4000-8000-0000000000d8');
+select is(public.delete_workspace('01DD00000000000000000000WG') ->> 'ok', 'true', 'the owner deletes the workspace');
+select pg_temp.as_postgres();
+select ok(not exists (select 1 from public.workspaces where id = '01DD00000000000000000000WG'), 'the workspace is gone');
+select ok(exists (select 1 from public.kb_sync_grants g join vault.secrets v on v.id = g.secret_id where g.id = '01DD00000000000000000000G8' and g.revoke_pending and g.ended_at is not null and g.workspace_id is null and g.user_id = '00000000-0000-4000-8000-0000000000d8'),
+  'its grant outlives it, waiting for the relay to revoke it with the token still in Vault');
 
 select * from finish();
 rollback;
