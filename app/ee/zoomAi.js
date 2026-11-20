@@ -48,7 +48,8 @@ const offset = (t) => { const m = /^(\d+):(\d{2}):(\d{2})/.exec(String(t ?? ''))
 const stamp = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 // a My Notes transcript as timestamped speaker turns, consecutive segments from one speaker joined
 export function noteTranscriptText(t) {
-  const names = Object.fromEntries((t?.speakers ?? []).map((s) => [s.speaker_id, s.speaker_name ?? s.name ?? null]));
+  // speakers carry display_name (Zoom's example: { speaker_id, display_name, zoom_user_id })
+  const names = Object.fromEntries((t?.speakers ?? []).map((s) => [s.speaker_id, s.display_name ?? null]));
   const turns = [];
   for (const item of t?.items ?? []) {
     const text = String(item.text ?? '').trim();
@@ -84,6 +85,8 @@ export function zoomNote(m, { summary = null, notes = [], missing = [], transcri
     ...(m.url ? [`zoom_url: ${oneLine(m.url)}`] : notes[0]?.url ? [`zoom_url: ${oneLine(notes[0].url)}`] : []),
     ...(m.duration ? [`duration_minutes: ${oneLine(m.duration)}`] : []),
     ...(transcriptRel ? [`transcript: ${oneLine(transcriptRel)}`] : []),
+    // Quorum's own mark that the AI Companion summary is in the note; a recap's own headings cannot be told apart from it
+    ...(summary ? ['zoom_summary: included'] : []),
     '---',
     '',
     `# ${title}`,
@@ -92,7 +95,8 @@ export function zoomNote(m, { summary = null, notes = [], missing = [], transcri
   if (summary) lines.push('## Summary', '', summary.trim(), '');
   for (const n of notes) {
     if (n.manual?.trim()) lines.push('## My notes', '', n.manual.trim(), '');
-    if (n.generated?.trim()) lines.push(summary ? '## My Notes recap' : '## Summary', '', n.generated.trim(), '');
+    // the recap keeps its own heading, so a host's summary that comes later gets the Summary section (addSummarySection)
+    if (n.generated?.trim()) lines.push('## My Notes recap', '', n.generated.trim(), '');
   }
   if (missing.length) lines.push('## Not imported', '', ...missing.map((x) => `- ${x}`), '');
   return lines.join('\n');

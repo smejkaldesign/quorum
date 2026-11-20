@@ -130,12 +130,13 @@ async function api(client, tokens, url, { fetchImpl, onTokens }) {
   return { data: await json(r), tokens: current };
 }
 
-// upcoming events across the calendars the person has selected in Google Calendar, from now to `days` ahead
-export async function listEvents({ client, tokens, days = 3, fetchImpl = fetch, onTokens = null, now = Date.now() }) {
+// events across the calendars the person has selected in Google Calendar, from now (or `from`, an earlier time) to
+// `days` ahead. Google's timeMin filters on an event's end, so a meeting that ended before `from` is left out
+export async function listEvents({ client, tokens, days = 3, from = null, fetchImpl = fetch, onTokens = null, now = Date.now() }) {
   let current = tokens;
   const list = await api(client, current, `${API}/users/me/calendarList?minAccessRole=reader&showHidden=false`, { fetchImpl, onTokens: async (t) => { current = t; await onTokens?.(t); } });
   const calendars = (list.data?.items ?? []).filter((c) => c.selected !== false && !c.deleted).slice(0, MAX_CALENDARS);
-  const timeMin = new Date(now).toISOString();
+  const timeMin = new Date(from ?? now).toISOString();
   const timeMax = new Date(now + days * 86400000).toISOString();
   const events = [];
   for (const cal of calendars) {
@@ -179,6 +180,16 @@ export function createGoogleCalendar({ tokens, client, open, log = () => {}, fet
       cache = { at: 0, days: 0, events: [] };
       lastError = null;
       return status();
+    },
+    // the meetings that ended in the last `hours` (and those still on), for matching imported notes to their invites;
+    // read fresh each time, since the importer asks at most every half hour
+    async recent(hours) {
+      const s = current();
+      if (!s?.connected) return { connected: false, events: [] };
+      const t = await tokens.get(SOURCE_ID);
+      if (!t) return { connected: false, events: [] };
+      const r = await listEvents({ client, tokens: t, days: 1, from: Date.now() - hours * 3600000, fetchImpl, onTokens: (nt) => tokens.set(SOURCE_ID, nt) });
+      return { connected: true, events: r.events };
     },
     // events from now to `days` ahead; one read a minute at most, since Home, the guard and the invitee list all ask.
     // fresh skips the cache (Sync on the connector's page)

@@ -3,7 +3,9 @@
 // refresh tokens with the client secret, which stays here; remember which platform accounts belong to a user; and
 // take the platform's webhooks (recording.completed, an AI Companion summary or a My Notes note finished) until the
 // user's app fetches and acknowledges them. Recordings and notes never pass through here: the app downloads them from
-// the platform itself, and an event carries only ids and titles.
+// the platform itself. An event is stored as routing data only (eventRoute: ids, host or operator, start time); a
+// summary's text, a recording's download links and a meeting's password are dropped before the insert, and the
+// hourly purge deletes delivered events and anything older than seven days (connect_events_purge, migration 0048).
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { bearer, RelayError, requireMember, requirePlan, verifyToken } from './lib/auth.js';
 import { readJson } from './summary.js';
@@ -15,6 +17,12 @@ export const PROVIDERS = {
     events: ['recording.completed', 'recording.transcript_completed', 'meeting.summary_completed', 'my_notes.note_completed', 'my_notes.transcript_generated'],
   },
 };
+// the fields the app needs to route an event to its owner and find the meeting; everything else Zoom sends (summary
+// text, recording links, passwords, topics, emails) never reaches the database
+const ROUTE_TOP = ['account_id', 'operator_id'];
+const ROUTE_OBJECT = ['id', 'uuid', 'host_id', 'start_time', 'meeting_uuid', 'meeting_id', 'meeting_host_id', 'meeting_start_time', 'note_id'];
+const pick = (o, keys) => Object.fromEntries(keys.filter((k) => o?.[k] != null && typeof o[k] !== 'object').map((k) => [k, o[k]]));
+export const eventRoute = (payload = {}) => ({ ...pick(payload, ROUTE_TOP), object: pick(payload?.object, ROUTE_OBJECT) });
 // the id an event is stored once under: the recording's uuid, the summarized meeting's uuid, or the note's id
 export const eventExternalId = (object = {}) => {
   const v = object.uuid ?? object.meeting_uuid ?? object.note_id;
@@ -189,7 +197,7 @@ export async function handleZoomWebhook(req, res, deps) {
     if (!PROVIDERS.zoom.events.includes(body.event)) { log('connect_webhook_ignored', { provider: 'zoom', event: body.event }); return json(res, 200, { ok: true, ignored: true }); }
     const accountId = body.payload?.account_id;
     if (!accountId) throw new RelayError('bad_request', 'The event names no account.', 400);
-    const { error } = await clients.db.from('connect_events').insert({ provider: 'zoom', account_id: String(accountId), event: body.event, external_id: eventExternalId(body.payload?.object), payload: body.payload });
+    const { error } = await clients.db.from('connect_events').insert({ provider: 'zoom', account_id: String(accountId), event: body.event, external_id: eventExternalId(body.payload?.object), payload: eventRoute(body.payload) });
     if (error && error.code !== '23505') throw new RelayError('server', 'The event could not be stored.', 500);
     log('connect_webhook', { provider: 'zoom', event: body.event, repeat: error?.code === '23505' });
     json(res, 200, { ok: true });
@@ -199,8 +207,9 @@ export async function handleZoomWebhook(req, res, deps) {
 // GET /v1/connect/events?workspace=&provider=zoom: what the platforms sent for this user's accounts and the app has not
 // acknowledged; POST /v1/connect/events/ack { workspaceId, ids } once the app has acted on them. An account id names a
 // whole Zoom organization, so an event belongs to the caller only when it names the Zoom user the relay verified: as the
-// host of a recording or summary, or as the operator of a My Notes event (those carry no host)
-const OWNER_PATHS = ['payload->object->>host_id', 'payload->>operator_id'];
+// host of a recording (host_id) or of a summarized meeting (meeting_host_id), or as the operator of a My Notes event
+// (those carry no host)
+const OWNER_PATHS = ['payload->object->>host_id', 'payload->object->>meeting_host_id', 'payload->>operator_id'];
 async function pendingFor(db, provider, owned) {
   const byId = new Map();
   for (const a of owned) {
@@ -253,4 +262,24 @@ export function handleConnect(req, res, deps) {
   if (action === 'account') return handleAccount(req, res, deps);
   if (action === 'webhook' && parts[2] === 'zoom') return handleZoomWebhook(req, res, deps);
   json(res, 404, { error: 'not found', code: 'bad_request' });
+}
+
+export const EVENTS_PURGE_EVERY_MS = 60 * 60 * 1000;
+// the hourly sweep: delivered events, and undelivered ones older than seven days, are deleted (migration 0048). A
+// failure (the migration not applied yet) is logged and the next tick tries again
+export function createConnectEventsPurge({ db, log = () => {}, everyMs = EVENTS_PURGE_EVERY_MS }) {
+  let timer = null;
+  async function run() {
+    try {
+      const { data, error } = await db.rpc('connect_events_purge');
+      if (error) throw new Error(error.message || 'connect_events_purge failed');
+      if (data?.deleted) log('connect_events_purged', { deleted: data.deleted });
+      return data ?? null;
+    } catch (err) { log('connect_events_purge_failed', { message: err.message }); return null; }
+  }
+  return {
+    run,
+    start() { if (timer) return; run(); timer = setInterval(run, everyMs); timer.unref?.(); },
+    stop() { clearInterval(timer); timer = null; },
+  };
 }

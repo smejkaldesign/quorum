@@ -3005,11 +3005,27 @@ function importWrite(file, prev, next) {
 const sourcesApi = registerSources({ ipcMain: connectIpc, settings, saveSettings, toUI, log, meetingsDir: () => meetingsDir() ?? (brain()?.vault ? path.join(brain().vault, '08-meetings') : null), keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), openFresh: openFreshSignIn, afterWrite: (file) => { account.sync.pushMeetingNote(file); keeper.schedule('import'); }, onNoteWrite: importWrite, linkNote: linkPrepNote, version: app.getVersion(), agentRuntime: { runtime: RUNTIME, cli: CLI, env: RUNTIME_ENV } });
 // platform accounts for cloud recordings (Zoom first) go through the relay, so they exist in the hosted edition only
 // pastZoomMeetings: Zoom calls on the calendar that ended in the last twelve hours, so My Notes from meetings the user
-// joined but did not host are found without a webhook
+// joined but did not host are found without a webhook. withheldMeeting: an imported meeting whose title names an
+// opted-out company, or whose invite (the calendar event starting within fifteen minutes of it) names someone on the
+// never-listen list, is never filed
+let withheldEvents = { at: 0, list: [] };
+async function withheldMeeting({ title, start }) {
+  if (mentionsOptOut(title)) return 'opt-out';
+  const at = Date.parse(start ?? '');
+  if (Number.isNaN(at)) return null;
+  // one calendar read serves a whole import run
+  if (Date.now() - withheldEvents.at > 5 * 60000) withheldEvents = { at: Date.now(), list: await recentCalendarEvents(36).catch(() => []) };
+  const events = withheldEvents.list;
+  const e = events.find((x) => Math.abs(Date.parse(x.start) - at) <= 15 * 60000);
+  if (!e) return null;
+  if (mentionsOptOut(e.title)) return 'opt-out';
+  return (e.attendees ?? []).some((a) => onNeverList(a.email)) ? 'never-listen' : null;
+}
 let platformsApi = null;
-if (EDITION === 'cloud') { const ee = await loadEE('platforms.js'); platformsApi = ee.registerPlatforms({ ipcMain: connectIpc, account, clients: ee.platformClients({ packaged: packagedMeta, dev: !app.isPackaged }), settings, saveSettings, toUI, log, meetingsDir, keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), afterWrite: (file) => account.sync.pushMeetingNote(file), pastZoomMeetings: async () => { const { events } = await calendarEvents(1); const t = Date.now(); return events.filter((e) => new Date(e.end) < t && t - new Date(e.end) < 12 * 3600000).map((e) => ({ url: callLink(e).join, title: e.title, start: e.start })).filter((x) => x.url && /zoom\./i.test(x.url)); } }); }
+if (EDITION === 'cloud') { const ee = await loadEE('platforms.js'); platformsApi = ee.registerPlatforms({ ipcMain: connectIpc, account, clients: ee.platformClients({ packaged: packagedMeta, dev: !app.isPackaged }), settings, saveSettings, toUI, log, meetingsDir, keepKeys: (prev, next) => carryKeys(prev, next, keptKeys()), openExternal: (u) => shell.openExternal(u), afterWrite: (file) => account.sync.pushMeetingNote(file), pastZoomMeetings: async () => (await recentCalendarEvents(12)).map((e) => ({ url: callLink(e).join, title: e.title, start: e.start })).filter((x) => x.url && /zoom\./i.test(x.url)), withheldMeeting }); }
 // Join from Quorum: before a Zoom call the My Notes check, before a Meet, Teams or in-person meeting the reminder to
-// start notes by hand and ask first (joinAdvice.js). Nothing is asked when the invite matches the never-listen or opt-out lists
+// start notes by hand and ask first (joinAdvice.js). An invite on the never-listen or opt-out lists never gets a capture
+// prompt; a Zoom call gets the warning to stop My Notes instead
 async function joinCheck({ url = null, id = null, platform = null }) {
   const zoom = platformsApi?.list().find((p) => p.id === 'zoom') ?? null;
   if (!zoom?.connected) return null;
@@ -3031,7 +3047,8 @@ ipcMain.handle('join-meeting', async (_e, url, platform = null) => {
   const advice = await joinCheck({ url: target, platform });
   if (advice) {
     const buttons = advice.settingsUrl ? ['Join', 'Open Zoom settings', 'Cancel'] : ['Join', 'Cancel'];
-    const r = await dialog.showMessageBox(win, { type: 'info', message: advice.message, detail: advice.detail, buttons, defaultId: 0, cancelId: buttons.length - 1, checkboxLabel: advice.kind === 'zoom' ? 'Both are on. Do not ask again' : 'Do not remind me again' });
+    // the never-listen warning shows for every such meeting, so it has nothing to turn off
+    const r = await dialog.showMessageBox(win, { type: advice.kind === 'blocked' ? 'warning' : 'info', message: advice.message, detail: advice.detail, buttons, defaultId: 0, cancelId: buttons.length - 1, ...(advice.kind === 'blocked' ? {} : { checkboxLabel: advice.kind === 'zoom' ? 'Both are on. Do not ask again' : 'Do not remind me again' }) });
     if (r.checkboxChecked) {
       settings.joinReminders = { ...settings.joinReminders, [advice.kind]: true };
       saveSettings();
@@ -4994,6 +5011,15 @@ async function calendarEvents(days) {
   const [mac, google] = await Promise.all([c.enabled ? calAsk({ cmd: 'calEvents', days }) : Promise.resolve({ status: 'off', events: [] }), gcal.events(days)]);
   const tag = (list, calendar) => (list ?? []).map((e) => ({ ...e, source: calendar }));
   return { mac, google, events: mergeEvents(tag(mac.events, 'apple-calendar'), tag(google.events, 'google-calendar')) };
+}
+// the meetings that ended in the last `hours`, from both sources: the Calendar app reads from the start of yesterday
+// (back: 1) and Google from `hours` ago, since calendarEvents starts at now and never returns a finished meeting
+async function recentCalendarEvents(hours = 12) {
+  const c = calSettings();
+  const [mac, google] = await Promise.all([c.enabled ? calAsk({ cmd: 'calEvents', days: 1, back: 1 }) : Promise.resolve({ events: [] }), gcal.recent(hours).catch(() => ({ events: [] }))]);
+  const tag = (list, calendar) => (list ?? []).map((e) => ({ ...e, source: calendar }));
+  const t = Date.now();
+  return mergeEvents(tag(mac.events, 'apple-calendar'), tag(google.events, 'google-calendar')).filter((e) => new Date(e.end) <= t && t - new Date(e.end) < hours * 3600000);
 }
 // which call platform an event points at, from its URL, location or invite text; null for a plain calendar entry
 const CALL_LINKS = [

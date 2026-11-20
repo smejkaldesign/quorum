@@ -127,8 +127,9 @@ export function noteMarkdown(m) {
 export const fileNameFor = (m) => `${String(m.meetingAt ?? '').slice(0, 10) || 'undated'}-${slug(m.title || 'meeting')}.md`;
 
 // lists everything since `since`, skips what the vault has, fetches the rest ten at a time and writes each note.
-// write(fileName, text, meeting) returns the path it wrote; existing is a Set of meeting ids already in the vault
-export async function sync({ mcp, existing, since = '2015-01-01', write, progress = () => {}, batch = 10 }) {
+// write(fileName, text, meeting) returns the path it wrote; existing is a Set of meeting ids already in the vault;
+// elsewhere(meeting) is true when another source already filed the same calendar event (sameMeeting.js)
+export async function sync({ mcp, existing, since = '2015-01-01', write, progress = () => {}, batch = 10, elsewhere = () => false }) {
   const listed = [];
   let cursor = null;
   let totalCount = null;
@@ -150,7 +151,7 @@ export async function sync({ mcp, existing, since = '2015-01-01', write, progres
   } while (cursor);
   // a page boundary can repeat a meeting; one entry per id
   const unique = [...new Map(listed.map((m) => [m.id, m])).values()];
-  const todo = unique.filter((m) => !existing.has(m.id));
+  const todo = unique.filter((m) => !existing.has(m.id) && !elsewhere(m));
   const failed = [];
   let done = 0, imported = 0;
   progress({ phase: 'import', phaseStartedAt: Date.now(), total: todo.length, done: 0, message: todo.length ? `Importing ${todo.length} new of ${unique.length} meetings` : 'Nothing new' });

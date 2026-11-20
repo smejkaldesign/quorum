@@ -1,14 +1,16 @@
 // One calendar event, one note. Two sources that both recorded a meeting (Granola and Zoom My Notes, say) give it
 // different ids, so the source_id dedupe cannot see that they are the same meeting. A note from another source counts
 // as the same meeting when it starts within WINDOW of this one and the titles agree once normalized, or when one
-// title is Zoom's default ("Alex's Zoom Meeting") and says nothing either way. First save wins, as with source ids.
+// title is Zoom's default ("Alex's Zoom Meeting") and says nothing either way. A meeting with no title yet matches
+// nothing: a time alone cannot tell back-to-back meetings apart. First save wins, as with source ids, and every
+// source checks (Zoom, Granola, import_meeting).
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 export const WINDOW_MS = 10 * 60 * 1000;
 const field = (head, key) => { const m = new RegExp(`^${key}:\\s*(.+)$`, 'm').exec(head); if (!m) return null; const v = m[1].trim(); try { return String(JSON.parse(v)); } catch { return v.replace(/^"|"$/g, ''); } };
 export const titleKey = (t) => String(t ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-const generic = (t) => !t || /zoom meeting$/.test(t) || /personal meeting room/.test(t);
+const generic = (t) => /zoom meeting$/.test(t) || /personal meeting room/.test(t);
 
 // every meeting note under the meetings folder: { file, source, date (ms), title }; transcripts are skipped
 export function meetingIndex(root) {
@@ -38,5 +40,6 @@ export function sameMeeting(index, { date, title, source }) {
   const when = Date.parse(date ?? '');
   if (Number.isNaN(when)) return null;
   const t = titleKey(title);
-  return index.find((n) => n.source !== source && Math.abs(n.date - when) <= WINDOW_MS && (n.title === t || generic(n.title) || generic(t) || (t.length > 5 && n.title.length > 5 && (n.title.includes(t) || t.includes(n.title))))) ?? null;
+  if (!t) return null;
+  return index.find((n) => n.source !== source && n.title && Math.abs(n.date - when) <= WINDOW_MS && (n.title === t || generic(n.title) || generic(t) || (t.length > 5 && n.title.length > 5 && (n.title.includes(t) || t.includes(n.title))))) ?? null;
 }

@@ -14,6 +14,7 @@ import { createTokenStore } from './tokens.js';
 import { detectRunners, runnersWithSource } from './runners.js';
 import { SCHEDULES, dueFor, runImport } from './agent-import.js';
 import { granolaSearch } from './granola-search.js';
+import { meetingIndex, sameMeeting } from './sameMeeting.js';
 import { NO_ACCOUNT } from './granola.js';
 
 const SYNC_EVERY = 30 * 60 * 1000;
@@ -156,7 +157,10 @@ export function createSources({ settings, saveSettings, toUI = () => {}, log = (
     filed = existing; filedAt = Date.now();
     progress({ message: 'Checking Granola', total: null });
     const adapter = adapterFor(src);
-    const result = await adapter.sync({ mcp: mcpFor(id), existing, since: s.since ?? undefined, write: writeNote(dir, id), progress }).catch(dropIfUnknown);
+    // one calendar event, one note: a meeting another source (Zoom, Quorum's own capture) already filed is left out
+    const index = meetingIndex(meetingsDir());
+    const elsewhere = (m) => !!sameMeeting(index, { date: m.meetingAt, title: m.title, source: id });
+    const result = await adapter.sync({ mcp: mcpFor(id), existing, since: s.since ?? undefined, write: writeNote(dir, id), progress, elsewhere }).catch(dropIfUnknown);
     // extras run after the notes, so a failing transcript never costs a note
     if (s.syncTranscripts && adapter.transcript) {
       const t = await syncTranscripts({ adapter, mcp: mcpFor(id), dir, source: id, progress, afterWrite });

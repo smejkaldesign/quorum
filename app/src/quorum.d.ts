@@ -189,7 +189,7 @@ export type AccountState = {
 };
 export type Result = { ok?: boolean; error?: string };
 // what Quorum says before a call when Zoom AI notes are connected (app/joinAdvice.js)
-export type JoinAdvice = { kind: 'zoom' | 'manual'; message: string; detail: string; settingsUrl: string | null };
+export type JoinAdvice = { kind: 'zoom' | 'manual' | 'blocked'; message: string; detail: string; settingsUrl: string | null };
 // what the danger zone reads before it offers a delete (migration 0039): the signed-in email, whether the account runs
 // Quorum itself, and the workspaces it owns
 // what the Delete my data confirm names: the vault folder that stays, whether the models stay, and whether a Cloud
@@ -202,8 +202,9 @@ export type SourceMethod = 'connect' | 'folder';
 export type SourceJob = { id: string; label: string; status: 'running' | 'done' | 'failed'; phase?: 'list' | 'import'; phaseStartedAt?: number; done: number; total: number | null; message: string | null; error: string | null; failed: { id: string; title: string; error: string }[]; result: { listed: number; imported: number; skipped: number } | null; startedAt: number; finishedAt: number | null };
 // a platform account (Zoom first) connected through the relay for cloud recordings; hosted edition only
 // syncTranscripts: transcript filing, off by default; vaultRemote: the host the vault's git repository pushes to; missing:
-// the Zoom scopes Quorum's Zoom app lacks; myNotes: when Quorum last imported a My Notes note and when the user said both settings are on
-export type PlatformInfo = { id: string; name: string; available: boolean; connected: boolean; account: string | null; accountName: string | null; lastSyncAt: string | null; imported: number; notes: number; folderPath: string | null; job: SourceJob | null; syncTranscripts?: boolean; vaultRemote?: string | null; missing?: string[]; myNotes?: { seenAt: string | null; confirmedAt: string | null } };
+// the Zoom scopes Quorum's Zoom app lacks; myNotes: when Quorum last imported a My Notes note and when the user said both settings are on;
+// transcriptNotice: a connection that filed transcripts before the setting existed has not seen the privacy text yet; trouble: Zoom refused three runs or more in a row
+export type PlatformInfo = { id: string; name: string; available: boolean; connected: boolean; account: string | null; accountName: string | null; lastSyncAt: string | null; imported: number; notes: number; folderPath: string | null; job: SourceJob | null; syncTranscripts?: boolean; vaultRemote?: string | null; missing?: string[]; myNotes?: { seenAt: string | null; confirmedAt: string | null }; transcriptNotice?: boolean; trouble?: { failures: number; status: number; at: string; until: string } | null };
 // the fallback import through the person's own agent: which runners on this Mac already have the source's MCP server
 export type AgentSchedule = 'off' | 'hourly' | 'daily';
 export type AgentRunner = { id: string; name: string; server: string; installed: boolean; writable: boolean; note: string | null };
@@ -667,7 +668,7 @@ declare global {
       platformConnect(id: string): Promise<Result>;
       platformDisconnect(id: string): Promise<Result>;
       platformSync(id: string): Promise<Result>;
-      platformSetOption(id: string, patch: { syncTranscripts?: boolean; notesConfirmed?: boolean }): Promise<Result>;
+      platformSetOption(id: string, patch: { syncTranscripts?: boolean; notesConfirmed?: boolean; transcriptNoticeSeen?: boolean }): Promise<Result>;
       joinMeeting(url: string, platform?: string | null): Promise<Result>;
       joinAdvice(eventId: string): Promise<JoinAdvice | null>;
       onPlatformJob(cb: (job: SourceJob) => void): () => void;

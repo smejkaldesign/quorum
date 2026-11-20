@@ -810,6 +810,16 @@ function Capabilities({ connector: x, provider: p, platform: plat, busy, act, re
           ? <JobLine job={plat.job} />
           : <p>{plat.account ?? plat.accountName ?? 'Connected'} · {plural(plat.notes, 'meeting')} imported · last checked {ago(plat.lastSyncAt)}. New notes arrive when {x.name} finishes them, and Quorum checks every 30 minutes while it runs.</p>)}
         {plat?.connected && !!plat.missing?.length && <p className="muted">Quorum's {x.name} app does not have permission to {plat.missing.join(', ')} yet, so those parts are skipped and each note says so. They import once the app has it; there is nothing to change on your side.</p>}
+        {plat?.connected && plat.trouble && <p className="set-error" role="status">{plat.trouble.status ? `${x.name} answered ${plat.trouble.status}` : `${x.name} could not be reached`} on the last {plat.trouble.failures} tries, last at {new Date(plat.trouble.at).toLocaleTimeString()}. Nothing is lost: the waiting notes stay queued, and Quorum tries again after {new Date(plat.trouble.until).toLocaleTimeString()}.</p>}
+        {plat?.connected && plat.transcriptNotice && (
+          <div className="conn-cap-row" role="status">
+            <p><strong>Transcripts are filed for this connection.</strong> It was set up before transcript filing became a setting, so it kept filing them. {TRANSCRIPT_PRIVACY}{plat.vaultRemote ? ` ${transcriptRemoteWarning(plat.vaultRemote)}` : ''}</p>
+            <span>
+              <button className="pill primary small-pill" disabled={busy} onClick={() => act(async () => { await window.quorum.platformSetOption(plat.id, { syncTranscripts: false, transcriptNoticeSeen: true }); return { ok: true }; })}>Turn off transcripts</button>{' '}
+              <button className="pill small-pill" disabled={busy} onClick={() => act(() => window.quorum.platformSetOption(plat.id, { transcriptNoticeSeen: true }))}>Keep them on</button>
+            </span>
+          </div>
+        )}
         {plat?.connected && x.app === 'zoom' && <MyNotesCheck platform={plat} busy={busy} act={act} />}
         {plat?.job?.status === 'failed' && <p className="set-error one-line" title={plat.job.error ?? ''}>{plat.job.error}</p>}
       </div>
