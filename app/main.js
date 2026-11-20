@@ -11,6 +11,7 @@ import { checkConnection } from './connectionCheck.js';
 import { openSpeech, SPEECH_ENGINES } from './speech/provider.js';
 import { SKIP as TREE_SKIP, createFolder, createNote, duplicateItem, moveItem, readVaultNote, renameItem, vaultPath, vaultTarget, vaultTree } from './vault.js';
 import { createVaultIndex } from './vindex.js';
+import { inspectBrain } from './brainDetect.js';
 import { createMemoryGraph } from './graph/index.js';
 import { createTopics } from './graph/topics.js';
 import { applyUndo, sha, undoRecord } from './fixUndo.js';
@@ -981,32 +982,8 @@ async function runSummary() {
   } finally { summaryBusy = false; toUI('summary', { state: meeting.summary, at: Date.now(), thinking: false }); }
 }
 
-// Agent OS connection. POC: the user points Quorum at a folder; Quorum recognizes an agent OS
-// (CLAUDE.md / AGENTS.md) and an Obsidian vault. Later this becomes a connector.
-function inspectBrain(folder) {
-  const has = (...p) => existsSync(path.join(...p));
-  let root = folder;
-  for (let d = folder; d !== path.dirname(d); d = path.dirname(d)) {
-    if (has(d, 'CLAUDE.md') || has(d, 'AGENTS.md')) { root = d; break; }
-  }
-  let vault = folder;
-  if (!has(folder, '.obsidian')) {
-    const child = ['MyBrain', 'vault', 'notes'].map((c) => path.join(root, c)).find((c) => has(c, '.obsidian'));
-    if (child) vault = child;
-    else if (has(root, '.obsidian')) vault = root;
-  }
-  return {
-    root, vault, name: path.basename(vault),
-    markers: {
-      agentOS: has(root, 'CLAUDE.md') ? 'CLAUDE.md' : has(root, 'AGENTS.md') ? 'AGENTS.md' : null,
-      obsidian: has(vault, '.obsidian'),
-      safetyHooks: has(root, '.claude/hooks/output-secret-tripwire.py'),
-    },
-  };
-}
-
 function brain() {
-  return settings.brainRoot && existsSync(settings.brainRoot) ? { ...inspectBrain(settings.vaultPath || settings.brainRoot), made: settings.brainMade ?? null } : null;
+  return settings.brainRoot && existsSync(settings.brainRoot) ? { ...inspectBrain(settings.brainRoot, { vault: settings.vaultPath }), made: settings.brainMade ?? null } : null;
 }
 
 // the folder your meeting notes live in: your pick, else the vault's existing meetings folder; Quorum saves into it directly, and `source:` in each note says which app made it
@@ -5443,8 +5420,25 @@ ipcMain.handle('connect-brain', async () => {
     properties: ['openDirectory'],
   });
   if (r.canceled || !r.filePaths[0]) return brain();
-  return connectBrain(inspectBrain(r.filePaths[0]));
+  const b = inspectBrain(r.filePaths[0]);
+  if (b.markers.notes) return connectBrain(b);
+  // nothing here looks like a notes folder, so ask for it instead of guessing
+  const ask = await dialog.showMessageBox(win, {
+    type: 'question', buttons: ['Choose notes folder', 'Use this folder', 'Cancel'], defaultId: 0, cancelId: 2,
+    message: 'Quorum did not find notes in this folder',
+    detail: `Agent root: ${b.root}\nNo daily notes, meetings folder, index.md or markdown notes were found. Choose the folder that holds your notes.`,
+  });
+  if (ask.response === 1) return connectBrain(b);
+  if (ask.response === 2) return brain();
+  return pickNotesFolder(b.root);
 });
+// the notes folder on its own, for when the detected one is wrong; the agent root is found again from it
+async function pickNotesFolder(defaultPath) {
+  const r = await dialog.showOpenDialog(win, { title: 'Choose your notes folder', defaultPath: defaultPath || homedir(), properties: ['openDirectory'], buttonLabel: 'Use folder' });
+  if (r.canceled || !r.filePaths[0]) return brain();
+  return connectBrain(inspectBrain(r.filePaths[0], { vault: r.filePaths[0] }));
+}
+ipcMain.handle('pick-notes-folder', () => pickNotesFolder(settings.brainRoot));
 ipcMain.handle('reveal-brain', () => { if (settings.brainRoot) shell.openPath(settings.brainRoot); });
 // forgetting the Agent OS leaves every file where it is; Quorum stops reading it, and a meetings folder found inside it is no longer found
 ipcMain.handle('disconnect-brain', () => { Object.assign(settings, { brainRoot: null, vaultPath: null, brainMade: null }); store.settings.save(); log('disconnected Agent OS'); suggester.reset(); openIndex(); brainChanged(); return null; });
