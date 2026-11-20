@@ -2453,11 +2453,10 @@ function noteMeetingApps(fm, abs) {
 // The meeting page (MeetingPage.tsx): a recurring meeting's past notes, and its prep notes and description once it
 // has met the threshold (SERIES_MIN, or Settings > Calendar > Meeting prep while the meeting-prep flag is on). The first
 // call answers from what is kept; { generate: true } writes a new brief with the person's own model when the series has
-// gained a note since. Below the threshold, with the flag on, { id, anyway: true, generate: true } writes a one-off
+// gained a note since. Below the threshold, { id, anyway: true, generate: true } (Generate anyways) writes a one-off
 // brief for that event from its invite and the vault (meetingOneOff.js), kept on the event until { force: true }
 const briefCache = createBriefCache(path.join(DATA_DIR, 'meeting-briefs.json'));
-const oneOffOn = () => flagsApi?.get('meeting-prep') === true;
-const briefMin = () => (oneOffOn() ? prepConf().minPast : SERIES_MIN);
+const briefMin = () => (flagsApi?.get('meeting-prep') === true ? prepConf().minPast : SERIES_MIN);
 ipcMain.handle('meeting-brief', async (_e, q) => {
   const title = String(q?.title ?? '');
   if (!title || suggester.isExcluded(title)) return { past: [], related: [], brief: null, status: 'few' };
@@ -2502,7 +2501,6 @@ async function oneOffRels(title, invitees) {
   return [...rels];
 }
 const oneOffFor = createOneOff({
-  on: oneOffOn,
   min: briefMin,
   cache: briefCache,
   event: rawEvent,

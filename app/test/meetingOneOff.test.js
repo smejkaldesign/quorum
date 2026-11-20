@@ -24,10 +24,11 @@ const meetings = [{ rel: 'Meetings/2026-10-01 Initech intro.md', title: 'Initech
 const base = (over = {}) => ({ event: event(), notes, meetings, topicRels: ['Hiring/Design hire plan.md'], isMe: (a) => a.self === true, now: Date.parse('2026-11-19T12:00:00Z'), ...over });
 
 describe('sources line', () => {
-  it('says what the brief was built from and that the series has no past meetings', () => {
-    expect(sourcesLine({ notes: 4 })).toBe('Built from the invite and 4 vault notes. No past meetings in this series.');
-    expect(sourcesLine({})).toBe('Built from the invite. No past meetings in this series.');
-    expect(sourcesLine({ notes: 1, related: 2, series: 1 })).toBe('Built from the invite, 1 vault note, 2 related meetings and 1 past meeting in this series.');
+  it('says the brief is based on limited history and what it was built from', () => {
+    expect(sourcesLine({ notes: 4 })).toBe('Based on limited history: the invite and 4 related notes.');
+    expect(sourcesLine({})).toBe('Based on limited history: the invite only.');
+    expect(sourcesLine({ notes: 2, series: 1 })).toBe('Based on limited history: the invite, 1 earlier meeting and 2 related notes.');
+    expect(sourcesLine({ notes: 1, related: 2, series: 2 })).toBe('Based on limited history: the invite, 2 earlier meetings, 2 related meetings and 1 related note.');
   });
 });
 
@@ -76,7 +77,7 @@ describe('oneOffBrief', () => {
     expect(r.status).toBe('ready');
     expect(r.brief.prep).toBe('- Ask about the Initech design work. ([[People/Jane Doe|Jane Doe]], invite)');
     expect(r.brief.how).toBe(NOTHING);
-    expect(r.brief.sources).toBe('Built from the invite, 2 vault notes and 1 related meeting. No past meetings in this series.');
+    expect(r.brief.sources).toBe('Based on limited history: the invite, 1 related meeting and 2 related notes.');
     expect(r.brief.oneOff).toBe(true);
     const [prompt] = runModel.mock.calls[0];
     // earlier prep notes are never a source, and you are not listed among the invitees
@@ -86,17 +87,23 @@ describe('oneOffBrief', () => {
   });
   it('reads "Nothing found." when the model finds nothing, and lists who is invited from the invite alone', async () => {
     const r = await oneOffBrief({ ...base({ notes: [], meetings: [], topicRels: [] }), runModel: async () => '{"prep": [], "what": null, "who": null, "how": null}' });
-    expect(r.brief).toMatchObject({ prep: NOTHING, what: NOTHING, how: NOTHING, who: 'Invited: Jane Doe.', sources: 'Built from the invite. No past meetings in this series.' });
+    expect(r.brief).toMatchObject({ prep: NOTHING, what: NOTHING, how: NOTHING, who: 'Invited: Jane Doe.', sources: 'Based on limited history: the invite only.' });
   });
   it('counts past meetings of the series that are below the threshold', async () => {
     const series = [{ rel: 'Meetings/2026-11-01 Interview Jane Doe.md', title: 'Interview: Jane Doe', date: '2026-11-01', people: ['Jane Doe'] }];
     const r = await oneOffBrief({ ...base({ notes: [...notes, { rel: series[0].rel, title: 'Interview', text: 'First round with Jane Doe.\n' }], meetings: [...meetings, ...series], past: series }), runModel: async () => '{"prep": []}' });
-    expect(r.brief.sources).toBe('Built from the invite, 2 vault notes, 1 related meeting and 1 past meeting in this series.');
+    expect(r.brief.sources).toBe('Based on limited history: the invite, 1 earlier meeting, 1 related meeting and 2 related notes.');
   });
   it('writes nothing for an event with someone on the never-listen list, and calls no model', async () => {
     const runModel = vi.fn();
     const r = await oneOffBrief({ ...base(), onNeverList: (e) => e.endsWith('@example.com'), runModel });
     expect(r).toEqual({ status: 'opted-out' });
+    expect(runModel).not.toHaveBeenCalled();
+  });
+  it('says there is nothing to build from, and calls no model, for a meeting with no history, invitees, description or notes', async () => {
+    const runModel = vi.fn();
+    const bare = event({ attendees: [me], notes: '', attachments: [], title: 'Focus block' });
+    expect(await oneOffBrief({ ...base({ event: bare, notes: [], meetings: [], topicRels: [] }), runModel })).toEqual({ status: 'empty' });
     expect(runModel).not.toHaveBeenCalled();
   });
   it('fails on a reply that is not the JSON asked for', async () => {
@@ -144,22 +151,29 @@ describe('createOneOff', () => {
   let dir, file, n = 0;
   beforeEach(() => { dir = mkdtempSync(path.join(tmpdir(), 'quorum-oneoff-')); });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
-  const BRIEF = { prep: '- Ask about the portfolio. (invite)', what: 'An interview.', who: 'Invited: Jane Doe.', how: NOTHING, sources: 'Built from the invite. No past meetings in this series.', oneOff: true };
+  const BRIEF = { prep: '- Ask about the portfolio. (invite)', what: 'An interview.', who: 'Invited: Jane Doe.', how: NOTHING, sources: 'Based on limited history: the invite only.', oneOff: true };
   const T = Date.parse('2026-11-19T12:00:00Z');
-  function setup({ ev = event(), on = true, min = 3, build = async () => ({ status: 'ready', brief: BRIEF }), never = () => false, model = true } = {}) {
+  function setup({ ev = event(), min = 3, build = async () => ({ status: 'ready', brief: BRIEF }), never = () => false, model = true } = {}) {
     file = path.join(dir, `briefs-${++n}.json`);
     const cache = createBriefCache(file);
-    const d = { on: () => on, min: () => min, cache, event: async (id) => (id === ev?.id ? ev : null), isMe: (a) => a.self === true, onNeverList: never, isExcluded: () => false, modelReady: () => model, build: vi.fn(build), links: () => ({}), now: () => T };
+    const d = { min: () => min, cache, event: async (id) => (id === ev?.id ? ev : null), isMe: (a) => a.self === true, onNeverList: never, isExcluded: () => false, modelReady: () => model, build: vi.fn(build), links: () => ({}), now: () => T };
     return { d, cache, run: createOneOff(d) };
   }
   const q = (over = {}) => ({ title: 'Interview: Jane Doe', id: 'e1', ...over });
 
-  it('offers nothing with the flag off and writes nothing without Generate anyway', async () => {
-    const off = setup({ on: false });
-    expect(await off.run(q({ anyway: true, generate: true }), [], [])).toMatchObject({ status: 'few', anyway: false });
+  it('offers Generate anyways under the threshold and never writes on open', async () => {
     const { d, run } = setup();
+    expect(await run(q(), [], [])).toMatchObject({ status: 'few', anyway: true, min: 3, brief: null });
     expect(await run(q({ generate: true }), [], [])).toMatchObject({ status: 'few', anyway: true, min: 3 });
+    expect(await run(q(), [{ rel: 'a' }, { rel: 'b' }], [])).toMatchObject({ status: 'few', anyway: true });
     expect(d.build).not.toHaveBeenCalled();
+    // without an event id there is nothing to write it for, so nothing is offered
+    expect(await run({ title: 'Interview: Jane Doe' }, [], [])).toMatchObject({ status: 'few', anyway: false });
+  });
+  it('says there is nothing to build from and keeps nothing', async () => {
+    const s = setup({ build: async () => ({ status: 'empty' }) });
+    expect(await s.run(q({ anyway: true, generate: true }), [], [])).toMatchObject({ status: 'empty', brief: null });
+    expect(s.cache.entry('event:e1')).toBeNull();
   });
   it('writes on Generate anyway, keeps it on the event, and writes it again when the invite changes', async () => {
     const s = setup();

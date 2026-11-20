@@ -16,6 +16,7 @@ import { Composer } from './Composer';
 import { Avatar } from './Speaker';
 import { splitChoices } from './MeetingNote';
 import { ChatExit, ChatStrip, useChats, useComposerFocus } from './ChatStack';
+import { ANYWAY_LABEL, anywayOffered, prepEmptyText } from './meetingBriefView';
 import markProd from '../assets/quorum-mark.png';
 
 // one click each, above the chat input before the first question
@@ -195,8 +196,8 @@ function VaultPrep({ event: e, onOpenNote }: { event: CalendarEvent; onOpenNote:
 
 // The page an upcoming meeting opens to from Home or Up next: when it is, who is invited, its calendar and meeting
 // app, and for a recurring meeting, prep notes and a short description written from its past notes (main.js
-// meeting-brief). Fewer past meetings than the threshold shows what will appear once there are, and with the
-// meeting-prep flag on, Generate anyway writes them now from the invite and the vault (meetingOneOff.js).
+// meeting-brief). Fewer past meetings than the threshold shows what will appear once there are, and Generate anyways
+// writes them now, on request only, from the invite and the vault (meetingOneOff.js).
 export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarEvent; onBack: () => void; onOpenNote: (file: string) => void }) {
   const [prepEnabled, setPrepEnabled] = useState(false);
   useEffect(() => { window.quorum.getSettings().then((s) => setPrepEnabled(s?.meetingPrep?.enabled === true)).catch(() => {}); }, []);
@@ -249,8 +250,8 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
     return () => { live = false; };
   }, [e.id, e.title]);
 
-  // Generate anyway, and Regenerate once there is a one-off brief: written from the invite and the vault, kept on the meeting
-  // A failed Regenerate keeps the last brief on the page with an error line. Generate anyway swaps its button for the
+  // Generate anyways, and Regenerate once there is a one-off brief: written from the invite and the vault, kept on the meeting
+  // A failed Regenerate keeps the last brief on the page with an error line. Generate anyways swaps its button for the
   // loading lines, so focus moves to the section's heading once the brief is there
   const prepHead = useRef<HTMLHeadingElement>(null), aboutHead = useRef<HTMLHeadingElement>(null);
   const generate = (force: boolean, from: 'prep' | 'about') => {
@@ -266,24 +267,22 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
   const at = new Date(e.start), end = new Date(e.end);
   const platform = e.platform ? PLATFORM_APP[e.platform] : null;
   const brief = data?.brief;
+  // a meeting with too few past meetings, where Generate anyways is offered
+  const canAnyway = anywayOffered(data);
+  // while Generate anyways runs, the message stays and the loading lines take the button's place
+  const anywayRunning = writing && canAnyway;
   // a kept brief stays on the page while it is written again
-  const loading = !data || (writing && !data.brief);
+  const loading = !data || (writing && !data.brief && !anywayRunning);
   const min = data?.min ?? 3;
-  // a meeting with too few past meetings, where Generate anyway is offered (the meeting-prep flag is on)
-  const canAnyway = !!data?.anyway && !brief && (data.status === 'few' || data.status === 'failed');
   const onWiki = (target: string) => { const file = data?.links?.[target]; if (file) onOpenNote(file); };
   const oneOffFoot = (from: 'prep' | 'about') => (brief?.oneOff ? <>
     {data?.failed && !writing && <p className="set-error" role="alert">Quorum could not write new prep notes. These are the last ones it wrote.</p>}
     <p className="mp-prep-foot"><button className="up-all" disabled={writing} aria-busy={writing} onClick={() => generate(true, from)}>{writing ? 'Writing…' : 'Regenerate'}</button></p>
   </> : null);
-  const anywayFoot = (from: 'prep' | 'about') => (canAnyway ? <p className="mp-prep-foot"><button className="up-all" disabled={writing} onClick={() => generate(false, from)}>Generate anyway</button></p> : null);
+  const anywayFoot = (from: 'prep' | 'about') => (canAnyway && !anywayRunning ? <p className="mp-prep-foot"><button className="up-all" onClick={() => generate(false, from)}>{ANYWAY_LABEL}</button></p> : null);
   // once the brief arrives, every section types itself in together over about half a second
   const reveal = useReveal(brief ? [brief.prep, brief.what, brief.who, brief.how].join('').length : 0, brief);
-  const emptyText = data?.status === 'few' ? `Not recurring yet. After ${min} or more meetings, Quorum starts showing a summary and prep notes for this meeting, specific to you.${data.anyway ? ' Generate anyway writes them now from the invite and your vault.' : ''}`
-    : data?.status === 'no-model' ? "Choose a model in Settings and Quorum writes prep notes from this meeting's past notes."
-    : data?.status === 'opted-out' ? 'No prep for this meeting. Someone invited is on your never-listen list.'
-    : data?.anyway ? 'Quorum could not write prep notes this time. Try again.'
-    : 'Quorum could not write prep notes this time. They are tried again the next time you open this meeting.';
+  const emptyText = prepEmptyText(data);
   return (
     <div className="history reader meeting-page" ref={top}>
       <div ref={bar.sentinel} className="rb-sentinel" aria-hidden="true" />
@@ -336,7 +335,7 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
               <Markdown text={reveal(brief.prep)} onWiki={onWiki} />
               {oneOffFoot('prep')}
             </>
-            : <><p className="mp-empty" role="status">{emptyText}</p>{anywayFoot('prep')}</>}
+            : <><p className="mp-empty" role="status">{emptyText}</p>{anywayRunning ? <Skeleton lines={4} /> : anywayFoot('prep')}</>}
         </section>}
 
         <section className="mp-section">
@@ -346,7 +345,7 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
           {ABOUT.map(([key, label]) => (
             <div key={key} className="mp-about">
               <h3>{label}</h3>
-              {loading ? <Skeleton lines={2} />
+              {loading || anywayRunning ? <Skeleton lines={2} />
                 : brief?.[key] ? <p>{reveal(brief[key])}</p>
                 : <p className="mp-empty">{data?.status === 'few' ? `Shows after ${min} ${min === 1 ? 'meeting' : 'meetings'}.` : 'Not written yet.'}</p>}
             </div>

@@ -1,0 +1,29 @@
+import { describe, expect, it } from 'vitest';
+import { ANYWAY_LABEL, anywayOffered, prepEmptyText } from '../src/meetingBriefView.ts';
+
+const BRIEF = { prep: '- Ask about the portfolio. (invite)', what: 'An interview.', who: 'Invited: Jane Doe.', how: 'Nothing found.', sources: 'Based on limited history: the invite and 2 related notes.', oneOff: true };
+
+describe('meeting prep: Generate anyways', () => {
+  it('shows the button below the Not recurring yet message under the threshold', () => {
+    const few = { status: 'few', anyway: true, min: 3, brief: null };
+    expect(anywayOffered(few)).toBe(true);
+    expect(prepEmptyText(few)).toMatch(/^Not recurring yet\. After 3 or more meetings/);
+    expect(prepEmptyText(few)).toContain(ANYWAY_LABEL);
+    expect(ANYWAY_LABEL).toBe('Generate anyways');
+    // a failed try offers it again
+    expect(anywayOffered({ status: 'failed', anyway: true, brief: null })).toBe(true);
+  });
+  it('never shows at 3 or more past meetings, where the series brief answers without anyway', () => {
+    for (const status of ['ready', 'stale', 'no-model', 'failed']) expect(anywayOffered({ status, brief: null })).toBe(false);
+    expect(anywayOffered({ status: 'ready', brief: { ...BRIEF, oneOff: undefined } })).toBe(false);
+  });
+  it('hides once a brief is written, which says it came from limited history', () => {
+    expect(anywayOffered({ status: 'ready', anyway: true, brief: BRIEF })).toBe(false);
+    expect(BRIEF.sources).toMatch(/^Based on limited history/);
+  });
+  it('says plainly when there is nothing to build from, and shows the no-model message', () => {
+    expect(anywayOffered({ status: 'empty', anyway: true, brief: null })).toBe(false);
+    expect(prepEmptyText({ status: 'empty', anyway: true })).toBe('There is nothing to build prep notes from yet. This meeting has no earlier meetings, no other invitees, no description and no related notes.');
+    expect(prepEmptyText({ status: 'no-model', anyway: true })).toBe("Choose a model in Settings and Quorum writes prep notes from this meeting's past notes.");
+  });
+});
