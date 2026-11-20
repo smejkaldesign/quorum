@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { ANYWAY_LABEL, CHANGED_TEXT, anywayOffered, prepEmptyText, regenerateLabel } from '../src/meetingBriefView.ts';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { createElement } from 'react';
+import { ANYWAY_LABEL, CHANGED_TEXT, WRITING_TEXT, WritingStatus, anywayOffered, focusOnGenerate, prepEmptyText, regenerateLabel } from '../src/meetingBriefView.tsx';
 
 const BRIEF = { prep: '- Ask about the portfolio. (invite)', what: 'An interview.', who: 'Invited: Jane Doe.', how: 'Nothing found.', sources: 'Based on limited history: the invite and 2 related notes.', oneOff: true };
 
@@ -37,5 +39,12 @@ describe('meeting prep: Generate anyways', () => {
     expect(regenerateLabel({ changed: false }, false)).toBe('Regenerate');
     expect(regenerateLabel(changed, true)).toBe('Writing…');
     expect(CHANGED_TEXT).toContain('Update');
+  });
+  it('moves focus to the section heading on Generate anyways and announces the run', () => {
+    expect(focusOnGenerate(false, 'prep')).toBe('prep');
+    expect(focusOnGenerate(false, 'about')).toBe('about');
+    expect(focusOnGenerate(true, 'prep')).toBeNull();
+    expect(renderToStaticMarkup(createElement(WritingStatus))).toBe(`<p class="sr-only" role="status">${WRITING_TEXT}</p>`);
+    expect(WRITING_TEXT).toBe('Writing prep notes…');
   });
 });

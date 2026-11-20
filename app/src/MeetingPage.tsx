@@ -16,7 +16,7 @@ import { Composer } from './Composer';
 import { Avatar } from './Speaker';
 import { splitChoices } from './MeetingNote';
 import { ChatExit, ChatStrip, useChats, useComposerFocus } from './ChatStack';
-import { ANYWAY_LABEL, CHANGED_TEXT, anywayOffered, prepEmptyText, regenerateLabel } from './meetingBriefView';
+import { ANYWAY_LABEL, CHANGED_TEXT, WritingStatus, anywayOffered, focusOnGenerate, prepEmptyText, regenerateLabel } from './meetingBriefView';
 import markProd from '../assets/quorum-mark.png';
 
 // one click each, above the chat input before the first question
@@ -101,7 +101,7 @@ const ABOUT = [['what', 'What it is'], ['who', 'Who attends'], ['how', 'How it r
 
 // a section's loading placeholder: grey lines that shimmer
 function Skeleton({ lines }: { lines: number }) {
-  return <div className="mp-skel" aria-label="Loading">{Array.from({ length: lines }, (_, i) => <span key={i} style={{ width: `${i === lines - 1 ? 60 : 100}%` }} />)}</div>;
+  return <div className="mp-skel" aria-label="Loading">{Array.from({ length: lines }, (_, i) => <span key={i} aria-hidden="true" style={{ width: `${i === lines - 1 ? 60 : 100}%` }} />)}</div>;
 }
 
 // Text that types in: reveal(text) returns as much of each text as the shared clock has reached, so every section
@@ -252,9 +252,11 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
 
   // Generate anyways, and Regenerate once there is a one-off brief: written from the invite and the vault, kept on the meeting
   // A failed Regenerate keeps the last brief on the page with an error line. Generate anyways swaps its button for the
-  // loading lines, so focus moves to the section's heading once the brief is there
+  // loading lines, so focus moves to the section's heading on the click, and again once the brief is there if it was lost
   const prepHead = useRef<HTMLHeadingElement>(null), aboutHead = useRef<HTMLHeadingElement>(null);
   const generate = (force: boolean, from: 'prep' | 'about') => {
+    const to = focusOnGenerate(force, from);
+    if (to) (to === 'prep' ? prepHead : aboutHead).current?.focus();
     setWriting(true);
     window.quorum.meetingBrief({ title: e.title, organizer: e.organizer, id: e.id, generate: true, anyway: true, force })
       .then((g) => setData((d) => ({ ...g, related: g.related ?? d?.related })))
@@ -280,6 +282,7 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
     {data?.changed && !writing && <p className="muted" role="status">{CHANGED_TEXT}</p>}
     <p className="mp-prep-foot"><button className="up-all" disabled={writing} aria-busy={writing} onClick={() => generate(true, from)}>{regenerateLabel(data, writing)}</button></p>
   </> : null);
+  const writingLine = anywayRunning ? <WritingStatus /> : null;
   const anywayFoot = (from: 'prep' | 'about') => (canAnyway && !anywayRunning ? <p className="mp-prep-foot"><button className="up-all" onClick={() => generate(false, from)}>{ANYWAY_LABEL}</button></p> : null);
   // once the brief arrives, every section types itself in together over about half a second
   const reveal = useReveal(brief ? [brief.prep, brief.what, brief.who, brief.how].join('').length : 0, brief);
@@ -328,7 +331,7 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
         )}
 
         {tab === 'prep' && <>
-        {vaultPrep ? <VaultPrep event={e} onOpenNote={onOpenNote} /> : <section className="mp-section mp-prep">
+        {vaultPrep ? <VaultPrep event={e} onOpenNote={onOpenNote} /> : <section className="mp-section mp-prep" aria-busy={loading || writing}>
           <h2 ref={prepHead} tabIndex={-1}>Meeting prep notes</h2>
           {loading ? <Skeleton lines={4} />
             : brief?.prep ? <>
@@ -336,11 +339,12 @@ export function MeetingPage({ event: e, onBack, onOpenNote }: { event: CalendarE
               <Markdown text={reveal(brief.prep)} onWiki={onWiki} />
               {oneOffFoot('prep')}
             </>
-            : <><p className="mp-empty" role="status">{emptyText}</p>{anywayRunning ? <Skeleton lines={4} /> : anywayFoot('prep')}</>}
+            : <><p className="mp-empty" role="status">{emptyText}</p>{anywayRunning ? <>{writingLine}<Skeleton lines={4} /></> : anywayFoot('prep')}</>}
         </section>}
 
-        <section className="mp-section">
+        <section className="mp-section" aria-busy={loading || writing}>
           <h2 ref={aboutHead} tabIndex={-1}>About this meeting</h2>
+          {vaultPrep && writingLine}
           {/* with the vault prep note in the Prep section, the one-off brief's sources and Regenerate sit here */}
           {vaultPrep && !loading && brief?.oneOff && brief.sources && <p className="muted" role="status">{brief.sources}</p>}
           {ABOUT.map(([key, label]) => (

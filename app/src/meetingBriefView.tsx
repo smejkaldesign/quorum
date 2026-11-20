@@ -4,6 +4,17 @@
 import type { MeetingBrief } from './quorum';
 
 export const ANYWAY_LABEL = 'Generate anyways';
+// read out while Generate anyways runs, in place of its button
+export const WRITING_TEXT = 'Writing prep notes…';
+export function WritingStatus() {
+  return <p className="sr-only" role="status">{WRITING_TEXT}</p>;
+}
+
+// where focus goes on a click: Generate anyways unmounts its own button, so focus moves to its section's heading;
+// Regenerate keeps its button on the page
+export function focusOnGenerate(force: boolean, from: 'prep' | 'about') {
+  return force ? null : from;
+}
 
 // the button shows for a meeting under the threshold (status few, or a failed try) that has no brief yet
 export function anywayOffered(data: Pick<MeetingBrief, 'status' | 'anyway' | 'brief'> | null | undefined) {
