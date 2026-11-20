@@ -15,7 +15,7 @@ import { budgetOf, formatMemory } from './budget.mjs';
 import { keeperHome, learnedFileIn, learnedLines } from './learned.mjs';
 import { MEMORY_TOOLS, memoryTool } from './memoryTools.mjs';
 import { untrusted } from './untrusted.mjs';
-import { meetingIndex, sameMeeting } from '../sources/sameMeeting.js';
+import { meetingIndex, sameMeeting } from './sameMeeting.mjs';
 
 // a development copy of the app keeps its data in Quorum Dev (app/edition.js); QUORUM_ENV=development reads that folder
 const HOME = path.join(homedir(), 'Library/Application Support', process.env.QUORUM_ENV === 'development' ? 'Quorum Dev' : 'Quorum');
@@ -216,7 +216,7 @@ function statusline() {
 // Dedupes by source id (first save wins), writes under <meetings>/<source>/, and never overwrites a file. A transcript
 // is filed next to the note (transcripts/, the shape sources/transcripts.js writes) only when the person turned on
 // transcript filing for that source in Quorum; otherwise it is dropped and the answer says so. A meeting another source
-// already filed for the same calendar event is skipped (sameMeeting.js)
+// already filed for the same calendar event is skipped (sameMeeting.mjs)
 const yamlStr = (s) => JSON.stringify(String(s));
 const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'meeting';
 function importMeeting({ source, id, title, date, participants = [], url = null, body = '', transcript = '' }) {
@@ -236,7 +236,7 @@ function importMeeting({ source, id, title, date, participants = [], url = null,
     if (new RegExp(`^(?:source_id|${src.replace(/-/g, '_')}_id):\\s*"?${sid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"?\\s*$`, 'm').test(head)) return { skipped: true, file: path.relative(root, path.join(dir, f)) };
   }
   const when = date && !isNaN(Date.parse(date)) ? new Date(date).toISOString() : new Date().toISOString();
-  // one calendar event, one note: a meeting another source already filed is skipped too (sources/sameMeeting.js)
+  // one calendar event, one note: a meeting another source already filed is skipped too (cli/sameMeeting.mjs)
   if (date && !isNaN(Date.parse(date))) { const other = sameMeeting(meetingIndex(root), { date: when, title, source: src }); if (other) return { skipped: true, elsewhere: other.source, file: path.relative(root, other.file) }; }
   const people = (Array.isArray(participants) ? participants : []).map((p) => String(p?.name ?? p).replace(/[\r\n]+/g, ' ').trim()).filter(Boolean).slice(0, 50);
   // the link is written unquoted, so it must be one line: a line break would add keys such as visibility: public

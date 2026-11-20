@@ -128,7 +128,7 @@ export const fileNameFor = (m) => `${String(m.meetingAt ?? '').slice(0, 10) || '
 
 // lists everything since `since`, skips what the vault has, fetches the rest ten at a time and writes each note.
 // write(fileName, text, meeting) returns the path it wrote; existing is a Set of meeting ids already in the vault;
-// elsewhere(meeting) is true when another source already filed the same calendar event (sameMeeting.js)
+// elsewhere(meeting) is true when another source already filed the same calendar event (sameMeeting.mjs)
 export async function sync({ mcp, existing, since = '2015-01-01', write, progress = () => {}, batch = 10, elsewhere = () => false }) {
   const listed = [];
   let cursor = null;

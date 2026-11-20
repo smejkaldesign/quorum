@@ -13,7 +13,7 @@ import { createTokenStore } from '../sources/tokens.js';
 import { scanExisting } from '../sources/index.js';
 import { slug } from '../sources/granola.js';
 import { SUBFOLDER, transcriptMarkdown, vaultRemote } from '../sources/transcripts.js';
-import { meetingIndex, sameMeeting } from '../sources/sameMeeting.js';
+import { meetingIndex, sameMeeting } from '../cli/sameMeeting.mjs';
 import { CAPABILITIES, encodeUuid, fileNameFor as aiFileName, meetingNumberFromUrl, missingScope, noteTranscriptText, summaryText, zoomNote } from './zoomAi.js';
 import { httpUrl, relayUrls, unreachable } from './relay.js';
 import { plain } from './account.js';
