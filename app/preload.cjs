@@ -60,6 +60,7 @@ contextBridge.exposeInMainWorld('quorum', {
   brain: () => ipcRenderer.invoke('brain'),
   onBrainChanged: (cb) => { const h = (_e, b) => cb(b); ipcRenderer.on('brain-changed', h); return () => ipcRenderer.removeListener('brain-changed', h); },
   connectBrain: () => ipcRenderer.invoke('connect-brain'),
+  pickNotesFolder: () => ipcRenderer.invoke('pick-notes-folder'),
   revealBrain: () => ipcRenderer.invoke('reveal-brain'),
   disconnectBrain: () => ipcRenderer.invoke('disconnect-brain'),
   clearMeetingsDir: () => ipcRenderer.invoke('clear-meetings-dir'),

@@ -11,6 +11,7 @@ import { checkConnection } from './connectionCheck.js';
 import { openSpeech, SPEECH_ENGINES } from './speech/provider.js';
 import { SKIP as TREE_SKIP, createFolder, createNote, duplicateItem, moveItem, readVaultNote, renameItem, vaultPath, vaultTarget, vaultTree } from './vault.js';
 import { createVaultIndex } from './vindex.js';
+import { inspectBrain, savedBrain } from './brainDetect.js';
 import { createMemoryGraph } from './graph/index.js';
 import { createTopics } from './graph/topics.js';
 import { applyUndo, sha, undoRecord } from './fixUndo.js';
@@ -981,32 +982,9 @@ async function runSummary() {
   } finally { summaryBusy = false; toUI('summary', { state: meeting.summary, at: Date.now(), thinking: false }); }
 }
 
-// Agent OS connection. POC: the user points Quorum at a folder; Quorum recognizes an agent OS
-// (CLAUDE.md / AGENTS.md) and an Obsidian vault. Later this becomes a connector.
-function inspectBrain(folder) {
-  const has = (...p) => existsSync(path.join(...p));
-  let root = folder;
-  for (let d = folder; d !== path.dirname(d); d = path.dirname(d)) {
-    if (has(d, 'CLAUDE.md') || has(d, 'AGENTS.md')) { root = d; break; }
-  }
-  let vault = folder;
-  if (!has(folder, '.obsidian')) {
-    const child = ['MyBrain', 'vault', 'notes'].map((c) => path.join(root, c)).find((c) => has(c, '.obsidian'));
-    if (child) vault = child;
-    else if (has(root, '.obsidian')) vault = root;
-  }
-  return {
-    root, vault, name: path.basename(vault),
-    markers: {
-      agentOS: has(root, 'CLAUDE.md') ? 'CLAUDE.md' : has(root, 'AGENTS.md') ? 'AGENTS.md' : null,
-      obsidian: has(vault, '.obsidian'),
-      safetyHooks: has(root, '.claude/hooks/output-secret-tripwire.py'),
-    },
-  };
-}
-
 function brain() {
-  return settings.brainRoot && existsSync(settings.brainRoot) ? { ...inspectBrain(settings.vaultPath || settings.brainRoot), made: settings.brainMade ?? null } : null;
+  // the saved folders as they are: every reader (Reveal, Set up again, agent runs, the instructions file) uses this root
+  return settings.brainRoot && existsSync(settings.brainRoot) ? { ...savedBrain(settings), made: settings.brainMade ?? null } : null;
 }
 
 // the folder your meeting notes live in: your pick, else the vault's existing meetings folder; Quorum saves into it directly, and `source:` in each note says which app made it
@@ -5443,8 +5421,49 @@ ipcMain.handle('connect-brain', async () => {
     properties: ['openDirectory'],
   });
   if (r.canceled || !r.filePaths[0]) return brain();
-  return connectBrain(inspectBrain(r.filePaths[0]));
+  const b = inspectBrain(r.filePaths[0]);
+  const where = `Agent OS folder: ${tilde(b.root)}`;
+  if (b.markers.found === 'child') {
+    // Quorum picked a subfolder for the notes, so the person sees both folders before anything is saved
+    const ok = await dialog.showMessageBox(win, {
+      type: 'question', buttons: ['Use these folders', 'Choose notes folder', 'Cancel'], defaultId: 0, cancelId: 2,
+      message: `Quorum found your notes in ${path.relative(b.root, b.vault) || b.name}`,
+      detail: `${where}\nNotes folder: ${tilde(b.vault)}`,
+    });
+    if (ok.response === 0) return connectBrain(b);
+    if (ok.response === 2) return brain();
+    return pickNotesFolder(b.root);
+  }
+  if (b.markers.notes) return connectBrain(b);
+  // nothing here looks like notes, so ask for the notes folder instead of guessing
+  const ask = await dialog.showMessageBox(win, {
+    type: 'question', buttons: ['Choose notes folder', 'Keep notes in this folder', 'Cancel'], defaultId: 0, cancelId: 2,
+    message: "Quorum didn't find any notes here",
+    detail: `${where}\nQuorum looks for notes such as daily notes, meeting notes and project pages. If your notes are in another folder, choose it. If this folder is new or nearly empty, you can keep your notes in it.`,
+  });
+  if (ask.response === 1) return connectBrain(b);
+  if (ask.response === 2) return brain();
+  return pickNotesFolder(b.root);
 });
+const tilde = (p) => (p === homedir() || p.startsWith(homedir() + path.sep) ? `~${p.slice(homedir().length)}` : p);
+// a different notes folder for the Agent OS folder given; the Agent OS folder never changes here, even when the notes
+// folder sits outside it
+async function pickNotesFolder(root) {
+  const r = await dialog.showOpenDialog(win, { title: 'Choose your notes folder', defaultPath: root || homedir(), properties: ['openDirectory'], buttonLabel: 'Use folder' });
+  if (r.canceled || !r.filePaths[0]) return brain();
+  const picked = r.filePaths[0];
+  const rel = path.relative(root, picked);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    const ok = await dialog.showMessageBox(win, {
+      type: 'info', buttons: ['Use this notes folder', 'Cancel'], defaultId: 0, cancelId: 1,
+      message: 'This notes folder is outside your Agent OS folder',
+      detail: `Agent OS folder: ${tilde(root)}\nNotes folder: ${tilde(picked)}\nYour Agent OS folder stays the same.`,
+    });
+    if (ok.response !== 0) return brain();
+  }
+  return connectBrain(inspectBrain(picked, { root, vault: picked }));
+}
+ipcMain.handle('pick-notes-folder', () => (settings.brainRoot ? pickNotesFolder(settings.brainRoot) : brain()));
 ipcMain.handle('reveal-brain', () => { if (settings.brainRoot) shell.openPath(settings.brainRoot); });
 // forgetting the Agent OS leaves every file where it is; Quorum stops reading it, and a meetings folder found inside it is no longer found
 ipcMain.handle('disconnect-brain', () => { Object.assign(settings, { brainRoot: null, vaultPath: null, brainMade: null }); store.settings.save(); log('disconnected Agent OS'); suggester.reset(); openIndex(); brainChanged(); return null; });

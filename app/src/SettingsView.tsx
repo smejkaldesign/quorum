@@ -2,6 +2,7 @@ import { ConfirmModal } from './ConfirmModal';
 import { ErrorBoundary } from './ErrorBoundary';
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { SetupForm, answersFrom, draftFrom, draftIsEmpty, emptyDraft, type SetupDraft } from './SetupForm';
+import { brainPlace } from './brainPlace';
 import type { AccountState, BetaState, Brain, CalendarSettings, DecisionProvider, DecisionsStatus, KeeperStatus, OptOut, Profile, ScreenContextStatus, Settings, TeamVault, Transcription, UpdateState, Voice, Workspace } from './quorum';
 import { PersonalConnectors } from './Connectors';
 import { ConnectorsPage, connectorDetailName } from './ConnectorsPage';
@@ -336,9 +337,10 @@ function SecondBrain({ part, brain, onConnect, onDisconnect, onBrain, onViewConn
       <div className="set-card">
         <Row icon={<IconBrain width={18} height={18} className={brain ? 'ok' : undefined} />}
           title={brain ? <button className="mem-title" onClick={() => window.quorum.openBrain('finder')}>{brain.made === 'quorum' ? 'QuorumBrain' : brain.name}<IconExternal width={14} height={14} /></button> : 'QuorumBrain'}
-          desc={brain ? (brain.made === 'quorum' ? `Built by Quorum · ${home(brain.vault || brain.root)}` : home(brain.vault || brain.root)) : 'Optional. An Agent OS folder of notes Quorum can answer from. Meeting notes work without one.'}>
+          hint={brain ? brainPlace(brain, home).full : undefined}
+          desc={brain ? (brain.made === 'quorum' ? `Built by Quorum · ${home(brain.vault || brain.root)}` : brainPlace(brain, home).text) : 'Optional. An Agent OS folder of notes Quorum can answer from. Meeting notes work without one.'}>
           {brain
-            ? <RowMenu label={`${brain.made === 'quorum' ? 'QuorumBrain' : brain.name} options`} items={[...(brain.made === 'quorum' ? [{ label: 'Set up again', icon: <IconBrain width={15} height={15} />, onPick: openSetup }] : []), { label: 'Change folder', icon: <IconFolder width={15} height={15} />, onPick: onConnect }, { label: 'Disconnect', icon: <IconClose width={15} height={15} />, danger: true, onPick: () => setConfirm(true) }]} />
+            ? <RowMenu label={`${brain.made === 'quorum' ? 'QuorumBrain' : brain.name} options`} items={[...(brain.made === 'quorum' ? [{ label: 'Set up again', icon: <IconBrain width={15} height={15} />, onPick: openSetup }] : []), { label: 'Change Agent OS folder', icon: <IconFolder width={15} height={15} />, onPick: onConnect }, ...(brain.made === 'quorum' ? [] : [{ label: 'Change notes folder', icon: <IconFolder width={15} height={15} />, onPick: async () => { const b = await window.quorum.pickNotesFolder(); if (b) onBrain?.(b); } }]), { label: 'Disconnect', icon: <IconClose width={15} height={15} />, danger: true, onPick: () => setConfirm(true) }]} />
             : (
               <span className="menu-wrap">
                 <button className="pill" aria-haspopup="menu" aria-expanded={connecting} onClick={() => setConnecting((v) => !v)}>Connect</button>
