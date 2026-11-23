@@ -1926,6 +1926,7 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .mu-text .md-del + .md-add { margin-left: 3px; }
 .mu-text .md-add .md-link, .mu-text .md-add .md-wiki { color: inherit; }
 .mu-text .md-del .md-link, .mu-text .md-del .md-wiki { text-decoration: line-through; }
+.mu-text:focus { outline: none; }
 .mu-text .md-now .md-add { --chg: rgba(64, 156, 255, 0.4); }
 .mu-text .md-del, .mu-text .md-del .md-link, .mu-text .md-del .md-wiki { color: var(--muted); }
 .mu-text .md-now .md-del, .mu-text .md-now .md-del .md-link, .mu-text .md-now .md-del .md-wiki { color: #b4b4ba; }

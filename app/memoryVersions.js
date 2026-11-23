@@ -19,6 +19,7 @@ import { DOT_DAYS, MAX_AGE_DAYS, MAX_VERSIONS, fileDot, folderDots, lineDiff, pr
 
 const ID_RE = /^[a-z0-9]+-[a-f0-9]{8}$/;
 const posix = (rel) => String(rel).split(path.sep).join('/');
+const sumOf = (text) => (text == null ? null : createHash('sha1').update(text).digest('hex'));
 const read = (abs) => { try { return readFileSync(abs, 'utf8'); } catch { return null; } };
 
 export function createVersionStore({ dir, now = () => Date.now(), maxVersions = MAX_VERSIONS, maxAgeDays = MAX_AGE_DAYS, autoApprove = () => true, dotDays = () => DOT_DAYS, onChange = () => {} }) {
@@ -65,7 +66,7 @@ export function createVersionStore({ dir, now = () => Date.now(), maxVersions = 
     let update = null;
     if (agent) {
       const auto = autoApprove() !== false;
-      update = { id, at, who, reason, changes: Math.max(1, lineDiff(before, after).blocks), approved: auto, approvedAt: auto ? at : null, auto };
+      update = { id, at, who, reason, changes: Math.max(1, lineDiff(before, after).blocks), approved: auto, approvedAt: auto ? at : null, auto, sum: sumOf(after) };
       rec.updates.push(update);
     }
     tidy(vault, rec);
@@ -119,28 +120,44 @@ export function createVersionStore({ dir, now = () => Date.now(), maxVersions = 
     onChange([r]);
     return true;
   }
-  // the updates the banner shows are rejected: the file gets back the text from before the oldest of them, that text
-  // is kept as a version by you, and every update since leaves the review. ids are the updates the open page shows.
-  // Returns the restored text, or null when there is nothing to reject or the file was updated again since
-  // remove takes away a note the updates made, which has no earlier text
-  function reject(vault, rel, ids = null, remove = (abs) => rmSync(abs, { force: true })) {
+  // what rejecting the updates of a file would do, or null when there is nothing to reject or the file was updated again
+  // since the open page showed the updates in ids. created: the updates made the file. edited: the file also changed
+  // some other way since the oldest of them, and those changes would go too
+  function rejectable(vault, rel, ids = null) {
     const r = posix(rel);
     const rec = load(vault).files[r];
     const g = rec ? reviewGroup(rec, { now: now(), days: dotDays(), ids: ids ?? [] }) : null;
-    if (g && ids && g.ids.some((id) => !ids.includes(id))) return null;
     const root = path.resolve(vault);
     const abs = path.resolve(root, r);
-    if (!g || !abs.startsWith(root + path.sep)) return null;
+    if (!g || !abs.startsWith(root + path.sep) || (ids && g.ids.some((id) => !ids.includes(id)))) return null;
     const base = rec.versions.find((v) => v.id === g.first.id);
     const text = base && !base.created ? read(textFile(vault, base.id)) : null;
+    if (!base || (!base.created && text == null)) return null;
     const cur = read(abs);
-    if (base?.created) remove(abs);
-    else if (text != null) writeAtomic(abs, text);
-    else return null;
-    rec.updates = rec.updates.filter((u) => u.at < g.first.at);
+    const ups = rec.updates.filter((u) => g.ids.includes(u.id)).sort((x, y) => x.at - y.at);
+    // the text each update left is the text the next one found, and the last one left the text there now
+    const next = (k) => (k + 1 < ups.length ? read(textFile(vault, ups[k + 1].id)) : cur);
+    const edited = rec.versions.some((v) => v.at > g.first.at && !g.ids.includes(v.id)) || ups.some((u, k) => u.sum && sumOf(next(k)) !== u.sum);
+    return { abs, text, cur, created: !!base.created, edited, from: g.first.at };
+  }
+  // the updates the banner shows are rejected: the file gets back the text from before the oldest of them, that text
+  // is kept as a version by you, and every update since leaves the review. ids are the updates the open page shows.
+  // held is the text of a file the caller took away already, when the updates made it. Returns the restored text, or
+  // null when the file is not rejectable
+  function reject(vault, rel, ids = null, { held = null } = {}) {
+    const d = rejectable(vault, rel, ids);
+    if (!d) return null;
+    const r = posix(rel);
+    const rec = load(vault).files[r];
+    if (!d.created) { mkdirSync(path.dirname(d.abs), { recursive: true }); writeAtomic(d.abs, d.text); }
+    else if (held == null) rmSync(d.abs, { force: true });
+    rec.updates = rec.updates.filter((u) => u.at < d.from);
     rec.openedAt = stamp();
-    record({ vault, rel: r, before: cur, after: base?.created ? null : text, who: 'you', reason: 'Rejected the updates', agent: false });
-    return text ?? '';
+    record({ vault, rel: r, before: held ?? d.cur, after: d.text, who: 'you', reason: 'Rejected the updates', agent: false });
+    // record keeps nothing when the text is already the earlier one, and the updates leave the review all the same
+    save(vault);
+    onChange([r]);
+    return d.text ?? '';
   }
 
   // every update of a file waiting for approval is approved now; the person has the file open, so it counts as opened
@@ -198,7 +215,7 @@ export function createVersionStore({ dir, now = () => Date.now(), maxVersions = 
   // every file with a history, keyed by its path in the vault, for the Notifications view
   const files = (vault) => load(vault).files;
 
-  return { record, list, read: readVersion, restore, undo, reject, approve, opened, dots, review, watch, home, files };
+  return { record, list, read: readVersion, restore, undo, reject, rejectable, approve, opened, dots, review, watch, home, files };
 }
 
 // the text of every markdown note in a vault, keyed by its path inside the vault. Notes over 2 MB are left out

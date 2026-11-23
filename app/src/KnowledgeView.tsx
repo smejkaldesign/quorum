@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
-import { HeadingLinks, slugsOf } from './HeadingLinks';
+import { HeadingLinks, headingText, slugsOf } from './HeadingLinks';
 import { MemoryBell, MemoryNotifications } from './MemoryNotifications';
 import { FolderApp, FolderIcon } from './FolderApp';
 import { NoteMeta, type NoteMetaInfo } from './NoteMeta';
@@ -68,9 +68,14 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   const [review, setReview] = useState<MemoryReview | null>(null);
   // the updates' review is open; until View, the note shows only the notice over it
   const [viewing, setViewing] = useState(false);
+  // the change the arrows are on in that review; cursor is the issues' own
+  const [change, setChange] = useState(-1);
+  // Decline on a note that also changed some other way since the update: asked first
+  const [confirmDecline, setConfirmDecline] = useState<{ rel: string; ids: string[]; created: boolean } | null>(null);
   // the updates the open note shows, kept after opening the note cleared its dot
   const shownIds = useRef<string[]>([]);
   shownIds.current = review?.ids ?? [];
+  useEffect(() => { if (!review) { setViewing(false); setMode('after'); setChange(-1); } }, [review]);
   const [mode, setMode] = useState<ReviewMode>('after');
   const [version, setVersion] = useState<{ v: MemoryVersion; body: string } | null>(null);
   const [stamp, setStamp] = useState(0);
@@ -99,7 +104,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     const tryIt = (left: number) => {
       const hs = [...document.querySelectorAll<HTMLElement>('.kb-preview .mu-text h1, .kb-preview .mu-text h2, .kb-preview .mu-text h3, .kb-preview .mu-text h4')];
       if (!hs.length && left > 0) { window.setTimeout(() => tryIt(left - 1), 120); return; }
-      const slugs = slugsOf(hs.map((h) => h.textContent ?? ''));
+      const slugs = slugsOf(hs.map(headingText));
       const i = slugs.indexOf(anchor) >= 0 ? slugs.indexOf(anchor) : slugs.findIndex((x) => x === anchor.replace(/-\d+$/, ''));
       if (i >= 0) { hs[i].scrollIntoView({ behavior: 'smooth', block: 'start' }); hs[i].classList.add('h-target'); window.setTimeout(() => hs[i].classList.remove('h-target'), 1600); }
     };
@@ -246,8 +251,8 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   const linksMsg = (r: { files: number; links: number }) => `Updated ${r.links} ${r.links === 1 ? 'link' : 'links'} in ${r.files} ${r.files === 1 ? 'note' : 'notes'}`;
   const errText = (e: unknown) => String(e).replace(/^.*Error:\s*/, '');
   // the arrows: the item becomes current and scrolls into view
-  const jump = (at: number, line: number) => {
-    setCursor(at);
+  const jump = (at: number, line: number, set: (at: number) => void = setCursor) => {
+    set(at);
     const smooth = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     requestAnimationFrame(() => document.querySelector(`.mu-text [data-line="${line}"]`)?.scrollIntoView({ block: 'center', behavior: smooth ? 'smooth' : 'auto' }));
   };
@@ -287,25 +292,30 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
     setReview(r);
     setStamp((x) => x + 1);
   };
-  const startReview = () => { setViewing(true); setMode('after'); setCursor(-1); setIssueOpen(false); };
+  const startReview = () => { setViewing(true); setMode('after'); setChange(-1); setIssueOpen(false); requestAnimationFrame(() => document.querySelector<HTMLElement>('.mu-dock .mu-seg button')?.focus()); };
   // the note's issues, when it has any, take the banner back
-  const endReview = () => { shownIds.current = []; setReview(null); setViewing(false); setMode('after'); setCursor(issueReview?.length ? 0 : -1); };
+  const endReview = () => { shownIds.current = []; setReview(null); requestAnimationFrame(() => memRoot.current?.focus({ preventScroll: true })); };
   const accept = async () => {
     if (!preview) return;
     // updates approved on their own are in the note already
-    if (review?.dot === 'green') await window.quorum.memoryAccept(preview.rel);
-    endReview();
+    const rel = preview.rel;
+    if (review?.dot === 'green') await window.quorum.memoryAccept(rel);
+    if (previewRel.current === rel) endReview();
   };
   // Decline puts back the text from before the updates
-  const reject = async () => {
-    if (!preview || !review) return;
+  const reject = async (rel: string, ids: string[], created: boolean, edits = false) => {
     try {
-      await window.quorum.memoryReject(preview.rel, review.ids);
+      if (await window.quorum.memoryReject(rel, ids, edits) === 'edited') { setConfirmDecline({ rel, ids, created }); return; }
+      flash(created ? 'Declined. The note Quorum made is in the Trash.' : 'Declined. The earlier text is back, and the text it replaced is kept as a version.');
+      // another note may be open by now
+      if (previewRel.current !== rel) return;
       endReview();
-      if (review.created) { setPreview(null); flash('Declined. The note Quorum made is in the Trash.'); return; }
-      await reloadOpen(preview.rel);
-      if (issueReview) { const items = await loadIssues(preview.rel); setIssueReview(items.length ? items : null); }
-      flash('Declined. The earlier text is back, and the text it replaced is kept as a version.');
+      if (created) { setPreview(null); return; }
+      const [n, items] = await Promise.all([window.quorum.vaultNote(rel), issueReview ? loadIssues(rel) : null]);
+      if (previewRel.current !== rel) return;
+      if (n) setPreview({ rel, ...n });
+      setStamp((x) => x + 1);
+      if (items) setIssueReview(items.length ? items : null);
     } catch (e) { flash(errText(e)); }
   };
   // the open note's issues, from Memory health
@@ -360,7 +370,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   };
   // a click on an issue line opens its drawer; a link on that line to a note that exists still opens the note
   const clickIssue = (e: React.MouseEvent) => {
-    if (!issueReview || viewing || version) return;
+    if (!issueReview || diff || version) return;
     const block = (e.target as HTMLElement).closest<HTMLElement>('.md-issue[data-line]');
     if (!block) return;
     const line = Number(block.dataset.line);
@@ -557,13 +567,14 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
   const locked = !!openRun;
   const openBody = preview?.body ?? null;
   const diff = useMemo(() => (review && viewing && openBody !== null ? noteDiff(review.before, openBody) : null), [review, viewing, openBody]);
+  const at = diff ? Math.min(change, diff.hunks.length - 1) : -1;
   const marks = useMemo(() => {
     const m = new Map<number, string>();
     if (version) return m;
-    if (diff) { if (mode === 'after' && highlight) for (const k of diff.hunks[cursor] ?? []) m.set(k, 'md-now'); }
+    if (diff) { if (mode === 'after' && highlight) for (const k of diff.hunks[at] ?? []) m.set(k, 'md-now'); }
     else if (issueReview) issueReview.forEach((it, i) => m.set(it.line, `${m.get(it.line) ?? ''} md-issue${i === cursor ? ' md-cur' : ''}`.trim()));
     return m;
-  }, [version, mode, diff, highlight, issueReview, cursor]);
+  }, [version, mode, diff, at, highlight, issueReview, cursor]);
   // the note's text is edited in place (VaultEditor), except while something is shown over it: a version, the text
   // before the updates, the changed lines highlighted, issues to review, or a run writing the note
   const reading = !!(version || locked || (diff ? mode === 'before' || highlight : issueReview));
@@ -573,10 +584,10 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
       <Markdown text={version ? version.body : diff && review && mode === 'before' ? review.before : preview.body} diff={!version && mode === 'after' && highlight ? diff?.rows : null} headings root={brain?.root} onWiki={openLink} marks={marks} />
     </>
   );
-  const navOver = (lines: number[]) => ({
-    at: cursor, total: lines.length,
-    onPrev: () => { const i = cursor <= 0 ? lines.length - 1 : cursor - 1; jump(i, lines[i]); },
-    onNext: () => { const i = cursor < 0 || cursor >= lines.length - 1 ? 0 : cursor + 1; jump(i, lines[i]); },
+  const navOver = (lines: number[], now = cursor, set = setCursor) => ({
+    at: now, total: lines.length,
+    onPrev: () => { const i = now <= 0 ? lines.length - 1 : now - 1; jump(i, lines[i], set); },
+    onNext: () => { const i = now < 0 || now >= lines.length - 1 ? 0 : now + 1; jump(i, lines[i], set); },
   });
   const liveFiles = useMemo(() => new Set(Object.keys(live.files)), [live]);
   const liveFolders = useMemo(() => new Set(live.folders), [live]);
@@ -706,9 +717,9 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
                 : review && diff
                   ? <ReviewBanner tone={review.dot} locked={locked}
                       label={`${review.count} ${review.count === 1 ? 'update' : 'updates'} on ${when(review.at)}${diff.hunks.length ? '' : '. No text in the note changed'}`}
-                      mode={mode} onMode={(m) => { setMode(m); setCursor(-1); }} highlight={highlight} onHighlight={() => setHighlight((h) => !h)}
-                      nav={mode === 'after' && highlight ? navOver(diff.hunks.map((h) => h[0])) : undefined}
-                      onAccept={accept} acceptTip="Keep the updates" onReject={reject} rejectTip={review.created ? 'Move this new note to the Trash' : 'Put the earlier text back'} />
+                      mode={mode} onMode={(m) => { setMode(m); setChange(-1); }} highlight={highlight} onHighlight={() => setHighlight((h) => !h)}
+                      nav={mode === 'after' && highlight ? navOver(diff.hunks.map((h) => h[0]), at, setChange) : undefined}
+                      onAccept={accept} acceptTip="Keep the updates" onReject={() => reject(preview.rel, review.ids, review.created)} rejectTip={review.created ? 'Move this new note to the Trash' : 'Put the earlier text back'} />
                   : issueReview && <ReviewBanner tone="orange" locked={locked}
                       label={`${issueReview.length} ${issueReview.length === 1 ? 'item needs' : 'items need'} review`}
                       nav={(() => { const n = navOver(issueReview.map((x) => x.line)); return { ...n, onPrev: () => { n.onPrev(); setIssueOpen(true); }, onNext: () => { n.onNext(); setIssueOpen(true); } }; })()}
@@ -731,7 +742,7 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
               <LinkPreview root={memRoot} from={preview.rel} />
               {/* After shows what the updates removed struck through and what they added highlighted; Before and an opened
                   version show their saved text, dimmed */}
-              <div ref={memRoot} hidden={notifsOpen} onClickCapture={clickIssue} className={`mu-text ${version || (diff && mode === 'before') ? 'mu-old' : ''} ${locked ? 'locked' : ''}`}>
+              <div ref={memRoot} tabIndex={-1} hidden={notifsOpen} onClickCapture={clickIssue} className={`mu-text ${version || (diff && mode === 'before') ? 'mu-old' : ''} ${locked ? 'locked' : ''}`}>
                 {reading ? readView : (
                   <VaultEditor key={preview.rel} rel={preview.rel} onWiki={openLink} onSaved={(body) => { const rel = preview.rel; setPreview((p) => (p && p.rel === rel ? { ...p, body } : p)); }}>{readView}</VaultEditor>
                 )}
@@ -766,6 +777,13 @@ export function KnowledgeView({ brain, command, extraCommands }: { brain: Brain 
         ) : <div className="end-loading"><span className="spinner big" /><p>Building graph…</p></div>}
       </section>
       {marking && <ConfidentialMark rel={marking.rel} dir={marking.dir} onClose={() => setMarking(null)} onDone={(msg) => { flash(msg); window.quorum.confidentialMarks().then(setLocks).catch(() => {}); }} />}
+      {confirmDecline && (
+        <ConfirmModal title="Decline and undo the other changes too?" action="Decline"
+          body={confirmDecline.created
+            ? 'Quorum made this note, and it was changed after that. Declining moves the note to the Trash with those changes in it.'
+            : 'This note was also changed after the update. Declining puts back the text from before the update, so those changes leave the note too. The current text is kept under Versions.'}
+          onDone={(ok) => { const d = confirmDecline; setConfirmDecline(null); if (ok) reject(d.rel, d.ids, d.created, true); }} />
+      )}
       {confirmStop && (
         <ConfirmModal title={`Stop ${confirmStop.label}?`} action="Stop and delete updates"
           body="The updates from this run will be deleted and cannot be recovered. The notes it changed go back to how they were before the run."

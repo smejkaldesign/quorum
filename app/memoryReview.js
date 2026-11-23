@@ -82,13 +82,16 @@ export function folderDots(files) {
 
 // the updates an open file's banner is about: the ones waiting for approval when the dot is green, the approved ones
 // not opened yet when it is blue. ids are updates the open page already shows; they stay in the group after opening the
-// file cleared its dot. first is the oldest of them, whose saved text is the Before view
+// file cleared its dot. Every update since the oldest of them belongs to the group, since the page shows the text from
+// before that one next to the text now. first is the oldest, whose saved text is the Before view
 export function reviewGroup(rec, { now, days = DOT_DAYS, ids = [] }) {
   const shown = new Set(ids);
   const dot = fileDot(rec, { now, days });
   const fresh = (u) => (dot === 'green' ? !u.approved : dot === 'blue' && freshApproved(rec, u, now, days));
-  const ups = (rec?.updates ?? []).filter((u) => fresh(u) || shown.has(u.id)).sort((a, b) => a.at - b.at);
-  if (!ups.length) return null;
+  const all = [...(rec?.updates ?? [])].sort((a, b) => a.at - b.at);
+  const from = all.findIndex((u) => fresh(u) || shown.has(u.id));
+  if (from < 0) return null;
+  const ups = all.slice(from);
   return { dot: dot ?? 'blue', ids: ups.map((u) => u.id), count: ups.length, at: ups[ups.length - 1].at, first: ups[0], changes: ups.reduce((n, u) => n + (u.changes ?? 0), 0) };
 }
 

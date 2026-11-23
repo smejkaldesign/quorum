@@ -28,7 +28,9 @@ export const Markdown = memo(function Markdown({ text, root, headings, onWiki, m
     const body = segs ? changed(segs, root) : inline(m.text, root);
     if (m.kind === 'bullet') { list.push({ depth: m.level, body, mark, line: at }); return; }
     flush();
-    if (m.kind === 'heading' && headings) blocks.push(<h2 key={blocks.length} className={mark ? `md-h ${mark}` : 'md-h'} data-line={at}><span className="hash">#</span>{body}</h2>);
+    // a heading the update removed is not one of the note's headings any more, so links and the Outline skip it
+    if (m.kind === 'heading' && headings && segs?.every((x) => x.kind === 'del')) blocks.push(<div key={blocks.length} className={mark ? `md-h ${mark}` : 'md-h'} data-line={at}>{body}</div>);
+    else if (m.kind === 'heading' && headings) blocks.push(<h2 key={blocks.length} className={mark ? `md-h ${mark}` : 'md-h'} data-line={at}><span className="hash">#</span>{body}</h2>);
     else if (line.trim()) blocks.push(<p key={blocks.length} className={mark} data-line={at}>{body}</p>);
   });
   flush();

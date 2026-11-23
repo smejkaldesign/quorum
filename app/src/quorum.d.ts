@@ -620,7 +620,7 @@ declare global {
       memoryCatchupDismiss(): Promise<boolean>;
       onMemoryCatchup(cb: (s: CatchupStatus) => void): Unsub;
       onAgentActivity(cb: (state: AgentActivity | null) => void): Unsub;
-      memoryReject(rel: string, ids: string[]): Promise<boolean>;
+      memoryReject(rel: string, ids: string[], edits?: boolean): Promise<'done' | 'edited'>;
       liveRuns(): Promise<LiveState>;
       liveStop(id: string): Promise<string[]>;
       onLiveRuns(cb: (s: LiveState) => void): Unsub;

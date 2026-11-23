@@ -173,7 +173,7 @@ contextBridge.exposeInMainWorld('quorum', {
   memoryCatchupCancel: () => ipcRenderer.invoke('memory-catchup-cancel'),
   memoryCatchupDismiss: () => ipcRenderer.invoke('memory-catchup-dismiss'),
   onMemoryCatchup: on('memory-catchup'),
-  memoryReject: (rel, ids) => ipcRenderer.invoke('memory-reject', rel, ids),
+  memoryReject: (rel, ids, edits) => ipcRenderer.invoke('memory-reject', rel, ids, edits),
   liveRuns: () => ipcRenderer.invoke('live-runs'),
   liveStop: (id) => ipcRenderer.invoke('live-stop', id),
   onLiveRuns: on('live-runs'),

@@ -68,6 +68,19 @@ describe('noteDiff', () => {
   it('shows a ticked checkbox', () => {
     expect(shown(noteDiff('- [ ] send the deck to Ada', '- [x] send the deck to Ada'))).toEqual(['-[☐]+[☑] send the deck to Ada']);
   });
+  it('shows nothing for a change in the spaces inside a line', () => {
+    expect(noteDiff('one  two three', 'one two three').hunks).toEqual([]);
+  });
+  it('stays quick on a large rewrite, and keeps the whole new text', () => {
+    const w = 'the plan for Ada and Grace moves to May when pricing closes with'.split(' ');
+    const bullet = (n) => `- ${Array.from({ length: 200 }, (_, k) => w[(k * (n + 3)) % w.length]).join(' ')} ${n}`;
+    const part = (s) => Array.from({ length: 6 }, (_, p) => [`## P${p}`, ...Array.from({ length: 50 }, (_, k) => bullet(p * 50 + k + s))].join('\n')).join('\n');
+    const a = part(0), b = part(7);
+    const t = performance.now();
+    const d = noteDiff(a, b);
+    expect(performance.now() - t).toBeLessThan(1500);
+    expect(d.rows.filter((r) => !r.segs || r.segs.some((x) => x.kind !== 'del')).map((r) => r.line).join('\n')).toBe(b);
+  });
   it('marks every line of a new note', () => {
     expect(shown(noteDiff('', 'one\n\ntwo'))).toEqual(['+[one]', '+[two]']);
   });
@@ -80,8 +93,9 @@ describe('noteDiff', () => {
 
 describe('alike and mdLine', () => {
   it('scores the shared words of two lines', () => {
-    expect(alike('a b', 'a b')).toBe(1);
-    expect(alike('abcd', 'wxyz')).toBe(0);
+    expect(alike(['a', 'b'], ['a', 'b'])).toBe(1);
+    expect(alike(['abcd'], ['wxyz'])).toBe(0);
+    expect(alike(['a', 'b'], ['b', 'a'])).toBe(0.5);
   });
   it('reads a line the way Markdown shows it', () => {
     expect(mdLine('  - [x] done')).toEqual({ kind: 'bullet', level: 1, text: '☑ done' });
