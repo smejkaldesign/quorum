@@ -17,7 +17,7 @@ export const SOURCES = ['none', 'claude-code', 'anthropic-api', 'local'];
 export const ANTHROPIC = { url: `${BY_ID.anthropic.url}/messages`, version: '2023-06-01' };
 export const OLLAMA = { url: OLLAMA_URL, defaultModel: 'llama3.1' };
 export const NEEDS_SOURCE = 'Choose a model provider in Settings › Connectors before Quorum can answer';
-export const NEEDS_TOOLS = 'This question needs the Agent OS; set the agent provider to Claude Code on this Mac';
+export const NEEDS_TOOLS = 'This question reads your memory; set the agent provider to Claude Code on this Mac';
 
 // the picker's aliases are Claude Code's; the API wants full ids
 export const apiModel = (alias) => modelFor('anthropic', alias);

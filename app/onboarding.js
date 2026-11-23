@@ -23,7 +23,7 @@ const STARTER = (name) => ({
   '.obsidian/app.json': '{}\n',
 });
 
-export function createVault(dir, name = 'My Agent OS') {
+export function createVault(dir, name = 'My memory') {
   mkdirSync(path.join(dir, '08-meetings', 'quorum'), { recursive: true });
   for (const [rel, text] of Object.entries(STARTER(name))) {
     const file = path.join(dir, rel);
@@ -61,7 +61,7 @@ export function registerOnboarding({ ipcMain, settings, saveSettings, inspectBra
   // with interview answers the folder is shaped around the person (starter.js); without them it is the plain starter
   ipcMain.handle('onboarding-create-vault', (_e, dir, name, answers = null) => {
     const target = String(dir || defaultVaultDir());
-    const title = String(name || 'My Agent OS');
+    const title = String(name || 'My memory');
     if (answers && typeof answers === 'object') {
       const p = plan({ name: title, answers });
       writeStarter(target, p);
@@ -98,9 +98,9 @@ export function registerOnboarding({ ipcMain, settings, saveSettings, inspectBra
   // the saved answers of a Quorum-built folder, and the interview again on the connected folder
   ipcMain.handle('setup-read', () => (settings.brainRoot ? readSetup(settings.brainRoot) : null));
   ipcMain.handle('setup-rerun', (_e, answers) => {
-    if (!settings.brainRoot || !existsSync(settings.brainRoot)) throw new Error('No Agent OS folder is connected');
+    if (!settings.brainRoot || !existsSync(settings.brainRoot)) throw new Error('No memory system is connected');
     const prev = readSetup(settings.brainRoot);
-    const name = prev?.name || savedBrain(settings)?.name || 'My Agent OS';
+    const name = prev?.name || savedBrain(settings)?.name || 'My memory';
     const r = rerunSetup(settings.brainRoot, { name, answers: answers ?? {} });
     log('setup re-run', settings.brainRoot, r.written.length, 'new files');
     return { ...savedBrain(settings), made: settings.brainMade ?? null, written: r.written };

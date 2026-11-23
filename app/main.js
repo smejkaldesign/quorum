@@ -11,7 +11,7 @@ import { checkConnection } from './connectionCheck.js';
 import { openSpeech, SPEECH_ENGINES } from './speech/provider.js';
 import { SKIP as TREE_SKIP, createFolder, createNote, duplicateItem, moveItem, readVaultNote, renameItem, vaultPath, vaultTarget, vaultTree } from './vault.js';
 import { createVaultIndex } from './vindex.js';
-import { inspectBrain, savedBrain } from './brainDetect.js';
+import { connectQuestion, inspectBrain, savedBrain } from './brainDetect.js';
 import { createMemoryGraph } from './graph/index.js';
 import { createTopics } from './graph/topics.js';
 import { applyUndo, sha, undoRecord } from './fixUndo.js';
@@ -2578,7 +2578,7 @@ setInterval(() => { prepAhead(); }, 10 * 60000).unref?.();
 // the prompt, and Claude Code can read the rest of the Agent OS. The chat is saved under the meeting's event id
 ipcMain.handle('meeting-ask', async (_e, ev, question, history, chatId) => {
   const b = brain();
-  if (!b) throw new Error('Connect your Agent OS first');
+  if (!b) throw new Error('Connect your memory system first');
   const title = String(ev?.title ?? '');
   const past = title ? seriesOf(meetingIndex(), { title }).slice(0, 3) : [];
   const kept = past.length ? briefCache.get(seriesKey(title), `${past[0].file}|${seriesOf(meetingIndex(), { title }).length}`) : null;
@@ -4935,7 +4935,7 @@ ipcMain.handle('vault-note-edit', (_e, rel, open) => {
 });
 ipcMain.handle('vault-note-save', (_e, payload) => {
   const b = brain();
-  if (!b) return { error: 'Connect your Agent OS to save notes.' };
+  if (!b) return { error: 'Connect your memory system to save notes.' };
   const r = String(payload?.rel ?? '');
   const s = saveEdit(b.vault, r, payload, suggester.isExcluded);
   if (!('hash' in s)) return s;
@@ -4955,13 +4955,13 @@ ipcMain.handle('vault-note-save', (_e, payload) => {
 ipcMain.handle('vault-bookmarks', () => { const b = brain(); return b ? listBookmarks(b.vault) : []; });
 ipcMain.handle('vault-bookmark', (_e, rel, on) => {
   const b = brain();
-  if (!b) throw new Error('Connect your Agent OS first');
+  if (!b) throw new Error('Connect your memory system first');
   return toggleBookmark(b.vault, String(rel), !!on);
 });
 // today's daily note (dailyNote.js), made from the template when it doesn't exist yet
 ipcMain.handle('vault-today', () => {
   const b = brain();
-  if (!b) throw new Error('Connect your Agent OS first');
+  if (!b) throw new Error('Connect your memory system first');
   const t = openToday(b.vault, new Date());
   if (t.created) vindex?.sync();
   return t.rel;
@@ -5075,7 +5075,7 @@ async function noteAskWithoutTools(prompt, history, attached) {
 
 ipcMain.handle('ask', async (_e, question, files) => {
   const b = brain();
-  if (!b) throw new Error('Connect your Agent OS first');
+  if (!b) throw new Error('Connect your memory system first');
   // a mid-call question gets the running summary before the transcript window, so the answer knows the whole call so far
   const summary = meeting.armed ? summaryBlock(meeting.summary) : '';
   const transcript = meeting.transcript.length ? [summary, transcriptText()].filter(Boolean).join('\n\n') : '';
@@ -5397,7 +5397,7 @@ registerOnboarding({
   runText: (prompt, system) => runClaude(prompt, system, 'haiku', { cwd: homedir() }), hasModel: () => modelSource() !== 'none', owner: () => OWNER, about: aboutMe,
   axTrusted: () => new Promise((resolve) => { const w = (evt) => resolve(evt.trusted); axWaiters.push(w); helperSend({ cmd: 'axStatus', prompt: false }); setTimeout(() => { const i = axWaiters.indexOf(w); if (i >= 0) axWaiters.splice(i, 1); resolve(lastAx?.trusted ?? null); }, 2500); }),
   pickDir: async () => {
-    const r = await dialog.showOpenDialog(win, { title: 'Where should your Agent OS live?', properties: ['openDirectory', 'createDirectory'], defaultPath: path.join(homedir(), 'Documents'), buttonLabel: 'Use folder' });
+    const r = await dialog.showOpenDialog(win, { title: 'Choose where to keep your memory', properties: ['openDirectory', 'createDirectory'], defaultPath: path.join(homedir(), 'Documents'), buttonLabel: 'Use folder' });
     return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
   },
 });
@@ -5418,34 +5418,19 @@ refreshGates();
 syncMeetingWatch();
 ipcMain.handle('connect-brain', async () => {
   const r = await dialog.showOpenDialog(win, {
-    title: 'Connect your Agent OS',
-    message: 'Choose the root folder of your Agent OS: the folder with your notes, or the one with CLAUDE.md.',
+    title: 'Connect your existing memory system',
+    message: 'Choose the top folder: the one with CLAUDE.md if you have it, or the folder with your notes.',
     defaultPath: settings.brainRoot || homedir(),
     properties: ['openDirectory'],
   });
   if (r.canceled || !r.filePaths[0]) return brain();
   const b = inspectBrain(r.filePaths[0]);
-  const where = `Agent OS folder: ${tilde(b.root)}`;
-  if (b.markers.found === 'child') {
-    // Quorum picked a subfolder for the notes, so the person sees both folders before anything is saved
-    const ok = await dialog.showMessageBox(win, {
-      type: 'question', buttons: ['Use these folders', 'Choose notes folder', 'Cancel'], defaultId: 0, cancelId: 2,
-      message: `Quorum found your notes in ${path.relative(b.root, b.vault) || b.name}`,
-      detail: `${where}\nNotes folder: ${tilde(b.vault)}`,
-    });
-    if (ok.response === 0) return connectBrain(b);
-    if (ok.response === 2) return brain();
-    return pickNotesFolder(b.root);
-  }
-  if (b.markers.notes) return connectBrain(b);
-  // nothing here looks like notes, so ask for the notes folder instead of guessing
-  const ask = await dialog.showMessageBox(win, {
-    type: 'question', buttons: ['Choose notes folder', 'Keep notes in this folder', 'Cancel'], defaultId: 0, cancelId: 2,
-    message: "Quorum didn't find any notes here",
-    detail: `${where}\nQuorum looks for notes such as daily notes, meeting notes and project pages. If your notes are in another folder, choose it. If this folder is new or nearly empty, you can keep your notes in it.`,
-  });
-  if (ask.response === 1) return connectBrain(b);
-  if (ask.response === 2) return brain();
+  const q = connectQuestion(b, r.filePaths[0], tilde);
+  if (!q) return connectBrain(b);
+  const { response } = await dialog.showMessageBox(win, { type: 'question', buttons: q.buttons, defaultId: 0, cancelId: 2, message: q.message, detail: q.detail });
+  if (response === 2) return brain();
+  // found: Yes connects. none: the second button keeps the notes in the folder picked. Any other answer picks a notes folder
+  if (response === (q.kind === 'found' ? 0 : 1)) return connectBrain(b);
   return pickNotesFolder(b.root);
 });
 const tilde = (p) => (p === homedir() || p.startsWith(homedir() + path.sep) ? `~${p.slice(homedir().length)}` : p);
@@ -5459,8 +5444,8 @@ async function pickNotesFolder(root) {
   if (rel.startsWith('..') || path.isAbsolute(rel)) {
     const ok = await dialog.showMessageBox(win, {
       type: 'info', buttons: ['Use this notes folder', 'Cancel'], defaultId: 0, cancelId: 1,
-      message: 'This notes folder is outside your Agent OS folder',
-      detail: `Agent OS folder: ${tilde(root)}\nNotes folder: ${tilde(picked)}\nYour Agent OS folder stays the same.`,
+      message: 'This notes folder is outside the folder you connected',
+      detail: `Connected folder: ${tilde(root)}\nNotes folder: ${tilde(picked)}\nThe connected folder stays the same.`,
     });
     if (ok.response !== 0) return brain();
   }
@@ -5790,7 +5775,7 @@ ipcMain.handle('note-keep', (_e, file) => {
 });
 // frontmatter, when given, replaces the note's frontmatter (the Properties panel); its title line still follows the title
 function saveHandNote({ id, file, title, body, hash, fresh, frontmatter }) {
-  if (!brain()) return { error: 'Connect your Agent OS to save notes.' };
+  if (!brain()) return { error: 'Connect your memory system to save notes.' };
   const text = String(body ?? '');
   if (!file) {
     const now = new Date();
@@ -6045,7 +6030,7 @@ const CONTROL_WRITES = new Set(['start', 'stop', 'go', 'end', 'ask', 'note-new',
 const CLI_SETTINGS = { model: ['opus', 'sonnet', 'haiku'], autoListen: [true, false], suggestions: [true, false] };
 function cliNote(rel) {
   const b = brain();
-  if (!b) throw new Error('Connect your Agent OS in Quorum first');
+  if (!b) throw new Error('Connect your memory system in Quorum first');
   const clean = String(rel ?? '').replace(new RegExp(`^${path.basename(b.vault)}/`), '');
   const abs = clean && vaultPath(b.vault, clean.endsWith('.md') ? clean : `${clean}.md`);
   if (!abs || !abs.endsWith('.md')) throw new Error(`No note at ${rel}`);
@@ -6110,14 +6095,14 @@ async function control({ cmd, args = {} }) {
       await endMeeting();
       return 'Call ended. Your notes are being written in Quorum.';
     case 'ask': {
-      if (!b) throw new Error('Connect your Agent OS in Quorum first');
+      if (!b) throw new Error('Connect your memory system in Quorum first');
       // a Terminal question is its own chat, so whatever chat is open in the app keeps going untouched
       const kept = { convo, chatHistory };
       convo = null; chatHistory = [];
       try { return await handlers.ask(null, String(args.question ?? '').slice(0, 4000), []); } finally { ({ convo, chatHistory } = kept); }
     }
     case 'note-new': {
-      if (!b) throw new Error('Connect your Agent OS in Quorum first');
+      if (!b) throw new Error('Connect your memory system in Quorum first');
       const rel = createNote(b.vault, String(args.folder || '00-inbox'), String(args.title || 'Untitled'));
       if (args.text) store.notes.write(path.join(b.vault, rel), `# ${path.basename(rel, '.md')}\n\n${String(args.text).replace(/\n*$/, '\n')}`);
       cliVersion(rel, null, 'Made this note');

@@ -99,7 +99,7 @@ export function setupSection(answers, areas = TEMPLATES[answers.template].areas)
 }
 
 // the full file set for a fresh folder; existing files are never overwritten by writeStarter
-export function plan({ name = 'My Agent OS', answers: raw }) {
+export function plan({ name = 'My memory', answers: raw }) {
   const answers = normalizeAnswers(raw);
   const t = TEMPLATES[answers.template];
   const f = (k) => folderName(k, answers.organize);

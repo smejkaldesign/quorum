@@ -31,7 +31,7 @@ describe('meeting suggestions', () => {
     await s.detect();
     expect(queries).toEqual(['pricing plan']);
     expect(cards).toHaveLength(1);
-    expect(cards[0].caption).toBe('Using your Agent OS · 1 note');
+    expect(cards[0].caption).toBe('Using your memory · 1 note');
     const r = await s.accept(cards[0].id);
     expect(r.sources).toEqual([{ n: 1, title: 'Pricing', rel: 'pricing.md', abs, app: 'quorum', url: null }]);
     expect(prompts[1]).toContain('The plan is $25 a seat.');

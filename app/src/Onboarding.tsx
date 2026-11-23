@@ -76,7 +76,7 @@ export function Onboarding({ brain, onBrain, accountSlot, onDone }: { brain: Bra
           <section className="onb-step">
             <h1>You're set</h1>
             <ul className="onb-summary">
-              <li><IconFolder width={16} height={16} /> {brain ? `Agent OS at ${home(brain.root)}` : 'No Agent OS yet (connect one in Settings)'}</li>
+              <li><IconFolder width={16} height={16} /> {brain ? `Memory at ${home(brain.vault || brain.root)}` : 'No memory system yet (connect one in Settings)'}</li>
               <li><ProviderMark provider="anthropic" /> {managed ? "Model: Quorum's models (after you sign in)" : status?.model?.source && status.model.source !== 'none' ? `Model: ${SOURCE_NAMES[status.model.source]}` : 'No model source yet (choose one in Settings › Connectors)'}</li>
               {nt.manualListen && <li><IconMic width={16} height={16} /> {status?.permissions?.microphone === 'granted' ? 'Microphone allowed' : nt.meetingCapture ? 'Microphone: macOS will ask on your first call' : 'Microphone: macOS will ask the first time you start listening'}</li>}
               {nt.meetingCapture && <li><IconShield width={16} height={16} /> {status?.permissions?.accessibility === 'granted' ? 'Accessibility allowed' : 'Accessibility: needed to read the meeting chat'}</li>}
@@ -112,7 +112,7 @@ function Actions({ onBack, onNext, ready, onSkip, extra, busy }: { onBack: () =>
 // shows only once Create new is picked; meeting notes inside an existing folder are found by scanning it afterwards
 function AgentOsStep({ brain, status, onBrain, onBack, onNext, catchup, onCatchup }: { brain: Brain | null; status: Status; onBrain: (b: Brain | null) => void; onBack: () => void; onNext: () => void; catchup: boolean; onCatchup: (on: boolean) => void }) {
   const [mode, setMode] = useState<'create' | null>(null);
-  const [name, setName] = useState('My Agent OS');
+  const [name, setName] = useState('My memory');
   const [dir, setDir] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -132,7 +132,7 @@ function AgentOsStep({ brain, status, onBrain, onBack, onNext, catchup, onCatchu
   }, [mode]);
   const create = async (shaped: boolean) => {
     setBusy(true); setError('');
-    try { onBrain(await window.quorum.onboardingCreateVault(dir, name.trim() || 'My Agent OS', shaped ? answersFrom(draft) : null)); setMode(null); } catch (e) { setError(String((e as Error).message || e)); }
+    try { onBrain(await window.quorum.onboardingCreateVault(dir, name.trim() || 'My memory', shaped ? answersFrom(draft) : null)); setMode(null); } catch (e) { setError(String((e as Error).message || e)); }
     setBusy(false);
   };
   const connect = async () => { const b = await window.quorum.connectBrain(); if (b) { onBrain(b); setMode(null); } };
@@ -174,12 +174,12 @@ function AgentOsStep({ brain, status, onBrain, onBack, onNext, catchup, onCatchu
   const foundText = notes ? [...notes.sources.map((x) => `${x.count} ${x.name} ${x.count === 1 ? 'note' : 'notes'}`), ...(notes.notes ? [`${notes.notes} Quorum ${notes.notes === 1 ? 'note' : 'notes'}`] : [])].join(' · ') || 'Quorum saves new meeting notes here' : '';
   return (
     <section className="onb-step">
-      <h1>Connect your Agent OS</h1>
-      <p>Your Agent OS is a folder of markdown notes that Quorum and your AI read and write. Connect one you already have (an Obsidian vault or a repo with CLAUDE.md) and Quorum finds the meeting notes in it, or start a fresh one.</p>
+      <h1>Connect your memory system</h1>
+      <p>A folder of markdown notes that Quorum and your AI read and write. Connect the one you already have, such as an Obsidian vault or a folder with CLAUDE.md, and Quorum finds your notes in it. Or start a new one.</p>
       {brain ? (
         <div className="onb-choice on">
           <IconCheck width={18} height={18} className="ok" />
-          <div><strong>{brain.name}</strong><em title={brainPlace(brain, home).full}>{brainPlace(brain, home).text}{guardCount ? ` · ${guardCount} ${guardCount === 1 ? 'guardrail' : 'guardrails'} found, review them in Settings, Guardrails` : ''}</em></div>
+          <div><strong>{brain.name}</strong><em title={brainPlace(brain, home).full}>{home(brain.vault || brain.root)}{guardCount ? ` · ${guardCount} ${guardCount === 1 ? 'guardrail' : 'guardrails'} found, review them in Settings, Guardrails` : ''}</em></div>
           <button className="pill" onClick={connect}>Change</button>
         </div>
       ) : (
@@ -188,7 +188,7 @@ function AgentOsStep({ brain, status, onBrain, onBack, onNext, catchup, onCatchu
             <IconFolder width={20} height={20} /><span><strong>Create new</strong><em>A starter folder with an index and instructions</em></span>
           </button>
           <button type="button" className="onb-tile" onClick={connect}>
-            <IconFolderOpen width={20} height={20} /><span><strong>Connect existing</strong><em>Your notes stay where they are</em></span>
+            <IconFolderOpen width={20} height={20} /><span><strong>Connect your existing memory system</strong><em>Your notes stay where they are</em></span>
           </button>
         </div>
       )}
@@ -207,7 +207,7 @@ function AgentOsStep({ brain, status, onBrain, onBack, onNext, catchup, onCatchu
       )}
       {!brain && mode === 'create' && (
         <div className="onb-form">
-          <label className="set-field wide onb-field"><span className="onb-label">Name</span><input value={name} aria-label="Name of your Agent OS" placeholder="My Agent OS" autoFocus onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') create(true); }} /></label>
+          <label className="set-field wide onb-field"><span className="onb-label">Name</span><input value={name} aria-label="Name of your memory" placeholder="My memory" autoFocus onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') create(true); }} /></label>
           <div className="onb-row">
             <span className="onb-label">Location</span>
             <code className="onb-path" title={where}>{home(where)}</code>
@@ -468,7 +468,7 @@ function CheckStep({ onBack, onNext }: { onBack: () => void; onNext: () => void 
   return (
     <section className="onb-step">
       <h1>Check connection</h1>
-      <p>Quorum makes sure your agent can reach your meeting notes through Quorum's MCP server and the quorum command. It changes nothing in your Agent OS folder.</p>
+      <p>Quorum makes sure your agent can reach your meeting notes through Quorum's MCP server and the quorum command. It changes nothing in your memory folder.</p>
       {r ? <ConnectionCheckList result={r} running={check.running} onAction={check.act} /> : <p className="muted">Checking…</p>}
       {r && !r.ok && <p className="muted">You can also fix these later in Settings &gt; AI settings.</p>}
       <Actions onBack={onBack} onNext={onNext} ready={!!r} busy={check.running} extra={r ? <ConnectionCheckButton running={check.running} onRun={check.run} label="Check again" /> : undefined} />
