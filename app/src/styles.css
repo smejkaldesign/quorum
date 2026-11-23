@@ -1923,6 +1923,9 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 /* an update in After: added text on light blue, removed text struck through and muted. The change the arrows are on is
    stronger. The blue is the same in the development copy */
 .mu-text .md-add { --chg: rgba(64, 156, 255, 0.24); border-radius: 4px; padding: 1px 2px; background: var(--chg); color: inherit; text-decoration: none; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.mu-text .md-del + .md-add { margin-left: 3px; }
+.mu-text .md-add .md-link, .mu-text .md-add .md-wiki { color: inherit; }
+.mu-text .md-del .md-link, .mu-text .md-del .md-wiki { text-decoration: line-through; }
 .mu-text .md-now .md-add { --chg: rgba(64, 156, 255, 0.4); }
 .mu-text .md-del, .mu-text .md-del .md-link, .mu-text .md-del .md-wiki { color: var(--muted); }
 .mu-text .md-now .md-del, .mu-text .md-now .md-del .md-link, .mu-text .md-now .md-del .md-wiki { color: #b4b4ba; }
