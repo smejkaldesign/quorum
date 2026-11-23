@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { brainPlace } from './brainPlace';
 import type { AccountState, Brain, MeetingSourceInfo, OnboardingChecks, OnboardingStatus } from './quorum';
 import { ConnectHint } from './ConnectHint';
 import { McpPaths, useMcpOverlap } from './McpPaths';
@@ -179,7 +178,7 @@ function AgentOsStep({ brain, status, onBrain, onBack, onNext, catchup, onCatchu
       {brain ? (
         <div className="onb-choice on">
           <IconCheck width={18} height={18} className="ok" />
-          <div><strong>{brain.name}</strong><em title={brainPlace(brain, home).full}>{home(brain.vault || brain.root)}{guardCount ? ` · ${guardCount} ${guardCount === 1 ? 'guardrail' : 'guardrails'} found, review them in Settings, Guardrails` : ''}</em></div>
+          <div><strong>{brain.name}</strong><em title={brain.vault || brain.root}>{home(brain.vault || brain.root)}{guardCount ? ` · ${guardCount} ${guardCount === 1 ? 'guardrail' : 'guardrails'} found, review them in Settings, Guardrails` : ''}</em></div>
           <button className="pill" onClick={connect}>Change</button>
         </div>
       ) : (
@@ -188,7 +187,7 @@ function AgentOsStep({ brain, status, onBrain, onBack, onNext, catchup, onCatchu
             <IconFolder width={20} height={20} /><span><strong>Create new</strong><em>A starter folder with an index and instructions</em></span>
           </button>
           <button type="button" className="onb-tile" onClick={connect}>
-            <IconFolderOpen width={20} height={20} /><span><strong>Connect your existing memory system</strong><em>Your notes stay where they are</em></span>
+            <IconFolderOpen width={20} height={20} /><span><strong>Connect existing</strong><em>Your notes stay where they are</em></span>
           </button>
         </div>
       )}
