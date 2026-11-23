@@ -372,7 +372,7 @@ export type TreeItem = { name: string; path: string; dir: boolean; mtime?: numbe
 // Memory tab review of agent changes (memoryVersions.js): green waits for approval, blue is approved and not opened yet
 export type MemoryDot = 'green' | 'blue';
 export type MemoryDots = { files: Record<string, MemoryDot>; folders: Record<string, MemoryDot> };
-export type MemoryReview = { dot: MemoryDot; count: number; at: number; changes: number; before: string; changed: number[] };
+export type MemoryReview = { dot: MemoryDot; ids: string[]; count: number; at: number; changes: number; created: boolean; before: string };
 // agent runs writing vault notes right now (liveRuns.js); wholeVault runs name their files only when they end
 export type LiveRun = { id: string; who: string; label: string; wholeVault: boolean; stoppable: boolean; stopping: boolean; files: string[] };
 export type LiveState = { runs: LiveRun[]; files: Record<string, string>; folders: string[]; vault: string[] };
@@ -604,7 +604,7 @@ declare global {
       vaultNoteSave(p: { rel: string; hash: string; body?: string; frontmatter?: string }): Promise<{ hash: string; frontmatter: string; propsError?: string } | { conflict: true } | { error: string }>;
       vaultNote(rel: string): Promise<{ title: string; body: string; abs: string; app: string; views?: NoteViews; meta?: NoteMetaInfo | null } | null>;
       memoryDots(): Promise<MemoryDots>;
-      memoryReview(rel: string): Promise<MemoryReview | null>;
+      memoryReview(rel: string, ids?: string[]): Promise<MemoryReview | null>;
       memoryOpened(rel: string): Promise<void>;
       memoryAccept(rel: string): Promise<number>;
       memoryVersions(rel: string): Promise<MemoryVersion[]>;
@@ -620,7 +620,7 @@ declare global {
       memoryCatchupDismiss(): Promise<boolean>;
       onMemoryCatchup(cb: (s: CatchupStatus) => void): Unsub;
       onAgentActivity(cb: (state: AgentActivity | null) => void): Unsub;
-      memoryReject(rel: string): Promise<boolean>;
+      memoryReject(rel: string, ids: string[], edits?: boolean): Promise<'done' | 'edited'>;
       liveRuns(): Promise<LiveState>;
       liveStop(id: string): Promise<string[]>;
       onLiveRuns(cb: (s: LiveState) => void): Unsub;

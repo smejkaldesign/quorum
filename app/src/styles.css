@@ -1920,8 +1920,17 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .mu-banner .pill { background: var(--menu-bg); border-color: var(--line-2); color: var(--text); }
 .mu-banner .pill:not(:disabled):hover { border-color: rgba(255, 255, 255, 0.24); }
 .mu-seg button { padding: 4px 12px; }
-.mu-text.green .md-chg { color: var(--go); }
-.mu-text.blue .md-chg { color: var(--brand-soft); }
+/* an update in After: added text on light blue, removed text struck through and muted. The change the arrows are on is
+   stronger. The blue is the same in the development copy */
+.mu-text .md-add { --chg: rgba(64, 156, 255, 0.24); border-radius: 4px; padding: 1px 2px; background: var(--chg); color: inherit; text-decoration: none; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.mu-text .md-del + .md-add { margin-left: 3px; }
+.mu-text .md-add .md-link, .mu-text .md-add .md-wiki { color: inherit; }
+.mu-text .md-del .md-link, .mu-text .md-del .md-wiki { text-decoration: line-through; }
+.mu-text:focus { outline: none; }
+.mu-text .md-now .md-add { --chg: rgba(64, 156, 255, 0.4); }
+.mu-text .md-del, .mu-text .md-del .md-link, .mu-text .md-del .md-wiki { color: var(--muted); }
+.mu-text .md-now .md-del, .mu-text .md-now .md-del .md-link, .mu-text .md-now .md-del .md-wiki { color: #b4b4ba; }
+:root[data-theme="light"] .mu-text .md-del, :root[data-theme="light"] .mu-text .md-del .md-link, :root[data-theme="light"] .mu-text .md-del .md-wiki { color: #63636a; }
 .mu-text.mu-old .md p, .mu-text.mu-old .md li, .mu-text.mu-old .md-h { color: rgba(236, 236, 238, 0.62); }
 .np-item.mu-version:disabled { cursor: default; opacity: 0.6; }
 .np-item.mu-version:disabled:hover { background: none; }
@@ -1939,8 +1948,6 @@ button.meta-pill.meta-app:hover { color: var(--text); }
 .mu-banner .mu-icon:disabled { opacity: 0.45; cursor: default; }
 .mu-banner .mu-icon.active { color: var(--brand-soft); }
 .mu-banner.green .mu-icon.active { color: var(--go); }
-.mu-banner .mu-yes svg { color: var(--go); }
-.mu-banner .mu-no svg { color: var(--danger); }
 .mu-banner .mu-nav { display: inline-flex; align-items: center; gap: 6px; }
 .mu-banner .mu-pos { min-width: 48px; text-align: center; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .mu-banner.red { border-color: rgba(var(--danger-rgb), 0.35); }
@@ -2566,6 +2573,7 @@ button.meta-pill:hover:not(:disabled), a.meta-pill:hover, .nf-toggle:hover, .nf-
    the header grows by one row; the note scrolls under it and the issue drawer opens below it */
 .mu-dock { flex: none; }
 .mu-dock > .mu-banner { margin: 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 8px 14px; min-height: 52px; box-sizing: border-box; background: var(--card); }
+.mu-dock > .mu-banner.mu-slim { min-height: 40px; padding: 5px 14px; }
 .mu-dock > .mu-banner.orange { background: color-mix(in srgb, var(--panel), rgb(var(--review-rgb)) 8%); border-bottom-color: rgba(var(--review-rgb), 0.35); }
 /* issue lines: a faint orange fill by default, brighter on hover and on the current one, reaching a little left of
    the text */

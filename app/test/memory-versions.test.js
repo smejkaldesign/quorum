@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { DAY, changeBlocks, fileDot, folderDots, lineDiff, noteBody, prune, reviewGroup } from '../memoryReview.js';
+import { DAY, fileDot, folderDots, lineDiff, noteBody, prune, reviewGroup } from '../memoryReview.js';
 import { createVersionStore, snapshot } from '../memoryVersions.js';
 import { createKeeper } from '../keeper.js';
 import { plan, writeStarter } from '../starter.js';
@@ -74,14 +74,6 @@ describe('dot rules', () => {
     const blue = { updates: [rec.updates[0], { ...rec.updates[1], approved: true, approvedAt: now - 2 * DAY }], openedAt: now - 2.5 * DAY };
     expect(reviewGroup(blue, { now, days: 30 })).toMatchObject({ dot: 'blue', count: 1, first: { id: 'b' } });
     expect(reviewGroup({ updates: [] }, { now, days: 30 })).toBeNull();
-  });
-});
-
-describe('changeBlocks', () => {
-  it('groups changed lines that sit together, across blank lines only', () => {
-    expect(changeBlocks([5, 1, 2, 9])).toEqual([[1, 2], [5], [9]]);
-    expect(changeBlocks([1, 3, 5], 'a\nb\n\nc\nd\ne')).toEqual([[1, 3], [5]]);
-    expect(changeBlocks([])).toEqual([]);
   });
 });
 
@@ -201,6 +193,131 @@ describe('updates and approval', () => {
     expect(store.dots(vault).files['p/a.md']).toBe('green');
     expect(store.approve(vault, 'p/a.md')).toBe(2);
     expect(store.dots(vault).files).toEqual({ 'p/b.md': 'green' });
+  });
+  it('keeps showing the updates of an open page after opening it cleared the dot', () => {
+    const { vault, clock, store } = setup();
+    store.record({ vault, rel: 'a.md', before: 'a', after: 'b', who: 'keeper' });
+    const { ids } = store.review(vault, 'a.md');
+    clock.t += 1000;
+    store.opened(vault, 'a.md');
+    expect(store.review(vault, 'a.md')).toBeNull();
+    expect(store.review(vault, 'a.md', ids)).toMatchObject({ dot: 'blue', ids, count: 1, before: 'a', created: false });
+    store.record({ vault, rel: 'a.md', before: 'b', after: 'c', who: 'agent' });
+    expect(store.review(vault, 'a.md', ids)).toMatchObject({ count: 2, before: 'a' });
+  });
+  it('declines an approved update after its note was opened, and keeps the text it replaced', () => {
+    const { vault, clock, store } = setup();
+    const abs = path.join(vault, 'a.md');
+    store.record({ vault, rel: 'a.md', before: 'a', after: 'b', who: 'keeper' });
+    writeFileSync(abs, 'b');
+    const { ids } = store.review(vault, 'a.md');
+    clock.t += 1000;
+    store.opened(vault, 'a.md');
+    expect(store.reject(vault, 'a.md', ids)).toBe('a');
+    expect(readFileSync(abs, 'utf8')).toBe('a');
+    expect(store.review(vault, 'a.md', ids)).toBeNull();
+    const newest = store.list(vault, 'a.md')[0];
+    expect(newest).toMatchObject({ who: 'you' });
+    expect(store.read(vault, 'a.md', newest.id)).toBe('b');
+  });
+  it('declines nothing when the note was updated again since the page showed it', () => {
+    const { vault, clock, store } = setup();
+    const abs = path.join(vault, 'a.md');
+    store.record({ vault, rel: 'a.md', before: 'a', after: 'b', who: 'keeper' });
+    const { ids } = store.review(vault, 'a.md');
+    clock.t += 1000;
+    store.opened(vault, 'a.md');
+    clock.t += 1000;
+    store.record({ vault, rel: 'a.md', before: 'b', after: 'c', who: 'agent' });
+    writeFileSync(abs, 'c');
+    expect(store.reject(vault, 'a.md', ids)).toBeNull();
+    expect(store.reject(vault, 'a.md', [])).toBeNull();
+    expect(readFileSync(abs, 'utf8')).toBe('c');
+  });
+  it('declines every waiting update, and keeps updates from before them', () => {
+    const { vault, clock, store, opts } = setup();
+    const abs = path.join(vault, 'a.md');
+    store.record({ vault, rel: 'a.md', before: 'a', after: 'b', who: 'keeper' });
+    clock.t += 1000;
+    store.opened(vault, 'a.md');
+    opts.auto = false;
+    clock.t += 1000;
+    store.record({ vault, rel: 'a.md', before: 'b', after: 'c', who: 'keeper' });
+    writeFileSync(abs, 'c');
+    expect(store.reject(vault, 'a.md')).toBe('b');
+    expect(store.files(vault)['a.md'].updates).toHaveLength(1);
+  });
+  it('declines nothing when an approved update was written over a waiting one the page shows alone', () => {
+    const { vault, clock, store, opts } = setup({ auto: false });
+    store.record({ vault, rel: 'a.md', before: 'a', after: 'b', who: 'keeper' });
+    const { ids } = store.review(vault, 'a.md');
+    opts.auto = true;
+    clock.t += 1000;
+    store.record({ vault, rel: 'a.md', before: 'b', after: 'c', who: 'keeper' });
+    writeFileSync(path.join(vault, 'a.md'), 'c');
+    expect(store.reject(vault, 'a.md', ids)).toBeNull();
+    const both = store.review(vault, 'a.md', ids);
+    expect(both).toMatchObject({ dot: 'green', count: 2, before: 'a' });
+    expect(store.reject(vault, 'a.md', both.ids)).toBe('a');
+  });
+  it('declines nothing when an update lands between reading the review and opening the note', () => {
+    const { vault, clock, store } = setup();
+    store.record({ vault, rel: 'a.md', before: 'a', after: 'b', who: 'keeper' });
+    const { ids } = store.review(vault, 'a.md');
+    clock.t += 1000;
+    store.record({ vault, rel: 'a.md', before: 'b', after: 'c', who: 'keeper' });
+    clock.t += 1000;
+    store.opened(vault, 'a.md');
+    writeFileSync(path.join(vault, 'a.md'), 'c');
+    expect(store.reject(vault, 'a.md', ids)).toBeNull();
+  });
+  it('says when the note also changed some other way since the update', () => {
+    const { vault, clock, store } = setup();
+    const abs = path.join(vault, 'a.md');
+    store.record({ vault, rel: 'a.md', before: 'a', after: 'b', who: 'keeper' });
+    writeFileSync(abs, 'b');
+    const { ids } = store.review(vault, 'a.md');
+    expect(store.rejectable(vault, 'a.md', ids)).toMatchObject({ edited: false, created: false, text: 'a' });
+    // in another app, with no version kept
+    writeFileSync(abs, 'b and mine');
+    expect(store.rejectable(vault, 'a.md', ids).edited).toBe(true);
+    // in Quorum
+    writeFileSync(abs, 'b');
+    clock.t += 1000;
+    store.record({ vault, rel: 'a.md', before: 'b', after: 'b mine', who: 'you', agent: false });
+    expect(store.rejectable(vault, 'a.md', ids).edited).toBe(true);
+  });
+  it('sees an edit made between two updates', () => {
+    const { vault, clock, store } = setup();
+    store.record({ vault, rel: 'a.md', before: 'a', after: 'b', who: 'keeper' });
+    clock.t += 1000;
+    store.record({ vault, rel: 'a.md', before: 'b mine', after: 'c', who: 'keeper' });
+    writeFileSync(path.join(vault, 'a.md'), 'c');
+    expect(store.rejectable(vault, 'a.md').edited).toBe(true);
+  });
+  it('keeps the decision when the text is already the earlier one', () => {
+    const { vault, dir, clock, store } = setup({ auto: false });
+    const abs = path.join(vault, 'a.md');
+    store.record({ vault, rel: 'a.md', before: 'a', after: 'b', who: 'keeper' });
+    writeFileSync(abs, 'a');
+    expect(store.reject(vault, 'a.md')).toBe('a');
+    const again = createVersionStore({ dir, now: () => clock.t });
+    expect(again.dots(vault).files).toEqual({});
+  });
+  it('removes a note the updates made, and keeps its text as a version', () => {
+    const { vault, store } = setup();
+    const abs = path.join(vault, 'new.md');
+    store.record({ vault, rel: 'new.md', before: null, after: 'x', who: 'keeper' });
+    writeFileSync(abs, 'x');
+    const r = store.review(vault, 'new.md');
+    expect(r.created).toBe(true);
+    expect(store.rejectable(vault, 'new.md', r.ids)).toMatchObject({ created: true, edited: false, cur: 'x' });
+    // the caller moved it to the Trash first
+    rmSync(abs);
+    expect(store.reject(vault, 'new.md', r.ids, { held: 'x' })).toBe('');
+    const v = store.list(vault, 'new.md')[0];
+    expect(v).toMatchObject({ who: 'you', removed: true });
+    expect(store.read(vault, 'new.md', v.id)).toBe('x');
   });
   it('keeps a version without an update for writes that are no agent change', () => {
     const { vault, store } = setup({ auto: false });

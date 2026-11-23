@@ -1,9 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import type { LiveRun, MemoryVersion, Settings } from './quorum';
+import type { LiveRun, MemoryReview, MemoryVersion, Settings } from './quorum';
 import { Row, Segmented, Toggle } from './controls';
 import { Section } from './NoteTools';
 import { useCatchupControl } from './Catchup';
-import { IconArrowDown, IconArrowUp, IconCheck, IconChevron, IconClock, IconClose, IconHighlight, IconListCheck, IconStop } from './icons';
+import { IconArrowDown, IconArrowUp, IconChevron, IconClock, IconHighlight, IconListCheck, IconStop } from './icons';
 
 // Review of the changes Quorum's agents make to vault notes (memoryVersions.js) and of the issues Memory health finds
 // (memoryHealth.js): the banner over an open note, the banner while a run is writing it, the versions in its side
@@ -17,14 +17,14 @@ export const when = (at: number) => new Date(at).toLocaleString(undefined, { mon
 export type ReviewMode = 'before' | 'after';
 
 // one banner for both reviews: green or blue for updates, red for issues. Each part shows only when its handler is
-// given: the Before and After toggle, the highlight switch, the arrows through the items, Accept and Reject, and
-// Done. locked turns off the controls that change the note while a run is writing it
-export function ReviewBanner({ tone, label, mode, onMode, highlight, onHighlight, nav, onAccept, onReject, words = false, acceptTip, rejectTip, onClose, locked = false }: {
+// given: the Before and After toggle, the highlight switch, the arrows through the items, the two decisions in words,
+// and Done. locked turns off the controls that change the note while a run is writing it
+export function ReviewBanner({ tone, label, mode, onMode, highlight, onHighlight, nav, onAccept, onReject, acceptLabel = 'Accept', rejectLabel = 'Decline', acceptTip, rejectTip, onClose, locked = false }: {
   tone: 'green' | 'blue' | 'red' | 'orange'; label: ReactNode;
   mode?: ReviewMode; onMode?: (m: ReviewMode) => void;
   highlight?: boolean; onHighlight?: () => void;
   nav?: { at: number; total: number; onPrev: () => void; onNext: () => void };
-  onAccept?: () => void; onReject?: () => void; words?: boolean; acceptTip?: string; rejectTip?: string;
+  onAccept?: () => void; onReject?: () => void; acceptLabel?: string; rejectLabel?: string; acceptTip?: string; rejectTip?: string;
   onClose?: () => void; locked?: boolean;
 }) {
   return (
@@ -45,21 +45,26 @@ export function ReviewBanner({ tone, label, mode, onMode, highlight, onHighlight
           <button className="icon-btn mu-icon" aria-label="Next" data-tip="Next" onClick={nav.onNext}><IconArrowDown width={15} height={15} /></button>
         </span>
       )}
-      {/* a Memory health issue answers in words: Archive, Approve */}
-      {words && (
+      {/* decline first, the same order as Decline and Approve everywhere else */}
+      {(onAccept || onReject) && (
         <span className="mu-nav mu-words">
-          {onReject && <button className="act-pill" disabled={locked} data-tip={rejectTip} onClick={onReject}>Archive</button>}
-          {onAccept && <button className="act-pill primary" disabled={locked} data-tip={acceptTip} onClick={onAccept}>Approve</button>}
-        </span>
-      )}
-      {!words && (onAccept || onReject) && (
-        <span className="mu-nav">
-          {/* decline first, the check on the right, the same order as Decline and Approve everywhere else */}
-          {onReject && <button className="icon-btn mu-icon mu-no" disabled={locked} aria-label={rejectTip ?? 'Reject'} data-tip={rejectTip ?? 'Reject'} onClick={onReject}><IconClose width={15} height={15} /></button>}
-          {onAccept && <button className="icon-btn mu-icon mu-yes" disabled={locked} aria-label={acceptTip ?? 'Accept'} data-tip={acceptTip ?? 'Accept'} onClick={onAccept}><IconCheck width={16} height={16} /></button>}
+          {onReject && <button className="act-pill" disabled={locked} data-tip={rejectTip} onClick={onReject}>{rejectLabel}</button>}
+          {onAccept && <button className="act-pill primary" disabled={locked} data-tip={acceptTip} onClick={onAccept}>{acceptLabel}</button>}
         </span>
       )}
       {onClose && <button className="pill small-pill" onClick={onClose}>Done</button>}
+    </div>
+  );
+}
+
+// over a note with updates until View opens their review. Updates approved on their own show it on the first open only;
+// updates that wait for approval show it until they are decided
+export function UpdateNotice({ review, disabled, onView }: { review: MemoryReview; disabled: boolean; onView: () => void }) {
+  const n = `${review.count} new ${review.count === 1 ? 'update' : 'updates'}`;
+  return (
+    <div className={`mu-banner mu-slim ${review.dot}`} role="status">
+      <span className="mu-count">{review.dot === 'green' ? `${n} to approve` : n}</span>
+      <button className="pill small-pill" disabled={disabled} data-tip={review.dot === 'green' ? 'See what changed, then accept or decline' : 'Already in the note. See what changed'} onClick={onView}>View</button>
     </div>
   );
 }

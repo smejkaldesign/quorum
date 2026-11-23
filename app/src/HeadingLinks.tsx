@@ -9,6 +9,13 @@ export function slugsOf(texts: string[]) {
   const seen = new Map<string, number>();
   return texts.map((t) => { const b = headingSlug(t); const n = (seen.get(b) ?? 0) + 1; seen.set(b, n); return n > 1 ? `${b}-${n}` : b; });
 }
+// a heading's text as the note has it, without the words an update removed from it (Markdown.tsx diff)
+export const headingText = (h: HTMLElement) => {
+  if (!h.querySelector('.md-del')) return h.textContent ?? '';
+  const c = h.cloneNode(true) as HTMLElement;
+  c.querySelectorAll('.md-del').forEach((x) => x.remove());
+  return c.textContent ?? '';
+};
 export const HEADINGS = 'h1, h2, h3, h4';
 
 // copies a link to a heading and says so for a moment
@@ -40,7 +47,7 @@ export function HeadingLinks({ root, base }: { root: RefObject<HTMLElement | nul
         const line = parseFloat(getComputedStyle(all[i]).lineHeight) || r.height;
         const mid = r.top + Math.min(r.height, line) / 2;
         if (e.clientX >= r.left - 30 && e.clientX <= r.left - 6 && Math.abs(e.clientY - mid) <= 12) {
-          const slug = slugsOf(all.map((x) => x.textContent ?? ''))[i];
+          const slug = slugsOf(all.map(headingText))[i];
           setAt((cur) => (cur?.slug === slug ? cur : { top: mid - b.top, left: r.left - b.left, slug }));
           return;
         }

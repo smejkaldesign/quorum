@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Backlink, NoteViews, OutLink, SearchHit } from './quorum';
-import { slugsOf, useCopyLink } from './HeadingLinks';
+import { headingText, slugsOf, useCopyLink } from './HeadingLinks';
 import { agentName } from './ViewsPill';
 import { IconBack, IconChevron, IconExternal, IconLink, IconSearch } from './icons';
 
@@ -18,7 +18,7 @@ function LinkRow({ title, tip, className = '', onClick }: { title: string; tip?:
 // an outline entry scrolls the note to its heading: the nth heading with that text in the open note
 function toHeading(text: string, nth: number) {
   const plain = (s: string) => s.replace(/[*_`#[\]]/g, '').trim().toLowerCase();
-  const hits = [...document.querySelectorAll<HTMLElement>('.kb-preview .doc h1, .kb-preview .doc h2, .kb-preview .doc h3, .kb-preview .doc h4')].filter((h) => plain(h.textContent ?? '') === plain(text));
+  const hits = [...document.querySelectorAll<HTMLElement>('.kb-preview .doc h1, .kb-preview .doc h2, .kb-preview .doc h3, .kb-preview .doc h4')].filter((h) => plain(headingText(h)) === plain(text));
   (hits[nth] ?? hits[0])?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
