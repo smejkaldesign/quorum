@@ -73,12 +73,13 @@ describe('noteDiff', () => {
   });
   it('stays quick on a large rewrite, and keeps the whole new text', () => {
     const w = 'the plan for Ada and Grace moves to May when pricing closes with'.split(' ');
-    const bullet = (n) => `- ${Array.from({ length: 200 }, (_, k) => w[(k * (n + 3)) % w.length]).join(' ')} ${n}`;
-    const part = (s) => Array.from({ length: 6 }, (_, p) => [`## P${p}`, ...Array.from({ length: 50 }, (_, k) => bullet(p * 50 + k + s))].join('\n')).join('\n');
-    const a = part(0), b = part(7);
+    // every bullet differs and shares its words in another order, so the quick check by words never rules a pair out
+    const bullet = (n, step) => `- ${Array.from({ length: 200 }, (_, k) => w[((k + n) * step) % w.length]).join(' ')} ${n}x${step}`;
+    const part = (step) => Array.from({ length: 6 }, (_, p) => [`## P${p}`, ...Array.from({ length: 50 }, (_, k) => bullet(p * 50 + k, step))].join('\n')).join('\n');
+    const a = part(1), b = part(5);
     const t = performance.now();
     const d = noteDiff(a, b);
-    expect(performance.now() - t).toBeLessThan(1500);
+    expect(performance.now() - t).toBeLessThan(800);
     expect(d.rows.filter((r) => !r.segs || r.segs.some((x) => x.kind !== 'del')).map((r) => r.line).join('\n')).toBe(b);
   });
   it('marks every line of a new note', () => {
