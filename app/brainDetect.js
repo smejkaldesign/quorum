@@ -145,6 +145,25 @@ export function inspectBrain(folder, { root = null, vault = null, home = homedir
   return result(r, v.vault, v.found);
 }
 
+// what to ask before connecting a picked folder: null connects at once. found: the notes are in another folder than the
+// one picked, so the person confirms it first, an Obsidian vault included. none: nothing here looks like notes
+export function connectQuestion(b, picked, show = (p) => p) {
+  if (b.vault !== picked) {
+    const rel = path.relative(picked, b.vault);
+    const inside = !rel.startsWith('..') && !path.isAbsolute(rel);
+    const where = inside ? rel : path.basename(b.vault);
+    const detail = [`Notes folder: ${show(b.vault)}`];
+    // named only when they are in a folder the person did not pick
+    if (b.markers.agentOS && b.root !== picked && b.root !== b.vault) detail.push(`Instructions for your AI: ${show(path.join(b.root, b.markers.agentOS))}`);
+    return { kind: 'found', message: `We found your notes in ${where}. Is that right?`, detail: detail.join('\n'), buttons: [`Yes, use ${path.basename(b.vault)}`, 'Choose another folder', 'Cancel'] };
+  }
+  if (b.markers.notes) return null;
+  return {
+    kind: 'none', message: "We didn't find any notes in this folder", buttons: ['Choose notes folder', 'Keep notes in this folder', 'Cancel'],
+    detail: `${show(b.vault)}\nQuorum looks for notes such as daily notes, meeting notes and project pages. If your notes are in another folder, choose it. If this folder is new or nearly empty, you can keep your notes in it.`,
+  };
+}
+
 // the connected Agent OS from saved settings: the saved folders exactly as they are
 export function savedBrain(settings, home = homedir()) {
   if (!settings?.brainRoot) return null;

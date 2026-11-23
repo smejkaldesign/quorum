@@ -118,7 +118,7 @@ export function createSuggester({ runClaude, toUI, log, getTranscript, getSettin
           id,
           kind: s.kind,
           text: s.kind === 'question' ? `Someone asked: “${s.text}” Look for an answer in your notes?` : `Find your notes on ${s.text}?`,
-          caption: `Using your Agent OS · ${hits.length} ${hits.length === 1 ? 'note' : 'notes'}`,
+          caption: `Using your memory · ${hits.length} ${hits.length === 1 ? 'note' : 'notes'}`,
         });
       }
     } catch (err) {

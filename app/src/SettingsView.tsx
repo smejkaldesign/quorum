@@ -265,7 +265,7 @@ function SecondBrain({ part, brain, onConnect, onDisconnect, onBrain, onViewConn
   const openSetup = async () => { setCreating(false); let rec = null; try { rec = await window.quorum.setupRead(); } catch {} setSetup(draftFrom(rec?.answers)); };
   // the same form creates a folder for someone who skipped it in onboarding: name, location, the interview
   const [creating, setCreating] = useState(false);
-  const [newName, setNewName] = useState('My Agent OS');
+  const [newName, setNewName] = useState('My memory');
   const [newDir, setNewDir] = useState<string | null>(null);
   const [defaultDir, setDefaultDir] = useState('~/Documents/Quorum');
   const [setupError, setSetupError] = useState('');
@@ -278,7 +278,7 @@ function SecondBrain({ part, brain, onConnect, onDisconnect, onBrain, onViewConn
     if (!setup) return;
     setApplying(true); setSetupError('');
     try {
-      const b = creating ? await window.quorum.onboardingCreateVault(newDir, newName.trim() || 'My Agent OS', answersFrom(setup)) : await window.quorum.setupRerun(answersFrom(setup));
+      const b = creating ? await window.quorum.onboardingCreateVault(newDir, newName.trim() || 'My memory', answersFrom(setup)) : await window.quorum.setupRerun(answersFrom(setup));
       onBrain?.(b); setSetup(null);
     } catch (e) { setSetupError(String((e as Error).message || e)); } finally { setApplying(false); }
   };
@@ -338,15 +338,15 @@ function SecondBrain({ part, brain, onConnect, onDisconnect, onBrain, onViewConn
         <Row icon={<IconBrain width={18} height={18} className={brain ? 'ok' : undefined} />}
           title={brain ? <button className="mem-title" onClick={() => window.quorum.openBrain('finder')}>{brain.made === 'quorum' ? 'QuorumBrain' : brain.name}<IconExternal width={14} height={14} /></button> : 'QuorumBrain'}
           hint={brain ? brainPlace(brain, home).full : undefined}
-          desc={brain ? (brain.made === 'quorum' ? `Built by Quorum · ${home(brain.vault || brain.root)}` : brainPlace(brain, home).text) : 'Optional. An Agent OS folder of notes Quorum can answer from. Meeting notes work without one.'}>
+          desc={brain ? (brain.made === 'quorum' ? `Built by Quorum · ${home(brain.vault || brain.root)}` : brainPlace(brain, home).text) : 'Optional. A folder of notes Quorum can answer from. Meeting notes work without one.'}>
           {brain
-            ? <RowMenu label={`${brain.made === 'quorum' ? 'QuorumBrain' : brain.name} options`} items={[...(brain.made === 'quorum' ? [{ label: 'Set up again', icon: <IconBrain width={15} height={15} />, onPick: openSetup }] : []), { label: 'Change Agent OS folder', icon: <IconFolder width={15} height={15} />, onPick: onConnect }, ...(brain.made === 'quorum' ? [] : [{ label: 'Change notes folder', icon: <IconFolder width={15} height={15} />, onPick: async () => { const b = await window.quorum.pickNotesFolder(); if (b) onBrain?.(b); } }]), { label: 'Disconnect', icon: <IconClose width={15} height={15} />, danger: true, onPick: () => setConfirm(true) }]} />
+            ? <RowMenu label={`${brain.made === 'quorum' ? 'QuorumBrain' : brain.name} options`} items={[...(brain.made === 'quorum' ? [{ label: 'Set up again', icon: <IconBrain width={15} height={15} />, onPick: openSetup }] : []), { label: (brain.vault || brain.root) === brain.root ? 'Change memory folder' : 'Change Agent OS folder', icon: <IconFolder width={15} height={15} />, onPick: onConnect }, ...(brain.made === 'quorum' ? [] : [{ label: 'Change notes folder', icon: <IconFolder width={15} height={15} />, onPick: async () => { const b = await window.quorum.pickNotesFolder(); if (b) onBrain?.(b); } }]), { label: 'Disconnect', icon: <IconClose width={15} height={15} />, danger: true, onPick: () => setConfirm(true) }]} />
             : (
               <span className="menu-wrap">
                 <button className="pill" aria-haspopup="menu" aria-expanded={connecting} onClick={() => setConnecting((v) => !v)}>Connect</button>
                 {connecting && (
                   <div className="menu end" role="menu">
-                    <button role="menuitem" onClick={() => { setConnecting(false); onConnect(); }}><IconFolder width={15} height={15} /> Connect an existing folder</button>
+                    <button role="menuitem" onClick={() => { setConnecting(false); onConnect(); }}><IconFolder width={15} height={15} /> Connect your existing memory system</button>
                     <button role="menuitem" onClick={() => { setConnecting(false); openCreate(); }}><IconBrain width={15} height={15} /> Create a new one</button>
                   </div>
                 )}
@@ -361,7 +361,7 @@ function SecondBrain({ part, brain, onConnect, onDisconnect, onBrain, onViewConn
             <p>{creating ? 'A folder of markdown notes Quorum and your AI read and write, shaped around you. Every answer is optional.' : 'Applying adds new folders and notes, replaces the section Quorum generated in CLAUDE.md, and adds missing lines to index.md. No other file you wrote changes.'}</p>
             {creating && (
               <div className="setup-form setup-where">
-                <label className="set-field wide onb-field"><span className="onb-label">Name</span><input value={newName} aria-label="Name of your Agent OS" onChange={(e) => setNewName(e.target.value)} /></label>
+                <label className="set-field wide onb-field"><span className="onb-label">Name</span><input value={newName} aria-label="Name of your memory" onChange={(e) => setNewName(e.target.value)} /></label>
                 <div className="onb-row"><span className="onb-label">Location</span><code className="onb-path">{home(newDir ?? defaultDir)}</code><button className="pill small-pill" onClick={async () => { const d = await window.quorum.onboardingPickDir(); if (d) setNewDir(d); }}>Choose…</button></div>
               </div>
             )}
@@ -523,7 +523,7 @@ function ExportRow() {
   const desc = state.phase === 'running' ? (state.total ? `Writing ${n(state.done, 'file')} of ${state.total.toLocaleString()}` : 'Gathering your notes')
     : state.phase === 'done' ? `Saved ${n(state.files, 'file')}${state.skipped ? `; ${n(state.skipped, 'file')} could not be read` : ''}`
     : state.phase === 'error' ? state.error ?? 'The export could not be written.'
-    : 'Saves every note, meeting note and chat as one zip archive. Your notes are also plain files in your Agent OS';
+    : 'Saves every note, meeting note and chat as one zip archive. Your notes are also plain files in your memory folder';
   return (
     <Row icon={<IconStack width={18} height={18} />} title="Export your notes" desc={desc}>
       {state.phase === 'done' && state.path && <button className="pill" onClick={() => window.quorum.exportReveal(state.path!)}>Show in Finder</button>}

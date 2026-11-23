@@ -194,7 +194,7 @@ function vaultNoteText(rel) {
 // folder; a vault the app has not opened since that move still has it in .quorum
 function learnedFacts() {
   const v = vault();
-  if (!v) throw new Error('No Agent OS connected');
+  if (!v) throw new Error('No memory system connected');
   const rel = learnedFileIn(readJson(path.join(keeperHome(HOME, v), 'keeper.json'), null) ?? readJson(path.join(v, '.quorum', 'keeper.json'), {}));
   const abs = path.resolve(v, rel);
   const file = rel.split(path.sep).join('/');
@@ -228,7 +228,7 @@ function importMeeting({ source, id, title, date, participants = [], url = null,
   if (/[\r\n]/.test(sid)) throw new Error('id must be one line');
   if (settings().access === 'read') throw new Error('Quorum is set to read only, so nothing can be imported. Change Access to Read and write in Quorum under Settings > AI tools.');
   const root = meetingsDir();
-  if (!root) throw new Error('Quorum has no meeting notes folder yet. Connect an Agent OS in Quorum first.');
+  if (!root) throw new Error('Quorum has no meeting notes folder yet. Connect your memory system in Quorum first.');
   const dir = path.join(root, src);
   for (const f of existsSync(dir) ? readdirSync(dir) : []) {
     if (!f.endsWith('.md')) continue;
@@ -386,7 +386,7 @@ Memory graph and search (needs the app open)
                                     each takes --budget <tokens> (default 1500)
 
 Ask Quorum
-  quorum ask <question>             answers from your Agent OS, saved to History
+  quorum ask <question>             answers from your memory, saved to History
 
 Knowledge bases (Quorum Cloud, needs the app open and signed in)
   quorum kb list                    the knowledge bases you can read
@@ -399,7 +399,7 @@ During a call
   quorum go                         same as GO: starts listening again
   quorum end                        end the call and write your notes
 
-Notes in your Agent OS
+Notes in your memory
   quorum new <title> [--folder f]   new note (default folder 00-inbox); text from stdin or after --text
   quorum add <path> <text>          add text to the end of a note
   quorum edit <path>                open a note in your editor and save it back

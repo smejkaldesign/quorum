@@ -2,7 +2,7 @@
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { findRoot, inspectBrain, noteCount, savedBrain, structured, vaultSignals } from '../brainDetect.js';
+import { connectQuestion, findRoot, inspectBrain, noteCount, savedBrain, structured, vaultSignals } from '../brainDetect.js';
 import { createVault } from '../onboarding.js';
 
 const base = mkdtempSync('/tmp/qbrain-');
@@ -235,5 +235,40 @@ describe('saved folders', () => {
 
   it('has no Agent OS without a saved folder', () => {
     expect(savedBrain({ brainRoot: null, vaultPath: null })).toBeNull();
+  });
+});
+
+describe('connectQuestion before a picked folder connects', () => {
+  const ask = (picked) => connectQuestion(inspect(picked), picked, (p) => p.replace(base, '~'));
+
+  it('asks about MyBrain when the folder above it is picked', () => {
+    const dir = tree(AGENT_OS);
+    const q = ask(dir);
+    expect(q).toMatchObject({ kind: 'found', message: 'We found your notes in MyBrain. Is that right?', buttons: ['Yes, use MyBrain', 'Choose another folder', 'Cancel'] });
+    expect(q.detail).toBe(`Notes folder: ~/${path.basename(dir)}/MyBrain`);
+  });
+
+  it('asks about an Obsidian vault in a subfolder too', () => {
+    expect(ask(tree(['CLAUDE.md', 'MyBrain/.obsidian/', 'MyBrain/a.md']))).toMatchObject({ kind: 'found', message: 'We found your notes in MyBrain. Is that right?' });
+  });
+
+  it('asks nothing when the picked folder holds the notes', () => {
+    expect(ask(tree(['.obsidian/', 'a.md']))).toBeNull();
+    expect(ask(path.join(tree(AGENT_OS), 'MyBrain'))).toBeNull();
+  });
+
+  it('names the vault when a folder inside it is picked', () => {
+    const dir = tree(['.obsidian/', 'CLAUDE.md', 'sub/a.md']);
+    expect(ask(path.join(dir, 'sub'))).toMatchObject({ kind: 'found', message: `We found your notes in ${path.basename(dir)}. Is that right?`, detail: `Notes folder: ~/${path.basename(dir)}` });
+  });
+
+  it('names the instructions file when it is in a folder that was not picked', () => {
+    const dir = tree(['CLAUDE.md', 'work/vault/.obsidian/', 'work/vault/a.md']);
+    expect(ask(path.join(dir, 'work')).detail).toBe(`Notes folder: ~/${path.basename(dir)}/work/vault\nInstructions for your AI: ~/${path.basename(dir)}/CLAUDE.md`);
+  });
+
+  it('offers a notes folder when nothing looks like notes', () => {
+    const q = ask(tree(['package.json', 'src/index.js']));
+    expect(q).toMatchObject({ kind: 'none', buttons: ['Choose notes folder', 'Keep notes in this folder', 'Cancel'] });
   });
 });

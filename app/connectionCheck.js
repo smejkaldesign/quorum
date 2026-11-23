@@ -168,7 +168,7 @@ export function problemText(p, root, home) {
   if (p.kind === 'ignored') return `Its own search skips them because of "${p.pattern}" in ${at(p.file)}.`;
   if (p.kind === 'denied') return `Claude Code's own file reads skip them because of ${p.rule} in ${at(p.file)}.`;
   if (p.kind === 'script') return `${at(p.file)} leaves out "${p.name}".`;
-  return 'They are saved outside your Agent OS folder.';
+  return 'They are saved outside the folder you connected.';
 }
 
 export const CHECK_NOTE = 'quorum-connection-check';
@@ -193,7 +193,7 @@ export async function checkConnection({ root, notesDir, agent, home = homedir(),
   const mcpOn = (claude.added && !claude.error) || (codex.added && !codex.error);
 
   let problems = null;
-  if (!root) add('folder', L.folder, 'fail', { fix: 'Quorum has no Agent OS folder yet. Press Choose folder to connect one.', action: 'connect-folder' });
+  if (!root) add('folder', L.folder, 'fail', { fix: 'No memory system is connected yet. Press Choose folder to connect one.', action: 'connect-folder' });
   else if (!notesDir) add('folder', L.folder, 'fail', { fix: 'Quorum has no meetings folder yet. Press Choose folder to pick one.', action: 'choose-meetings' });
   else if (!existsSync(notesDir)) {
     // Quorum's notes folder appears with the first meeting note; until then the check writes nothing and asks only

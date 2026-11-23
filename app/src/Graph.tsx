@@ -456,7 +456,7 @@ export function Graph({ data, view, query, focus, timelapse, onOpen, onTimelapse
 
   return (
     <>
-      <canvas ref={canvas} className="graph-canvas" aria-label="Graph of notes in your Agent OS" />
+      <canvas ref={canvas} className="graph-canvas" aria-label="Graph of notes in your memory" />
       <div ref={badge} className="graph-cluster" hidden aria-hidden="true" style={editing ? { visibility: 'hidden' } : undefined}
         onClick={startRename} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); startRename(); } }}>
         <span className="graph-cluster-dot" /><span ref={badgeText} className="graph-cluster-name" />

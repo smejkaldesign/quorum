@@ -107,7 +107,7 @@ function AppMenu({ brain, me, active, onMemory, onSettings, onReport, next }: { 
         <div ref={list} className="menu brain-menu" role="menu" aria-label="Quorum" onKeyDown={onKey} onClick={(e) => e.stopPropagation()}>
           <button role="menuitem" className="brain-item" onClick={run(onMemory)}>
             <IconFolder width={18} height={18} className={brain ? 'ok' : 'err'} />
-            <strong>{brain ? brain.name : 'No Agent OS'}</strong>
+            <strong>{brain ? brain.name : 'No memory connected'}</strong>
           </button>
           <button role="menuitem" className="brain-item" disabled>
             <IconFolderOpen width={18} height={18} /><strong>Team vault</strong>
@@ -739,7 +739,7 @@ export function App() {
             {/* a new chat starts empty: one line until the first message; quick asks sit above the input */}
             {phase === 'idle' && msgs.length === 0 && (
               <div className="chat-zero">
-                <p className="chat-zero-title">{brain ? `Ask anything from ${brain.name}` : 'Connect your Agent OS to start'}</p>
+                <p className="chat-zero-title">{brain ? `Ask anything from ${brain.name}` : 'Connect your memory system to start'}</p>
                 <p className="hist-empty">{brain ? 'Answers come from your notes, with a link to each one.' : 'Quorum answers from the notes in it.'}</p>
               </div>
             )}
@@ -806,7 +806,7 @@ export function App() {
             </div>
           )}
           <Composer value={draft} onChange={setDraft} onSubmit={(q, f) => send(q, f)} inputRef={composer} disabled={!brain}
-            placeholder={!brain ? 'Connect your Agent OS to start' : phase === 'listening' ? 'Message Quorum privately…' : `Ask ${brain.name} anything…`} />
+            placeholder={!brain ? 'Connect your memory system to start' : phase === 'listening' ? 'Message Quorum privately…' : `Ask ${brain.name} anything…`} />
         </>
       )}
 

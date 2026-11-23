@@ -46,7 +46,7 @@ const GROUPS: { label: string; ids: ConnectorId[] }[] = [
 ];
 const ADD_LABEL: Partial<Record<ConnectorId, string>> = { 'claude-code': 'Claude Code sign-in', anthropic: 'Anthropic API key', google: 'Google Gemini', ollama: 'Ollama local model', openai_compatible: 'OpenAI-compatible endpoint' };
 const ADD_NOTE: Partial<Record<ConnectorId, string>> = {
-  'claude-code': 'Your own claude.ai sign-in on this Mac; the only provider that reads your Agent OS',
+  'claude-code': 'Your own claude.ai sign-in on this Mac; the only provider that reads your memory',
   codex: 'Your own Codex sign-in on this Mac; summary and notes',
   antigravity: 'Your own Antigravity sign-in on this Mac; summary and notes',
   anthropic: 'A key from console.anthropic.com, kept in your Keychain',
