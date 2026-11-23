@@ -1,4 +1,6 @@
-import { createContext, memo, useContext, useEffect, useState, type ReactNode } from 'react';
+import { Fragment, createContext, memo, useContext, useEffect, useState, type ReactNode } from 'react';
+import { inlineRe, mdLine } from './mdLine';
+import type { DiffRow, DiffSeg } from './noteDiff';
 
 // in the Memory view, note links open inside Quorum instead of in another app
 const WikiOpen = createContext<((target: string) => void) | null>(null);
@@ -7,41 +9,49 @@ const WikiOpen = createContext<((target: string) => void) | null>(null);
 // quorum://kb-file link (a file attached to a note of a knowledge base hosted by Quorum, Cloud edition) shows a picture
 // inline and opens a PDF through a short signed URL.
 // builds React nodes (never innerHTML), so model output can't inject markup
-// marks gives lines a class by index (Memory tab review: changed lines, issue lines, the current item). Every marked
-// line carries data-line, so the review can scroll to it
+// marks gives lines a class by index (Memory tab review: issue lines, the current item). Every marked line carries
+// data-line, so the review can scroll to it. diff draws an update in place of text (noteDiff.ts): removed words struck
+// through and added words highlighted; marks and data-line then count its rows
 // memoized: a chat answer re-parses only when its own text changes, not on every live transcript line
-export const Markdown = memo(function Markdown({ text, root, headings, onWiki, marks }: { text: string; root?: string; headings?: boolean; onWiki?: (target: string) => void; marks?: ReadonlyMap<number, string> }) {
+export const Markdown = memo(function Markdown({ text, root, headings, onWiki, marks, diff }: { text: string; root?: string; headings?: boolean; onWiki?: (target: string) => void; marks?: ReadonlyMap<number, string>; diff?: readonly DiffRow[] | null }) {
   const blocks: ReactNode[] = [];
-  let list: { depth: number; text: string; mark?: string; line: number }[] = [];
+  let list: { depth: number; body: ReactNode; mark?: string; line?: number }[] = [];
   const flush = () => {
-    if (list.length) blocks.push(<BulletList key={blocks.length} items={list} root={root} />);
+    if (list.length) blocks.push(<BulletList key={blocks.length} items={list} />);
     list = [];
   };
-  text.split('\n').forEach((line, i) => {
+  const rows: readonly DiffRow[] = diff ?? text.split('\n').map((line) => ({ line, segs: null }));
+  rows.forEach(({ line, segs }, i) => {
     const mark = marks?.get(i);
-    const at = mark ? i : undefined;
-    const bullet = line.match(/^(\s*)[-*]\s+(.*)$/);
-    if (bullet) { list.push({ depth: Math.floor(bullet[1].length / 2), text: bullet[2], mark, line: i }); return; }
+    const at = mark || segs ? i : undefined;
+    const m = mdLine(line);
+    const body = segs ? changed(segs, root) : inline(m.text, root);
+    if (m.kind === 'bullet') { list.push({ depth: m.level, body, mark, line: at }); return; }
     flush();
-    const h = line.match(/^#{1,4}\s+(.*)$/);
-    if (h && headings) blocks.push(<h2 key={blocks.length} className={mark ? `md-h ${mark}` : 'md-h'} data-line={at}><span className="hash">#</span>{inline(h[1], root)}</h2>);
-    else if (line.trim()) blocks.push(<p key={blocks.length} className={mark} data-line={at}>{inline(line.replace(/^#+\s*/, ''), root)}</p>);
+    if (m.kind === 'heading' && headings) blocks.push(<h2 key={blocks.length} className={mark ? `md-h ${mark}` : 'md-h'} data-line={at}><span className="hash">#</span>{body}</h2>);
+    else if (line.trim()) blocks.push(<p key={blocks.length} className={mark} data-line={at}>{body}</p>);
   });
   flush();
   return <WikiOpen.Provider value={onWiki ?? null}><div className="md">{blocks}</div></WikiOpen.Provider>;
 });
 
-function BulletList({ items, root }: { items: { depth: number; text: string; mark?: string; line: number }[]; root?: string }) {
+function BulletList({ items }: { items: { depth: number; body: ReactNode; mark?: string; line?: number }[] }) {
   return (
     <ul>
-      {items.map((it, i) => <li key={i} style={{ marginLeft: it.depth * 18 }} className={[it.depth ? 'sub' : '', it.mark ?? ''].filter(Boolean).join(' ')} data-line={it.mark ? it.line : undefined}>{inline(it.text.replace(/^\[ \]\s*/, '☐ ').replace(/^\[x\]\s*/i, '☑ '), root)}</li>)}
+      {items.map((it, i) => <li key={i} style={{ marginLeft: it.depth * 18 }} className={[it.depth ? 'sub' : '', it.mark ?? ''].filter(Boolean).join(' ')} data-line={it.line}>{it.body}</li>)}
     </ul>
   );
 }
 
+function changed(segs: readonly DiffSeg[], root?: string): ReactNode {
+  return segs.map((s, i) => (s.kind === 'add' ? <ins key={i} className="md-add">{inline(s.text, root)}</ins>
+    : s.kind === 'del' ? <del key={i} className="md-del">{inline(s.text, root)}</del>
+      : <Fragment key={i}>{inline(s.text, root)}</Fragment>));
+}
+
 function inline(text: string, root?: string): ReactNode[] {
   const out: ReactNode[] = [];
-  const re = /\*\*(.+?)\*\*|`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)|!?\[\[([^\]|]+?)(?:\|([^\]]+))?\]\]|!\[([^\][]*)\]\(([^)\s]+)\)/g;
+  const re = inlineRe();
   let last = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text))) {

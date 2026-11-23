@@ -46,7 +46,7 @@ import { listBookmarks, moveBookmarks, openToday, openEdit, saveEdit, toggleBook
 import { createKeeper, folders } from './keeper.js';
 import { createVersionStore } from './memoryVersions.js';
 import { createLiveRuns, stopAndRestore } from './liveRuns.js';
-import { lineDiff, noteBody } from './memoryReview.js';
+import { noteBody } from './memoryReview.js';
 import { wouldBlock } from './guardrails.js';
 import { createPredicates } from './guardrails-predicates.js';
 import { KEPT_KEYS, carryKeys, reconcile, withChoice } from './shareChoice.js';
@@ -2334,7 +2334,7 @@ handleAction('activity-review', async (_e, items, verdict) => {
       } else if (it.kind === 'memory' && b && t.rel) {
         // dismiss keeps the page as it is now, so the updates count as approved
         if (ok || dismiss) memoryVersions.approve(b.vault, t.rel);
-        else if (memoryVersions.reject(b.vault, t.rel) == null) throw new Error('These updates can not be put back');
+        else if (!(await declineUpdates(b.vault, t.rel, null))) throw new Error('These updates can not be put back');
         seenSet(t.abs, { seenAt: at });
       } else throw new Error('Not found');
       done.push(t.abs);
@@ -4985,18 +4985,17 @@ ipcMain.handle('vault-note-date', (_e, rel, day) => {
   return String(day);
 });
 
-// Memory tab review of agent changes (memoryVersions.js): the tree's dots, an open file's banner with its Before text
-// and the changed lines of the After text, accepting updates, and the versions in the side panel. Texts go out the way
+// Memory tab review of agent changes (memoryVersions.js): the tree's dots, an open file's banner with its Before text,
+// accepting updates, and the versions in the side panel. Texts go out the way
 // vault-note sends them: withheld lines redacted, no frontmatter, no first heading
 const memoryNote = (rel) => { const b = brain(); const n = b && readVaultNote(b.vault, String(rel)); return n ? { vault: b.vault, rel: String(rel), text: n.text } : null; };
 ipcMain.handle('memory-dots', () => { const b = brain(); return b ? memoryVersions.dots(b.vault) : { files: {}, folders: {} }; });
-ipcMain.handle('memory-review', (_e, rel) => {
+const updateIds = (ids) => (Array.isArray(ids) ? ids.map(String) : []);
+ipcMain.handle('memory-review', (_e, rel, ids) => {
   const n = memoryNote(rel);
-  const r = n && memoryVersions.review(n.vault, n.rel);
+  const r = n && memoryVersions.review(n.vault, n.rel, updateIds(ids));
   if (!r) return null;
-  const before = noteBody(suggester.redactLines(r.before));
-  const after = noteBody(suggester.redactLines(n.text));
-  return { dot: r.dot, count: r.count, at: r.at, changes: r.changes, before, changed: lineDiff(before, after).changed };
+  return { ...r, before: noteBody(suggester.redactLines(r.before)) };
 });
 ipcMain.handle('memory-opened', (_e, rel) => { const n = memoryNote(rel); if (n) memoryVersions.opened(n.vault, n.rel); });
 ipcMain.handle('memory-accept', (_e, rel) => { const n = memoryNote(rel); return n ? memoryVersions.approve(n.vault, n.rel) : 0; });
@@ -5006,8 +5005,15 @@ ipcMain.handle('memory-version', (_e, rel, id) => {
   const text = b ? memoryVersions.read(b.vault, String(rel), String(id)) : null;
   return text == null ? null : { body: noteBody(suggester.redactLines(text)) };
 });
-// the updates the banner shows are rejected: the note gets back its earlier text
-ipcMain.handle('memory-reject', (_e, rel) => { const n = memoryNote(rel); if (!n || memoryVersions.reject(n.vault, n.rel) == null) throw new Error('These updates can not be rejected'); return true; });
+// the updates the banner shows are rejected: the note gets back its earlier text; a note the updates made goes to the
+// Trash. ids null rejects whatever waits for review
+async function declineUpdates(vault, rel, ids) {
+  let made = null;
+  const text = memoryVersions.reject(vault, rel, ids, (abs) => { made = abs; });
+  if (made) await shell.trashItem(made);
+  return text != null;
+}
+ipcMain.handle('memory-reject', async (_e, rel, ids) => { const n = memoryNote(rel); if (!n || !(await declineUpdates(n.vault, n.rel, updateIds(ids)))) throw new Error('These updates can not be declined. The note may have been updated again; open it once more to see the newest updates'); return true; });
 // the runs writing notes right now; Stop ends a stoppable run and puts back the notes it changed
 ipcMain.handle('live-runs', () => liveRuns.state());
 ipcMain.handle('live-stop', async (_e, id) => {

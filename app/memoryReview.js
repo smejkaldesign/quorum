@@ -9,36 +9,46 @@ export const MAX_AGE_DAYS = 365;
 export const DOT_DAYS = 30;
 const MAX_CELLS = 4000000;
 
-// a line diff of a and b: the indexes of the lines of b that are new or changed, and the number of changed blocks
-// (runs of added or removed lines between unchanged ones). a null a is a file that did not exist, so every line of b
-// is new. Lines the two share at the start and the end are matched first; a middle too large to compare line by line
-// counts as one block with every line in it changed
-export function lineDiff(a, b) {
-  const x = a == null ? [] : String(a).split('\n');
-  const y = b == null ? [] : String(b).split('\n');
+// the steps from one list to another: ' ' keeps x[i] as y[j], '-' drops x[i], '+' adds y[j]. Items the two share at the
+// start and the end are matched first; a middle too large to compare drops every item of x, then adds every item of y
+export function seqOps(x, y, max = MAX_CELLS) {
   let s = 0;
   while (s < x.length && s < y.length && x[s] === y[s]) s++;
   let e = 0;
   while (e < x.length - s && e < y.length - s && x[x.length - 1 - e] === y[y.length - 1 - e]) e++;
-  const xm = x.slice(s, x.length - e);
-  const ym = y.slice(s, y.length - e);
+  const n = x.length - s - e, m = y.length - s - e, w = m + 1;
+  const out = [];
+  for (let k = 0; k < s; k++) out.push({ op: ' ', i: k, j: k });
+  if (!n || !m || n * m > max) {
+    for (let i = 0; i < n; i++) out.push({ op: '-', i: s + i, j: s });
+    for (let j = 0; j < m; j++) out.push({ op: '+', i: s + n, j: s + j });
+  } else {
+    // longest common subsequence table, read from the end
+    const t = new Uint32Array((n + 1) * w);
+    for (let i = n - 1; i >= 0; i--) {
+      for (let j = m - 1; j >= 0; j--) t[i * w + j] = x[s + i] === y[s + j] ? t[(i + 1) * w + j + 1] + 1 : Math.max(t[(i + 1) * w + j], t[i * w + j + 1]);
+    }
+    let i = 0, j = 0;
+    while (i < n || j < m) {
+      if (i < n && j < m && x[s + i] === y[s + j]) { out.push({ op: ' ', i: s + i++, j: s + j++ }); continue; }
+      if (j < m && (i >= n || t[i * w + j + 1] >= t[(i + 1) * w + j])) out.push({ op: '+', i: s + i, j: s + j++ });
+      else out.push({ op: '-', i: s + i++, j: s + j });
+    }
+  }
+  for (let k = 0; k < e; k++) out.push({ op: ' ', i: x.length - e + k, j: y.length - e + k });
+  return out;
+}
+
+// a line diff of a and b: the indexes of the lines of b that are new or changed, and the number of changed blocks
+// (runs of added or removed lines between unchanged ones). a null a is a file that did not exist, so every line of b
+// is new
+export function lineDiff(a, b) {
   const changed = [];
-  if (!xm.length && !ym.length) return { changed, blocks: 0 };
-  if (!xm.length || !ym.length || xm.length * ym.length > MAX_CELLS) {
-    for (let j = 0; j < ym.length; j++) changed.push(s + j);
-    return { changed, blocks: 1 };
-  }
-  // longest common subsequence table, read from the end
-  const n = xm.length, m = ym.length, w = m + 1;
-  const t = new Uint32Array((n + 1) * w);
-  for (let i = n - 1; i >= 0; i--) {
-    for (let j = m - 1; j >= 0; j--) t[i * w + j] = xm[i] === ym[j] ? t[(i + 1) * w + j + 1] + 1 : Math.max(t[(i + 1) * w + j], t[i * w + j + 1]);
-  }
-  let i = 0, j = 0, blocks = 0, inBlock = false;
-  while (i < n || j < m) {
-    if (i < n && j < m && xm[i] === ym[j]) { i++; j++; inBlock = false; continue; }
+  let blocks = 0, inBlock = false;
+  for (const o of seqOps(a == null ? [] : String(a).split('\n'), b == null ? [] : String(b).split('\n'))) {
+    if (o.op === ' ') { inBlock = false; continue; }
     if (!inBlock) { blocks++; inBlock = true; }
-    if (j < m && (i >= n || t[i * w + j + 1] >= t[(i + 1) * w + j])) { changed.push(s + j); j++; } else i++;
+    if (o.op === '+') changed.push(o.j);
   }
   return { changed, blocks };
 }
@@ -71,12 +81,15 @@ export function folderDots(files) {
 }
 
 // the updates an open file's banner is about: the ones waiting for approval when the dot is green, the approved ones
-// not opened yet when it is blue. first is the oldest of them, whose saved text is the Before view
-export function reviewGroup(rec, { now, days = DOT_DAYS }) {
+// not opened yet when it is blue. ids are updates the open page already shows; they stay in the group after opening the
+// file cleared its dot. first is the oldest of them, whose saved text is the Before view
+export function reviewGroup(rec, { now, days = DOT_DAYS, ids = [] }) {
+  const shown = new Set(ids);
   const dot = fileDot(rec, { now, days });
-  if (!dot) return null;
-  const ups = (rec.updates ?? []).filter((u) => (dot === 'green' ? !u.approved : freshApproved(rec, u, now, days))).sort((a, b) => a.at - b.at);
-  return { dot, count: ups.length, at: ups[ups.length - 1].at, first: ups[0], changes: ups.reduce((n, u) => n + (u.changes ?? 0), 0) };
+  const fresh = (u) => (dot === 'green' ? !u.approved : dot === 'blue' && freshApproved(rec, u, now, days));
+  const ups = (rec?.updates ?? []).filter((u) => fresh(u) || shown.has(u.id)).sort((a, b) => a.at - b.at);
+  if (!ups.length) return null;
+  return { dot: dot ?? 'blue', ids: ups.map((u) => u.id), count: ups.length, at: ups[ups.length - 1].at, first: ups[0], changes: ups.reduce((n, u) => n + (u.changes ?? 0), 0) };
 }
 
 // what a list of dated entries keeps: the newest max, none older than maxAgeDays. Entries keep their order
@@ -92,19 +105,4 @@ export function noteBody(text) {
   const body = String(text ?? '').replace(/^---\n[\s\S]*?\n---\n/, '').trim();
   const h1 = body.match(/^#\s+(.+)$/m);
   return h1 && body.startsWith(h1[0]) ? body.slice(h1[0].length).trim() : body;
-}
-
-// the changed lines of a note grouped into the items the banner's arrows step through: runs of lines next to each
-// other, or with only blank lines between them
-export function changeBlocks(lines, text = null) {
-  const blank = text == null ? () => false : (() => { const all = String(text).split('\n'); return (i) => !all[i]?.trim(); })();
-  const out = [];
-  for (const l of [...lines].sort((a, b) => a - b)) {
-    const cur = out[out.length - 1];
-    const last = cur?.[cur.length - 1];
-    let joined = cur && l === last + 1;
-    if (cur && !joined && l > last) { joined = true; for (let i = last + 1; i < l; i++) if (!blank(i)) { joined = false; break; } }
-    if (joined) cur.push(l); else out.push([l]);
-  }
-  return out;
 }

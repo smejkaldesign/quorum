@@ -157,7 +157,7 @@ contextBridge.exposeInMainWorld('quorum', {
   vaultNoteSave: (payload) => ipcRenderer.invoke('vault-note-save', payload),
   // Memory tab review of agent changes and note versions (memoryVersions.js)
   memoryDots: () => ipcRenderer.invoke('memory-dots'),
-  memoryReview: (rel) => ipcRenderer.invoke('memory-review', rel),
+  memoryReview: (rel, ids) => ipcRenderer.invoke('memory-review', rel, ids),
   memoryOpened: (rel) => ipcRenderer.invoke('memory-opened', rel),
   memoryAccept: (rel) => ipcRenderer.invoke('memory-accept', rel),
   memoryVersions: (rel) => ipcRenderer.invoke('memory-versions', rel),
@@ -173,7 +173,7 @@ contextBridge.exposeInMainWorld('quorum', {
   memoryCatchupCancel: () => ipcRenderer.invoke('memory-catchup-cancel'),
   memoryCatchupDismiss: () => ipcRenderer.invoke('memory-catchup-dismiss'),
   onMemoryCatchup: on('memory-catchup'),
-  memoryReject: (rel) => ipcRenderer.invoke('memory-reject', rel),
+  memoryReject: (rel, ids) => ipcRenderer.invoke('memory-reject', rel, ids),
   liveRuns: () => ipcRenderer.invoke('live-runs'),
   liveStop: (id) => ipcRenderer.invoke('live-stop', id),
   onLiveRuns: on('live-runs'),

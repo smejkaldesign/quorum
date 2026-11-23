@@ -120,22 +120,24 @@ export function createVersionStore({ dir, now = () => Date.now(), maxVersions = 
     return true;
   }
   // the updates the banner shows are rejected: the file gets back the text from before the oldest of them, that text
-  // is kept as a version by you, and the rejected updates leave the review. Returns the restored text, or null
-  function reject(vault, rel) {
+  // is kept as a version by you, and every update since leaves the review. ids are the updates the open page shows.
+  // Returns the restored text, or null when there is nothing to reject or the file was updated again since
+  // remove takes away a note the updates made, which has no earlier text
+  function reject(vault, rel, ids = null, remove = (abs) => rmSync(abs, { force: true })) {
     const r = posix(rel);
     const rec = load(vault).files[r];
-    const g = rec ? reviewGroup(rec, { now: now(), days: dotDays() }) : null;
+    const g = rec ? reviewGroup(rec, { now: now(), days: dotDays(), ids: ids ?? [] }) : null;
+    if (g && ids && g.ids.some((id) => !ids.includes(id))) return null;
     const root = path.resolve(vault);
     const abs = path.resolve(root, r);
     if (!g || !abs.startsWith(root + path.sep)) return null;
-    const ids = new Set((rec.updates ?? []).filter((u) => (g.dot === 'green' ? !u.approved : u.at >= g.first.at)).map((u) => u.id));
     const base = rec.versions.find((v) => v.id === g.first.id);
     const text = base && !base.created ? read(textFile(vault, base.id)) : null;
     const cur = read(abs);
-    if (base?.created) rmSync(abs, { force: true });
+    if (base?.created) remove(abs);
     else if (text != null) writeAtomic(abs, text);
     else return null;
-    rec.updates = rec.updates.filter((u) => !ids.has(u.id));
+    rec.updates = rec.updates.filter((u) => u.at < g.first.at);
     rec.openedAt = stamp();
     record({ vault, rel: r, before: cur, after: base?.created ? null : text, who: 'you', reason: 'Rejected the updates', agent: false });
     return text ?? '';
@@ -170,13 +172,14 @@ export function createVersionStore({ dir, now = () => Date.now(), maxVersions = 
     for (const [rel, rec] of Object.entries(load(vault).files)) { const d = fileDot(rec, { now: t, days: dotDays() }); if (d) files[rel] = d; }
     return { files, folders: folderDots(files) };
   }
-  // what the banner of an open file shows: the dot, how many updates and when the last was made, the number of changed
-  // blocks, and the text before the oldest of them. null when the file has nothing to review
-  function review(vault, rel) {
+  // what the banner of an open file shows: the dot, the updates and when the last was made, the number of changed
+  // blocks, and the text before the oldest of them. ids are the updates the open page already shows. null when the file
+  // has nothing to review
+  function review(vault, rel, ids = []) {
     const rec = load(vault).files[posix(rel)];
-    const g = rec ? reviewGroup(rec, { now: now(), days: dotDays() }) : null;
+    const g = rec ? reviewGroup(rec, { now: now(), days: dotDays(), ids }) : null;
     if (!g) return null;
-    return { dot: g.dot, count: g.count, at: g.at, changes: g.changes, before: read(textFile(vault, g.first.id)) ?? '' };
+    return { dot: g.dot, ids: g.ids, count: g.count, at: g.at, changes: g.changes, created: !!rec.versions.find((v) => v.id === g.first.id)?.created, before: read(textFile(vault, g.first.id)) ?? '' };
   }
 
   // a run that may write vault notes with its own tools: the notes are read before it and again after it, and every
